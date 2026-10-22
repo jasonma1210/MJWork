@@ -6,6 +6,23 @@ desktop / server / renderer 三个 package.json 的 version 必须保持一致�
 
 ## [0.7.0-beta] - 2026-10-22
 
+### 修复（MiMo V2.6 Flash 登记进窗口事实表：1M 被当 32K 用，2026-10-22 真机）
+
+实际上游是 `mimo-v2.6-flash`（`api.xiaomimimo.com`），官方窗口 **1,048,576**。但 `xiaomimimo.com` 不在 host 规则里 ⇒ `providerKindOf` 返回 `unknown` ⇒ 表查不到 ⇒ 回落默认档 **32768**。后果连锁：
+
+- 工具表 10.4k 被算成占 **32%** 窗口 ⇒ 按新判据（占比 > 20%）会**误裁** 22 个工具，模型只能逐个 `activate_tools` 申请；
+- 压缩/裁剪阈值按 32K 算 ⇒ 长会话被反复压缩；
+- 用户看到的「17 秒烧 46,935 tokens」里，很大一块是每轮重复下发的工具定义。
+
+修复（`renderer/src/lib/modelWindows.ts` + `main/modelWindows.js` 两份同步，parity 10/10）：
+- `HOST_RULES` 增 `{ kind: 'mimo', tokens: ['xiaomimimo.com'] }`、`KIND_ALIASES` 增 `mimo`/`xiaomi`、`PROVIDER_KINDS` 增 `mimo`；
+- `MODEL_WINDOWS` 增 `'mimo:mimo-v2.6-flash': 1048576`（`source: 'table'`、`confirmed: true`）；
+- **刻意不加 `mimo-*` 族规则**：族规则会把未见过的小窗口版本一起高估，而 H-1 的代价不对称要求「宁可低估早压，不可高估击穿」。
+
+结果：1M 窗口下工具表占 **1.02%** ⇒ 不裁，57 个工具全部可用；`deepseek-flash` 仍由 `deepseek-*` 族规则给 131072（`confirmed: false`，UI 会显示为估算值）。
+
+连带修 `model-shape.test.js`：该用例原本拿 `mimo-v2.6-flash` 当「表外未知模型」代表（当时确实未登记），现在前提不成立 ⇒ 拆成两条互补断言（命中表取表值 1M / 真正表外仍回落 32768），默认档契约本身不变。
+
 ### 修复（工具面判据纠正：绝对窗口 → 占比，2026-10-22 真机）
 
 真机测试暴露两个事实，都推翻了我此前的判断：

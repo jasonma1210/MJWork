@@ -27,7 +27,17 @@ check('扁平→嵌套：isGlobal 布尔化', nested.provider.isGlobal === false
 // main/modelWindows.js，本文件只引用不再自己写死）。理由：两侧错配代价不对称——
 // 高估 = 压缩阈值永不触发（prompt 超窗直接 400，即"击穿"）；低估 = 早压掉细节（浪费但可恢复）。
 // 这不是回归，是刻意的设计变更；同时禁止再退回 128000（见下方 != 128000 的反向断言）。
-check('扁平→嵌套：补默认上下文窗口（32768，P0-1④ 下调）', nested.model.context_window === 32768);
+// 2026-10-22：本用例原先用 mimo-v2.6-flash 当「表外未知模型」的代表——当时它确实没登记，
+// 于是走默认档 32768。现在它已进事实表（官方 1M），前提不成立，改成两条互补断言：
+//   ① 命中表 ⇒ 取表值（否则 1M 模型被当 32K 用：工具面误裁 + 每轮压缩）
+//   ② **真正**表外的模型仍回落默认档（默认档这条契约本身没变）
+check('扁平→嵌套：命中事实表时取表值（mimo-v2.6-flash 已登记 1M）',
+  nested.model.context_window === 1048576, `got=${nested.model.context_window}`);
+const unknownNested = toAgentModel({
+  providerId: 'p-x', isGlobal: false, baseUrl: 'https://api.unknown-vendor.example/v1', model: 'acme-unknown-1',
+});
+check('扁平→嵌套：表外未知模型仍回落默认档 32768（P0-1④ 下调的契约不变）',
+  unknownNested.model.context_window === 32768, `got=${unknownNested.model.context_window}`);
 check('默认窗口不得退回 128000（高估=击穿）', nested.model.context_window !== 128000);
 // 事故复现点：runAgent 读的就是这三个字段，缺任一即 TypeError
 check('扁平→嵌套：runAgent 读的 model.provider.id 不再是 undefined',

@@ -37,6 +37,10 @@ const MODEL_WINDOWS = {
   'openai:o3': 200000,
   'openai:o4-mini': 200000,
   'openai:gpt-4-turbo': 128000,
+  // 2026-10-22：MiMo V2.6 Flash 官方 1M（用户提供的官方口径）。
+  // 刻意**不加** `mimo-*` 族规则：族规则会把未见过的小窗口版本一起高估，
+  // 而 H-1 的代价不对称要求「宁可低估早压，不可高估击穿」。
+  'mimo:mimo-v2.6-flash': 1048576,
   'deepseek:deepseek-chat': 131072,
   'deepseek:deepseek-reasoner': 131072,
   'qwen:qwen3-8b': 131072,
@@ -56,7 +60,7 @@ const MODEL_FAMILIES = [
   { kind: 'gemini', prefixes: ['gemini-'], window: 1048576 },
 ];
 
-const PROVIDER_KINDS = ['openai', 'deepseek', 'anthropic-api', 'bedrock', 'qwen', 'gemini', 'ollama'];
+const PROVIDER_KINDS = ['openai', 'deepseek', 'anthropic-api', 'bedrock', 'qwen', 'gemini', 'mimo', 'ollama'];
 
 // providerId → kind 的别名（服务端 provider 的 id 可能是厂商名而不是数字）
 const KIND_ALIASES = {
@@ -66,6 +70,7 @@ const KIND_ALIASES = {
   bedrock: 'bedrock', aws: 'bedrock',
   qwen: 'qwen', dashscope: 'qwen', aliyun: 'qwen',
   gemini: 'gemini', google: 'gemini',
+  mimo: 'mimo', xiaomi: 'mimo',
   ollama: 'ollama',
 };
 
@@ -78,6 +83,9 @@ const HOST_RULES = [
   { kind: 'deepseek', tokens: ['deepseek.com'] },
   { kind: 'qwen', tokens: ['dashscope.aliyuncs.com', 'api.qwen.com'] },
   { kind: 'gemini', tokens: ['generativelanguage.googleapis.com'] },
+  // 2026-10-22：小米 MiMo（api.xiaomimimo.com）。未登记时 kind=unknown ⇒ 永远走默认档 32768，
+  // 1M 窗口的模型会被当 32K 用（工具表误裁、每轮压缩）。
+  { kind: 'mimo', tokens: ['xiaomimimo.com'] },
   { kind: 'openai', tokens: ['api.openai.com', 'openai.azure.com'] },
 ];
 
