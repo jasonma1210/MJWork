@@ -1231,6 +1231,9 @@ async function runScheduledAgentTask({ prompt, model: schedModel, signal, taskId
     unattended: true,
     // 追加在 BASE_PROMPT 之后（不替换）：BASE_PROMPT 承载「可用工具/默认目录/路径怎么给」，替换掉它模型就不知道自己能写文件、该写哪
     appendSystemPrompt: rc.appendPrompt,
+    // P1-11（2026-10-22）：定时任务也吃项目规范。此前只有渲染层读 AGENTS.md，
+    // 无人值守通道的 Agent 完全不守项目约定（同一项目两种行为）。内联 require 以守 main.js 硬档。
+    agentsMd: require('./agentsMd').readAgentsMd(rc.dir),
     // 编排工具补齐：定时通道原先没有 orchestrate_task（对话有），这就是"同一句话对话能 4 Agent 并行、定时只能串行"的差别；cwd 强制产出目录，子 Agent 写入才落在用户找得到的地方。
     toolHandlers: toolHooks.wrap(sguard.wrap({
       ...scheduledToolHandlers({ unattended: true, contextCwd: schedModel.cwd }),

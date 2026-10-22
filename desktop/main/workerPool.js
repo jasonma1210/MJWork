@@ -395,6 +395,7 @@ async function runWorkerTask({ group, task, runKey, controller, name, runCwd, gr
           sandboxPolicy: runCwd ? groupSandboxPolicy : 'read-only',
           conversationId: sessionKey,
           resumeContext, // M5/T5-11：跨 run 复用；空串 = 首轮，引擎自然忽略
+          agentsMd: require('./agentsMd').readAgentsMd(runCwd), // P1-11：Worker 也吃 AGENTS.md
           // P0：上下文策略（宿主可按团队/任务下发；缺省 null ⇒ 引擎默认）
           compactPolicy: typeof deps.getCompactPolicy === 'function' ? deps.getCompactPolicy() : null,
           // M5 / T5-8：协同工具与提示词段的条件开关（null ⇒ 引擎不追加任何 team_* schema）

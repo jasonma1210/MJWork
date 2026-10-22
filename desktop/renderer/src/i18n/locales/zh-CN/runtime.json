@@ -73,5 +73,6 @@
   "memSaved": "已写入项目记忆",
   "memSaveFailed": "记忆写入失败：{error}",
   "threadCreateFailed": "创建会话失败，已停止本次运行：{error}\n请重试；若持续失败，请检查本机会话存储是否可写。",
-  "messageSendFailed": "消息写入本机会话失败，已停止本次运行：{error}\n输入内容已保留，可直接重试。"
+  "messageSendFailed": "消息写入本机会话失败，已停止本次运行：{error}\n输入内容已保留，可直接重试。",
+  "messagesLoadFailed": "消息加载失败：{error}（可切换会话或刷新重试）"
 }

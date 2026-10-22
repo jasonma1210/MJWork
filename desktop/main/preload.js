@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld('mjcode', {
   gitAdd: (payload) => ipcRenderer.invoke('tool:gitAdd', payload),
   gitCheckout: (payload) => ipcRenderer.invoke('tool:gitCheckout', payload),
   gitDiscardFiles: (payload) => ipcRenderer.invoke('tool:gitDiscardFiles', payload),
+  // P1：「撤回本轮」的基线（run 开始前的工作区快照 SHA；工作区干净时为空串，撤回=回到 HEAD）
+  runCreateBaseline: (payload) => ipcRenderer.invoke('run:createBaseline', payload),
   gitRestoreStaged: (payload) => ipcRenderer.invoke('tool:gitRestoreStaged', payload),
   gitApplyHunk: (payload) => ipcRenderer.invoke('tool:gitApplyHunk', payload),
   // P0-E：GitHub 最小闭环（gh CLI）

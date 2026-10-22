@@ -90,5 +90,6 @@
   "commentFailed": "Failed to submit comment: {error}",
   "commentHint": "Submitting triggers a new agent turn right away",
   "noThread": "Open a conversation before commenting",
-  "lineRange": "Lines {start}-{end}"
+  "lineRange": "Lines {start}-{end}",
+  "loading": "Loading changes…"
 }

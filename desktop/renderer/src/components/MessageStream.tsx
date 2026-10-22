@@ -125,6 +125,8 @@ export default function MessageStream({
           changedCount={runFiles.length}
           // 走 CustomEvent：收尾条不需要知道右侧面板的编排实现（App 里有唯一入口）
           onOpenChanges={() => window.dispatchEvent(new CustomEvent('mjcode:open-diff'))}
+          // 撤回逻辑在 ChatArea（它持有基线 SHA 与会话信息），这里只负责派发
+          onRevertRun={runFiles.length > 0 ? () => window.dispatchEvent(new CustomEvent('mjcode:revert-run')) : undefined}
         />
         {/* T1-1+T1-2：运行态工具轨迹已并入最后一轮块（答复正文之上），此处不再重复渲染 */}
         {/* T1-5：推理模型思考流——Markdown 渐进渲染（与正文一致的排版），默认展开可折叠 */}
@@ -211,7 +213,7 @@ function ForkButton({ messageId }) {
 // · live 模式（运行中）：运行中徽标 + 实时耗时 + 本轮已消耗 + 上下文用量 + 模型，每秒刷新；
 // · 结束态：状态（正常结束/任务暂停/已停止/失败）+ 耗时 + 共消耗 + 模型 + 结束时间。
 // 与单条消息的 meta 小字互补：meta 随消息滚动，此卡永远挂在最后一屏可见。
-export function RunFooter({ summary, live, changedCount = 0, onOpenChanges }) {
+export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRevertRun }) {
   // 组件内已有局部变量 t（定时器），i18n 译函数改名 tr 避免遮蔽
   const { t: tr } = useI18n();
   const [, tick] = useState(0);
@@ -278,6 +280,14 @@ export function RunFooter({ summary, live, changedCount = 0, onOpenChanges }) {
           <Button variant="accent-ghost" size="xs" onClick={onOpenChanges}>
             <IconFile size={11} />
             {tr('message.viewChanges', { n: changedCount })}
+          </Button>
+        )}
+        {/* P1（2026-10-22）「撤回本轮」：信任的地基——用户敢让 Agent 一次改 8 个文件，
+            前提是能一键退回。恢复源是本轮开始前的基线（不是 HEAD），所以不会连带丢掉
+            用户在 run 之前自己的未提交改动。 */}
+        {changedCount > 0 && typeof onRevertRun === 'function' && (
+          <Button variant="danger-ghost" size="xs" onClick={onRevertRun}>
+            {tr('message.revertRun')}
           </Button>
         )}
       </div>

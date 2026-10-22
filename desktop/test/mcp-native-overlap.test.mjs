@@ -1,3 +1,7 @@
+// P1-8：本套件聚焦「capability 门 / 角色白名单 / MCP 去重」等工具面裁剪规则，
+// 与「宿主是否提供该通道」正交。可用性闸会用最小 handler 夹具把工具裁光，
+// 淹没本套件的结论 —— 故在此关闭它（闸本身由 test/tool-availability.test.mjs 覆盖）。
+process.env.MJCODE_TOOL_AVAILABILITY = '0';
 // 第八轮 A-04 门禁：「原生优先」必须覆盖**已连接**的 MCP 服务，而不只是意图预热的新连接
 //
 // 缺陷回顾：`intentMcpPrewarm.js` 的 native 规则只拦「意图预热时新增的连接」，

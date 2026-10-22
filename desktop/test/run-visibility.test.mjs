@@ -48,7 +48,7 @@ check('P0-7 视图层把 loading 作为 running 传入 renderMessages',
   /renderMessages\(visibleMessages,[^)]*toolCalls, !!loading\)/.test(streamSrc));
 
 // ── B. 收尾条出口 ──
-check('P0-7 RunFooter 接收改动计数与回调', /export function RunFooter\(\{ summary, live, changedCount = 0, onOpenChanges \}\)/.test(streamSrc));
+check('P0-7 RunFooter 接收改动计数与回调', /export function RunFooter\(\{ summary, live, changedCount = 0, onOpenChanges, onRevertRun \}\)/.test(streamSrc));
 check('P0-7 收尾条渲染「查看 N 个改动」（i18n key）', /tr\('message\.viewChanges', \{ n: changedCount \}\)/.test(streamSrc));
 check('P0-7 计数来自真实产出文件列表（runFiles.length）', /changedCount=\{runFiles\.length\}/.test(streamSrc));
 check('P0-7 改动入口在结束态才出现（不干扰运行中布局）',
@@ -60,10 +60,12 @@ check('P0-7 文案已入两种语言包',
 // ── C. 点击落点 ──
 check('P0-7 收尾条派发 open-diff 事件', /CustomEvent\('mjcode:open-diff'\)/.test(streamSrc));
 // App 侧已收敛到 useWindowEventBus（事件名 → handler 的静态契约表），故匹配表项而不是裸 addEventListener
+// App 的事件表已抽到 lib/appWindowEvents（App 贴 800 行软档），断言跟着搬
+const eventSrc = read('renderer', 'src', 'lib', 'appWindowEvents.ts');
 check('P0-7 App 监听 open-diff 并切到变更面板',
-  /'mjcode:open-diff':\s*\(\)\s*=>\s*\{[^}]*setPaneTab\('diff'\);\s*setPaneOpen\(true\)/.test(appSrc));
+  /'mjcode:open-diff':\s*\(\)\s*=>\s*\{[^}]*setPaneTab\('diff'\)[^}]*setPaneOpen\(true\)/.test(eventSrc));
 check('P0-7 窗口事件总线已接入 App（避免又长回一个个 useEffect）',
-  /useWindowEventBus\(\{/.test(appSrc) && /from '\.\/hooks\/useWindowEventBus'/.test(appSrc));
+  /useWindowEventBus\(createAppWindowHandlers\(\{/.test(appSrc) && /from '\.\/lib\/appWindowEvents'/.test(appSrc));
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);

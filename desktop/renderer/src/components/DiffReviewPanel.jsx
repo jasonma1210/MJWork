@@ -18,6 +18,9 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  // P1-9（2026-10-22）：加载三态。此前「没有未提交的改动」和「还没读出来」共用同一句文案，
+  // 打开面板的第一眼永远是「没有改动」——用户会以为 Agent 什么都没做（真机反馈）。
+  const [loading, setLoading] = useState(true);
   const [expandedFiles, setExpandedFiles] = useState(() => new Set());
   // 视图口径（对标 Codex 的 Unstaged / Staged 切换）：默认看未暂存；接受后该块会移到「已暂存」，
   // 没有这个切换的话用户点完接受只会看到块消失，无法确认它到底进了哪里。
@@ -43,7 +46,8 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
   }
 
   const load = useCallback(async () => {
-    if (!projectPath || !window.mjcode?.gitDiff) return;
+    if (!projectPath || !window.mjcode?.gitDiff) { setLoading(false); return; }
+    setLoading(true);
     try {
       // 视图口径：未暂存 = `git diff`（索引↔工作区）；已暂存 = `git diff --staged`（HEAD↔索引）。
       // 两者都取「相对索引」或「相对 HEAD」的 hunk 头，因此各自视图内的块可直接 apply。
@@ -54,10 +58,15 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
     } catch (err) {
       console.warn('[diffReview] load failed:', err);
       setError(err.message || t('diff.loadFailed'));
+    } finally {
+      setLoading(false);
     }
   }, [projectPath, t, scope]);
 
-  useEffect(() => { load(); }, [load]);
+  // P1-9：随本轮产出文件变化刷新。此前只依赖 projectPath / scope，
+  // Agent 新改的文件要等用户手动切一次 scope 才出现——面板开着的时候永远是旧内容。
+  const agentKey = (agentFiles || []).join('|');
+  useEffect(() => { load(); }, [load, agentKey]);
 
   async function accept(file) {
     setBusy(true);
@@ -390,6 +399,8 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
           <p className="text-danger text-sm text-center py-10">{error}</p>
         ) : !projectPath ? (
           <p className="text-text2 text-sm text-center py-10">{t('diff.noProject')}</p>
+        ) : loading ? (
+          <p className="text-text2 text-sm text-center py-10">{t('diff.loading')}</p>
         ) : visible.length === 0 ? (
           <p className="text-text2 text-sm text-center py-10">
             {lastTurnOnly ? t('diff.agentNoChange') : (scope === 'staged' ? t('diff.stagedEmpty') : t('diff.noUncommitted'))}

@@ -1,3 +1,7 @@
+// P1-8：本套件聚焦「capability 门 / 角色白名单 / MCP 去重」等工具面裁剪规则，
+// 与「宿主是否提供该通道」正交。可用性闸会用最小 handler 夹具把工具裁光，
+// 淹没本套件的结论 —— 故在此关闭它（闸本身由 test/tool-availability.test.mjs 覆盖）。
+process.env.MJCODE_TOOL_AVAILABILITY = '0';
 // T4-3：角色模板引擎接线直测——rolePreset 工具子集过滤 / 角色提示拼进 system / 空交集回落
 // 运行：node test/role-preset.test.mjs
 import { runAgent, BASE_TOOLS } from '../agent-core/index.js';

@@ -61,7 +61,7 @@ check('P0-6 useAgentRun 以 state 暴露 activeRunId（ref 不触发重渲染）
 check('P0-6 run 启动时登记 activeRunId', /setActiveRunId\(runSeqLocal\)/.test(hookSrc));
 check('P0-6 run 结束后清空 activeRunId（且仅当自己仍是活跃 run）',
   /activeRunIdRef\.current === rs\.runId\) \{ activeRunIdRef\.current = null; setActiveRunId\(null\); \}/.test(hookSrc));
-check('P0-6 ChatArea 确实从 hook 解构 activeRunId', /compactContext, activeRunId \} = useAgentRun\(/.test(chatAreaSrc));
+check('P0-6 ChatArea 确实从 hook 解构 activeRunId', /compactContext, activeRunId[,\s}]/.test(chatAreaSrc));
 
 // ── 事件形状对账：生产端的字段必须能被契约接受 ──
 const sample = { todos: [{ content: '读代码', status: 'in_progress' }], doneCount: 0, total: 1 };

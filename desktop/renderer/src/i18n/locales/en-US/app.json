@@ -62,5 +62,7 @@
   "filterRunning": "Running",
   "filterAwaiting": "Awaiting approval",
   "cmdSummary": "Open task summary",
-  "cmdTerminal": "Open terminal"
+  "cmdTerminal": "Open terminal",
+  "threadDeleteFailed": "Failed to delete session: {error}",
+  "loadFailed": "Failed to load data: {error} (some lists may be empty; reload to retry)"
 }

@@ -138,7 +138,12 @@ export default function MemorySection({ projectPath = '' }: { projectPath?: stri
       setTeamAutoCapture((await window.mjcode?.localGetPreference?.({ key: 'memory.teamAutoCapture' }) as unknown) !== false);
       if (cand?.ok) setCandidates(cand.items || []);
     } catch (err) {
+      // P1-14（2026-10-22）：catch 只 warn ⇒ 抛异常时界面显示「0 条记忆、开关全关」，
+      // 用户以为数据没了（setUnavailable 原本只覆盖 ok===false 的返回式失败，盖不住异常）。
+      // 现在把异常也落到同一个不可用态，并在顶部说明行里给出原因。
       console.warn('[settings] memory section load failed:', err);
+      setUnavailable(true);
+      setNotice(String((err as any)?.message || err));
     }
   }, [projectPath]);
 

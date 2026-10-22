@@ -8,6 +8,10 @@
 // 可被渲染层 Vite 打包与引擎子进程共同消费）——本文件不写任何阈值数字。
 // B3 #10：同时取强制档判定（toolTableEnforcement，缺省 'warn' = 改前行为，见该函数注释）。
 import { inspectToolTableBudget, toolTableEnforcement, TOOL_TABLE_ENFORCE_ENV } from '../shared/contextBudget.mjs';
+// P1-8：工具可用性闸（纯函数，零依赖）——通告过的工具必须真的调得动
+import { filterUnavailableTools } from './toolAvailability.js';
+// P1-8 / 讨论方案：工具三档分层 + 窗口自适应裁剪（纯常量 + 纯函数）
+import { selectToolsForWindow, buildToolCatalogText, toolsOfGroups, groupInfo, MIN_FULL_TOOL_WINDOW } from './toolTiers.js';
 
 // ── node:fs 惰性获取（仅 sessionDir 落盘时需要）──
 // 渲染层经 Vite 打包：这里不写静态 import，用 process.getBuiltinModule 同步获取，
@@ -837,6 +841,27 @@ export const COMPUTER_USE_TOOL = { type: 'function', function: {
   }, required: ['objective', 'app_name'] },
 } };
 
+// P1-8（2026-10-22）：工具按需激活的申请入口。
+// 与 LOAD_SKILL_TOOL / COMPUTER_USE_TOOL 同款**运行时条件追加**——只在工具面因窗口过小
+// 被收敛时通告（见下方 selectToolsForWindow 调用处）；工具面全量时不出现，零行为变化。
+// 语义边界：本工具只「把 schema 加载进本轮」，不改变任何权限——审批档、沙箱、角色子集、
+// planMode 只读、V02 白名单守卫全部照旧生效。申请到的工具只在**本轮**有效（run 结束即回收），
+// 因此不存在「申请一次永久放开」的越权路径。
+export const ACTIVATE_TOOLS_TOOL = { type: 'function', function: {
+  name: 'activate_tools',
+  description: '按能力分组加载工具。当前上下文窗口较小，只加载了常用工具；需要浏览器、文档生成、'
+    + '团队协作、代码执行等能力时，先调用本工具把对应分组加载进来，再调用具体工具。'
+    + '加载后本次任务内一直可用（任务结束自动回收）。不要因为某个工具当前不在列表里就假设它不存在，'
+    + '也不要让用户自己去完成这些操作。',
+  parameters: { type: 'object', properties: {
+    groups: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '能力分组名（见系统提示里的「可申请的能力」清单），如 ["doc","browser"]',
+    },
+  }, required: ['groups'] },
+} };
+
 // M5 / T5-8：军团协同工具（4 个协作原语）——与 LOAD_SKILL_TOOL / COMPUTER_USE_TOOL 同款
 // **运行时条件追加**：仅当宿主注入 teamContext（当前 run 是某团队成员任务）时才通告给模型，
 // 不进 BASE_TOOLS 静态清单（其条数被 test/web-todo-tools.test.js 钉死，不得新增）。
@@ -1557,6 +1582,10 @@ ${transcript}` }],
         opts.onCompacted?.({
           summary: clamped, aggressive, rounds: toCompact.length,
           droppedMessages: toCompact.length, keptTailTokens: keepTailTokens,
+          // P1-12（2026-10-22）：补两个索引证据。本轮**不**据此改写数据库（理由见 CHANGELOG：
+          // replaceMessages 是「全删再插」，而引擎与宿主之间没有共同的索引基准，错位即不可逆），
+          // 但将来做安全落库时必须靠这两个数判断「库里的历史与引擎压缩的那份是不是同一份」。
+          totalBefore: convo.length, keptCount: next.length,
         });
       } catch { /* 归档钩子异常绝不影响主流程 */ }
       return next;
@@ -2828,6 +2857,35 @@ export async function runAgent({
     }
   }
   let allTools = [...effectiveBaseTools, ...usableMcpTools];
+  // ── P1-8（2026-10-22）①：可用性闸——通告过就必须真的调得动 ──
+  // 宿主 handler 是按通道给子集的（交互 / Worker / 定时 / 团队各不相同），而 BASE_TOOLS 是全量。
+  // 不下架则模型会对着必然失败的工具烧轮次（Worker 实测缺 28 个）。排障可设 MJCODE_TOOL_AVAILABILITY=0。
+  if (globalThis.process?.env?.MJCODE_TOOL_AVAILABILITY !== '0') {
+    const av = filterUnavailableTools(allTools, {
+      toolHandlers,
+      toolHandlerNames: TOOL_HANDLER_NAMES,
+      decodeToolName,
+      mjcode: globalThis.window?.mjcode,
+    });
+    allTools = av.kept;
+  }
+  // ── P1-8 ②：窗口自适应——工具表实测约 10.8k token（59 个），低窗口模型装不下 ──
+  // 窗口 < 32K 时只通告常开档（约 16 个），其余能力经 activate_tools 按需申请（见 toolTiers）。
+  // 窗口未知或够大时不裁：**默认零行为变化**是这条机制的兼容性前提。
+  // 与①共用同一个排障开关：两者同属「工具面收敛」，分开关会留下半套状态（真机更难排查）。
+  const trimDisabled = globalThis.process?.env?.MJCODE_TOOL_AVAILABILITY === '0';
+  const toolFace = trimDisabled
+    ? { tools: allTools, trimmed: false, omitted: 0, window: 0 }
+    : selectToolsForWindow(allTools, model?.model?.context_window);
+  let toolsTrimmedByWindow = false;
+  // 候选池：窗口裁剪**之前**的可用工具（activate_tools 从这里取）。
+  // 必须留住引用——下面 allTools 会被换成 filter 出来的新数组，原数组就没人持有了。
+  const toolCandidatePool = allTools;
+  if (toolFace.trimmed) {
+    toolsTrimmedByWindow = true;
+    console.warn(`[agent] 上下文窗口 ${toolFace.window} < ${MIN_FULL_TOOL_WINDOW}：工具面收敛为 ${toolFace.tools.length} 个常开工具，其余 ${toolFace.omitted} 个需经 activate_tools 申请`);
+    allTools = [...toolFace.tools, ACTIVATE_TOOLS_TOOL];
+  }
   // ── B1-B-02：三段裁剪（顺序写死，每一段都 fail-closed）──
   // 三条同源 P1 缺陷的根因是同一件事：工具裁剪链**全部 fail-open**——任何一环
   // 「判定失败 / 未配置 / 名字拼错」都退回全量工具，于是「只读角色」与「不支持 tool calling
@@ -2880,6 +2938,22 @@ export async function runAgent({
       content: `${convo[0].content}\n\n## 规划模式\n当前处于规划模式（只读）：写文件、改代码、补丁、Git 写操作、shell 命令、代码执行、MCP 工具、浏览器/Chrome 操作与任务编排的工具已被移除。你只能读取与搜索代码（含只读联网查询），然后输出一份可执行的实施计划（分步骤、标注涉及文件），等待用户确认后再由后续轮次执行。`,
     };
   }
+  // ── P1-8：工具面被收敛时，把「可申请的能力」写进 system（感知层）──
+  // 这一步比机制本身更容易翻车：只实现机制、不写指引，模型会「意识到需要浏览器 → 不知道能申请
+  // → 直接说无法访问网页」，用户看到的是能力凭空消失。所以措辞必须是**行为约束**而不是功能介绍。
+  // 位置在 planMode 之后、capability 段之前：capability 段必须独占 system 尾部（见其注释）。
+  if (toolsTrimmedByWindow) {
+    convo[0] = {
+      role: 'system',
+      content: `${convo[0].content}\n\n## 可申请的能力（当前未加载）\n`
+        + `当前上下文窗口较小，只加载了常用工具。需要下列能力时，先调用 \`activate_tools\` 把对应分组加载进来，再调用具体工具：\n`
+        + `${buildToolCatalogText()}\n\n`
+        + `规则：\n`
+        + `- 需要浏览器操作、生成文档（Word/Excel/PPT/PDF）、联网检索、代码执行、团队协作时，**先申请再操作**，不要让用户自己去完成这些事。\n`
+        + `- 不要因为某个工具当前不在工具列表里就假设它不存在。\n`
+        + `- 加载后在本次任务内一直可用，任务结束自动回收，无需手动关闭。`,
+    };
+  }
   // ① capability 门的 system 侧配套：工具数组为空时必须**明确告知模型**，否则模型照旧
   // 输出「我来写文件 / 我来跑命令」的叙述，用户看到的是「说要调工具但什么也没发生」——
   // 这是假观测。放在 planMode 之后注入，保证它是 system 里最后一句话。
@@ -2927,6 +3001,8 @@ export async function runAgent({
     type: 'memory_saved', origin: 'auto_compact', source: 'compressor',
     summary: String(info?.summary || '').slice(0, 4000),
     aggressive: !!info?.aggressive, rounds: Number(info?.rounds) || 0,
+    // P1-12：压缩前后的条数（诊断「这一轮到底压掉了多少」，也是将来安全落库的对账依据）
+    totalBefore: Number(info?.totalBefore) || 0, keptCount: Number(info?.keptCount) || 0,
   });
   const runStartAt = Date.now();
   // ── P2-8 / V-L1（N1）：工具执行事实台账（run 内 ring buffer，上限 200 条）──
@@ -3506,6 +3582,15 @@ export async function runAgent({
     //   · 每个工具仍各自走一遍治理字段剥离、白名单守卫、审批注入与超时——并发只改「等待方式」。
     const execToolOnce = async (tc) => {
       if (signal?.aborted) return { tc, skipped: true };
+      // ── P1-10（2026-10-22）：工具级取消信号 ──
+      // 事故形态：withTimeout 超时后只是「不再等」，底层 promise 照跑——
+      // 长命令/浏览器操作会继续产生副作用，而模型看到的是「超时失败」于是重试，同一写操作执行两遍。
+      // 现在每次工具调用有自己的 AbortController：run 中止或本次超时都会真正打断底层（spawn/fetch 感知）。
+      const toolAbort = new AbortController();
+      const onRunAbort = () => toolAbort.abort();
+      if (signal?.aborted) toolAbort.abort();
+      else if (typeof signal?.addEventListener === 'function') signal.addEventListener('abort', onRunAbort, { once: true });
+      const signalForTool = toolAbort.signal;
       let args = {};
       try { args = JSON.parse(tc.function.arguments); } catch (e) {
         console.warn('[agent] 工具参数解析失败:', tc.function.name, e.message);
@@ -3701,6 +3786,36 @@ export async function runAgent({
             } catch { /* 上报失败不影响运行 */ }
             break;
           }
+          case 'activate_tools': {
+            // P1-8（2026-10-22）：按能力分组把工具 schema 加载进本轮。
+            // **只加不减（单调累积）**是刻意的：工具表位于 messages 之前，每轮变动会让上下文
+            // 前缀缓存整段失效。省下的 token 会被缓存失效吃掉（估算：衰减式反而贵约 4 倍）。
+            // 「用完自动关闭」由 run 级回收实现——run 结束即全部失效，不需要逐轮收回。
+            const groups = Array.isArray(toolArgs?.groups) ? toolArgs.groups.map(String) : [];
+            const unknown = groups.filter((g) => !groupInfo(g));
+            const wanted = toolsOfGroups(groups);
+            const added = [];
+            for (const name of wanted) {
+              if (advertisedToolNames.has(name)) continue;
+              const tool = toolCandidatePool.find((t) => t?.function?.name === name);
+              if (!tool) continue;
+              allTools.push(tool);
+              advertisedToolNames.add(name);
+              added.push(name);
+            }
+            toolResult = {
+              ok: groups.length > 0 && (added.length > 0 || unknown.length === 0),
+              activated: Array.from(new Set(added)),
+              alreadyAvailable: wanted.filter((n) => !added.includes(n)),
+              toolCount: allTools.length,
+              ...(unknown.length ? {
+                unknownGroups: unknown,
+                hint: '可用分组见系统提示的「可申请的能力」清单',
+              } : {}),
+              ...(added.length ? { hint2: '已加载，可直接调用这些工具' } : {}),
+            };
+            break;
+          }
           case 'todo_write': {
             // P0-B：任务清单（纯状态工具，不出网、不触盘，引擎内直接处理）。
             // 校验+ 归一化：只接受 content/status 齐全的项，限制条数与长度，
@@ -3758,7 +3873,7 @@ export async function runAgent({
             }
             const readChannel = resolveChannel(toolHandlers, 'readFile');
             if (!readChannel) throw new Error('未知工具: read_file');
-            toolResult = await readChannel(toolArgs, { signal });
+            toolResult = await readChannel(toolArgs, { signal: signalForTool });
             // 成功的全量大读取记录缓存锚点（后续同文件重复读取才会命中）
             try {
               if (fs2 && cacheAbs && stat && toolResult?.ok !== false
@@ -3837,14 +3952,22 @@ export async function runAgent({
               const channel = camelName ? resolveChannel(toolHandlers, camelName) : null;
               if (!channel) throw new Error(`未知工具: ${tc.function.name}`);
               // 第二参传运行上下文（signal 可用于长阻塞工具响应中止，如 orchestrate_task）
-              toolResult = await channel(toolArgs, { signal });
+              toolResult = await channel(toolArgs, { signal: signalForTool });
             }
           }
         }
-        })(), toolTimeout, `工具 ${tc.function.name}`);
+        })(), toolTimeout, `工具 ${tc.function.name}`).catch((e) => {
+          // P1-10：超时（或工具自身抛错）都要真正打断底层。
+          // 只 reject 不 abort 的话，长命令/浏览器操作会继续产生副作用，
+          // 而模型看到「超时失败」会重试 ⇒ 同一写操作执行两遍。
+          toolAbort.abort();
+          throw e;
+        });
       } catch (err) {
         toolResult = { error: err.message };
       }
+      // 摘掉 run 级监听：一批工具里逐个调用，不摘会累积 listener（MaxListeners 告警）
+      try { signal?.removeEventListener?.('abort', onRunAbort); } catch { /* 摘除失败无害 */ }
       return { tc, toolArgs, toolResult, toolStartAt };
     };
 

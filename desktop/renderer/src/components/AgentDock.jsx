@@ -520,12 +520,17 @@ export default function AgentDock({ threadId = null, cwd = '' }) {
   // R6.1（用户实测反馈）：任务组绑定会话——组件挂载/上下文变化时同步坞归属，
   // 并清掉不属于当前会话/工作区的组（切会话即切换坞内容，对齐 WorkBuddy 会话作用域）。
   useEffect(() => {
-    dockContext = { threadId: threadId ?? null, cwd: cwd || '' };
-    commitGroups((groups) => {
-      for (const id of [...groups.keys()]) {
-        if (!groupBelongsToContext(groups.get(id))) groups.delete(id);
-      }
-    });
+    // P1-13（2026-10-22）：threadId 为空（新对话空白态）时**不清**已有坞内容。
+    // 此前 groupBelongsToContext 对 null 上下文恒为 false ⇒ 点一次「新建会话」就把正在跑的任务坞
+    // 清空，而且 refreshGroups 也拉不回来（那些任务属于别的会话）。用户感受是「任务消失了」。
+    if (threadId) {
+      dockContext = { threadId: threadId ?? null, cwd: cwd || '' };
+      commitGroups((groups) => {
+        for (const id of [...groups.keys()]) {
+          if (!groupBelongsToContext(groups.get(id))) groups.delete(id);
+        }
+      });
+    }
     refreshGroups().catch(() => {});
   }, [threadId, cwd]);
   // R6：活跃组（可操作）与历史组（done/cancelled 折叠一行，可删除）分层呈现

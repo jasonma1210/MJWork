@@ -6,6 +6,23 @@ desktop / server / renderer 三个 package.json 的 version 必须保持一致�
 
 ## [0.7.0-beta] - 2026-10-22
 
+### 修复（P1 八项 + 工具面重构：分层激活 / run 基线 / 验收回路，2026-10-22）
+
+接 P0 批之后的第二批。核心是一次**取舍反转**：工具面问题的第一诉求不是"省 token"，而是"让低窗口模型能用"——因为没有上下文窗口能装下 59 个工具（实测 **10,809 token**，`estimateTokens` 口径，平均每工具 183）。
+
+- **工具可用性闸（P1-8）**：引擎默认把 `BASE_TOOLS` 全量通告，而宿主 handler 是按通道给子集的（交互 / Worker / 定时 / 团队各不相同）⇒ Worker 通道能看到 28 个调不了的工具，模型调一个报「未知工具」、白烧轮次。新增 `agent-core/toolAvailability.js`：按 `TOOL_HANDLER_NAMES` 与 handler 求交集，引擎内置实现（`todo_write`/`read_file`/`spawn_subagent`/`load_skill`/`deep_research`/`activate_tools`）豁免，MCP 工具要求 `mcpCallTool` 通道；**空集保护**（全裁光视为判定异常，回落原集合并告警）。排障开关 `MJCODE_TOOL_AVAILABILITY=0`。
+- **工具三档分层 + 窗口自适应（讨论方案）**：新增 `agent-core/toolTiers.js`。分层依据不是"原生 vs 外部"，而是「感知成本 vs 执行成本」——`core`（15 个常开）/ `catalog`（目录在场、schema 按需）/ `ondemand`（完全按需）。窗口 < 32K 时只通告 core（1,634 token）并把能力目录（140 token / 12 行）写进 system prompt；窗口未知或 ≥32K **完全不动**（默认零行为变化）。
+- **`activate_tools` 按需申请**：模型在真实上下文里申请能力分组，而不是靠前置调用猜意图（后者看不到真实需求）。只加不减（单调累积）是刻意的——工具表位于 messages 之前，**每轮变动会让上下文前缀缓存整段失效**，估算下"衰减式"反而贵约 4 倍；「用完自动关闭」由 run 级回收实现。system prompt 里的指引写成**行为约束**（"不要因为工具不在列表里就假设它不存在"），机制与文案缺一不可。
+- **「撤回本轮」（diff 验收的地基）**：新增 `run:createBaseline`（`git stash create` 取 SHA，不改工作区、不需审批）+ `lib/runBaseline.ts`；收尾条新增「撤回本轮」，恢复源是**本轮开始前的基线**而非 HEAD —— 后者会把用户 run 之前自己的未提交改动一起丢掉。恢复走 `gitDiscardFiles` 的审批闸 + `createBackup` 的 5 秒撤销。
+- **diff 面板三态与刷新（P1-9）**：加加载三态（此前「没有未提交的改动」与「还在读」共用一句文案，打开面板第一眼永远是"没有改动"）；`load` 依赖本轮产出文件变化（此前面板开着时永远显示旧内容）。
+- **工具超时真取消（P1-10）**：此前 `withTimeout` 超时后只是"不再等"，底层 promise 照跑 —— 长命令/浏览器操作继续产生副作用，模型看到"超时失败"于是重试，同一写操作执行两遍。现在每次工具调用有自己的 `AbortController`，run 中止或本次超时都真正打断底层；`finally` 摘除 run 级监听（防 MaxListeners 累积）。同时 run 结束**无条件**杀本 run 子进程（此前只有用户主动 abort 才杀）。
+- **无人值守通道守项目规范（P1-11）**：新增 `main/agentsMd.js`。项目规范此前**只有渲染层**读 ⇒ 同一项目里主会话的 Agent 守规矩、团队成员的 Agent 不守。口径与渲染层一致（向上 5 级、近者优先、截断 8000 字符、fail-open），已接到 Worker 与定时任务两条通道。
+- **跨会话状态隔离（P1-13）**：附件 chips / 排队消息 / AgentDock 三处此前按「组件实例」而非「会话」存活 —— 切到"无会话"空白态时不清，A 项目拖入的附件会出现在 B 会话输入框；点「新建会话」会把正在跑的任务坞清空且拉不回来。
+- **静默失败补出口（P1-14）**：会话删除（裸 await，失败时列表纹丝不动）、消息加载失败（呈现为空会话）、loadData 部分失败（侧栏与模型选择器安静变空）、记忆模块异常（显示"0 条记忆、开关全关"）四处补上 UI 出口。
+- **P1-12 的诚实取舍**：自动压缩**不落库**。`replaceMessages` 是「全删再插」，而引擎与宿主之间没有共同的索引基准，错位即不可逆；收益只是长会话每轮省一次压缩调用。本轮只在 trace 里补 `totalBefore`/`keptCount`（诊断可见、也是将来安全落库的对账依据），手动 `/compact` 已落库。
+- **守护测试**：新增 `tool-availability`（32 项：闸行为 / 引擎接线含"结果被采纳" / 窗口自适应 / 名单与源码 case 分支对账 / 分组无重叠）。**踩到并修掉一个空转断言**：B1 起初只断言"调用了闸"，把 `allTools = av.kept` 改成 no-op 时仍全绿——补成"调用并采纳结果"后才对变异变红。
+- **拆薄（守行数硬档）**：`agent-core/toolAvailability.js`、`agent-core/toolTiers.js`、`main/agentsMd.js`、`renderer/src/lib/appWindowEvents.ts`、`renderer/src/lib/runBaseline.ts`；`App.jsx` 799 / `useAgentRun.ts` 800 / `workerPool.js` 800 全部回到软档内。技术设计文档五个数字同步现算（280 套件 / 230 通道 / 241 桥 / 180 模块 / raw 2230）。
+
 ### 修复（P0 运行链路七项：历史单一真源 / 中止双写 / 墙钟契约 / 压缩数据安全 / 审批归属 / 待办接线 / 运行可见性，2026-10-22）
 
 用户视角审查（`docs/MJCode-业务逻辑与前端展现审查-用户视角-2026-10-22.md`）给出的七条 P0。前三条是「同一轮运行里两个写者 / 两个真源」的同类缺陷，后四条是「事件发了没人收」的接线断裂；共同判据都是**用户能感知**：历史错乱、停止后两条回复、长任务必崩、压缩毁历史、审批亮错会话、进度永不可见、改动无落点。

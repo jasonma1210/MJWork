@@ -32,6 +32,7 @@ import { projectDisplayName } from './lib/projectName';
 import { getDefaultProject, loadJSON, applyThemeToDocument, rememberModel, pickInitialModel } from './lib/appState';
 import usePendingExpert from './hooks/usePendingExpert';
 import { useWindowEventBus } from './hooks/useWindowEventBus';
+import { createAppWindowHandlers } from './lib/appWindowEvents';
 import { useThreadModel } from './hooks/useThreadModel';
 import { useForkThread } from './hooks/useForkThread';
 import THEMES from './lib/themes.json';
@@ -208,25 +209,10 @@ export default function App() {
   // 收敛成一次注册（此前 App 累计 7 个此类监听，让它长期贴 800 行软档）。
   // handler 走 ref（见 useWindowEventBus），所以这里每次渲染传新对象是安全的。
   // 事件名集合视为静态契约：新增事件必须写在这里。
-  useWindowEventBus({
-    // 生态中心连接/断开/JSON 保存 → 重建工具集
-    'mjcode:mcp-tools-dirty': () => { restoreMcpTools().then(setMcpTools); },
-    // 模型选择器底部入口：跨组件打开设置
-    'mjcode:open-settings': () => setShowSettings(true),
-    // T5：「+」菜单 manual 连接器引导跳生态中心
-    'mjcode:open-ecosystem': () => setShowEcosystem(true),
-    // T6-9：「+」菜单新建项目空间
-    'mjcode:new-project-space': () => setShowProjectSpace(true),
-    // P0-5：审批卡的「来自《会话名》」点击 → 切到那个会话（后台会话的审批不再无从追溯）
-    'mjcode:focus-thread': (e) => {
-      const id = e.detail?.threadId;
-      if (!id) return;
-      const target = threads.find((x) => String(x.id) === String(id));
-      if (target) selectThread(target);
-    },
-    // P0-7：收尾条「查看 N 个改动」→ 打开右栏变更面板（此前任务说「已改 3 个文件」而界面无落点）
-    'mjcode:open-diff': () => { setPaneTab('diff'); setPaneOpen(true); },
-  });
+  useWindowEventBus(createAppWindowHandlers({
+    restoreMcpTools, setMcpTools, setShowSettings, setShowEcosystem, setShowProjectSpace,
+    setPaneTab, setPaneOpen, getThreads: () => threads, selectThread,
+  }));
 
   // 生态中心「招募」：开新会话并关闭设置/生态页，待 ChatArea 切到新会话
   // （thread=null 清空 extras）的 effect 落定后，再派发 enable-expert 注入角色。
@@ -255,6 +241,8 @@ export default function App() {
   const activeThreadId = activeThread?.id || null;
   // 快捷键 effect 闭包是空的，用 ref 读取最新的任务态（⌘⌥B 需按作用域判断）
   const activeThreadRef = useRef(null);
+  // P1-14：loadData 的失败提示只报一次（该方法在多处被调用，重复 toast 会刷屏）
+  const loadWarnedRef = useRef(false);
   useEffect(() => { activeThreadRef.current = activeThread; }, [activeThread]);
   // P1-6：会话分支注册——「从此处分叉」按钮派发 mjcode:fork-thread，逻辑见 hooks/useForkThread
   useForkThread({ activeThreadRef, onForked: (th) => { selectThread(th); loadData(); } });
@@ -361,6 +349,13 @@ export default function App() {
   async function loadData() {
     const results = await Promise.allSettled([api.threads(), api.providers()]);
     const [t, p] = results.map((r) => (r.status === 'fulfilled' ? r.value : null));
+    // P1-14（2026-10-22）：此前只 console.warn —— 串行失败时侧栏与模型选择器「安静变空」，
+    // 用户完全不知道为什么。只提示一次：loadData 在多处被调用，重复 toast 会刷屏。
+    if (results.some((r) => r.status === 'rejected') && !loadWarnedRef.current) {
+      loadWarnedRef.current = true;
+      const reason = results.find((r) => r.status === 'rejected')?.reason;
+      toast({ message: tr('app.loadFailed', { error: String(reason?.message || reason) }) });
+    }
     if (results[0].status === 'rejected') console.warn('[app] failed to load threads:', results[0].reason?.message);
     if (results[1].status === 'rejected') console.warn('[app] failed to load providers:', results[1].reason?.message);
     if (t) setThreads(t);
@@ -562,7 +557,14 @@ export default function App() {
             confirmLabel: tr('app.delete'),
           });
           if (!ok) return;
-          await api.deleteThread(t.id);
+          try {
+            await api.deleteThread(t.id);
+          } catch (err) {
+            // P1-14（2026-10-22）：此前是裸 await —— 存储异常时用户点了「删除」，列表纹丝不动，
+            // 唯一痕迹是控制台一条 unhandled rejection。写操作的失败必须有 UI 出口。
+            toast({ message: tr('app.threadDeleteFailed', { error: String(err?.message || err) }) });
+            return;
+          }
           setThreads(threads.filter((x) => x.id !== t.id));
           if (activeThread?.id === t.id) setActiveThread(null);
           if (local) {

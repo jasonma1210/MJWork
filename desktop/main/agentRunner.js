@@ -694,6 +694,10 @@ function startAgentRun(payload, sender) {
       runs.delete(runId);
       runApprovalModes.delete(runId);
       runConversations.delete(runId);
+      // P1-10（2026-10-22）：run 结束**无条件**杀本 run 的子进程。
+      // 此前只有用户主动 abort 才杀（abortRun 里）——正常收尾时若工具留下了后台进程
+      // （长命令、被超时放弃的 spawn），它会一直活着，并且仍持有该 run 的 runId。
+      try { deps?.killChildrenForRun?.(runId); } catch (e) { console.warn('[agentRunner] 收尾杀子进程失败:', e.message); }
       // T3-1：运行结束即释放该 run 的全部大载荷临时文件（用后即清）
       try { bigPayload.releaseRun(runId); } catch (e) { console.warn('[agentRunner] 大载荷清理失败:', e.message); }
     }

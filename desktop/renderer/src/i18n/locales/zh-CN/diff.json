@@ -90,5 +90,6 @@
   "commentFailed": "评论提交失败：{error}",
   "commentHint": "提交后立即触发 Agent 新一轮修改",
   "noThread": "请先进入一个会话再评论",
-  "lineRange": "第 {start}-{end} 行"
+  "lineRange": "第 {start}-{end} 行",
+  "loading": "正在读取改动…"
 }

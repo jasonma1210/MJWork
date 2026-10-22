@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 import { BUILTIN_SKILL_IDS } from '../lib/agent';
 // T2-2：compactHistory 调用随运行流程迁至 hooks/useAgentRun.ts
 import InlineAlert from './InlineAlert';
-import { toast } from './feedback';
+import { toast, confirm } from './feedback';
 import ComposerControls from './ComposerControls';
 import WelcomePage from './WelcomePage'; // T2-2：欢迎页拆分（composerProps 与对话页共享）
 import MessageStream, { MSG_WINDOW, RunFooter, renderMessages } from './MessageStream'; // T2-2：消息流域拆分
@@ -247,11 +247,18 @@ export default function ChatArea({
     prevThreadIdRef.current = thread?.id || null;
     activeThreadIdRef.current = thread?.id != null ? String(thread.id) : null;
     const isCreatingThread = !prevId && !!thread?.id; // 新建会话 ≠ 切换会话
+    // P1-13（2026-10-22）：会话级上下文状态在「真实切换」时**无条件**清理。
+    // 此前这些清理写在 `if (thread?.id)` 里 —— 切到「无会话」态（新对话空白页）或从空白态切走时
+    // 一律不清，于是 A 项目拖入的附件、A 会话排队的消息会出现在 B 会话的输入框里（跨项目串上下文）。
+    // 新建会话（undefined→id）不得清：那些附件正是用户刚在当前输入框里拖进来的。
+    if (!isCreatingThread) {
+      setAttachments([]);
+      setLastFailed(null);
+      setQueued([]);
+    }
     if (thread?.id) {
       const reqId = ++msgReqRef.current;
       const fetchStartedAt = Date.now();
-      setLastFailed(null); // 切换会话：失败重试上下文不跨会话
-      setAttachments([]);  // 附件 chips 同为会话级上下文：不跨会话残留（与 openedFiles 同口径）
       setMessages([]);     // 先清空：异步拉取期间禁止显示旧会话消息（串显根因）
       setWindowStart(0);
       api.messages(thread.id).then((list) => {
@@ -266,7 +273,14 @@ export default function ChatArea({
           setMessages((m) => [...m, rsDone.finalMsg]);
         }
       }).catch((err) => {
-        if (reqId === msgReqRef.current) console.warn('[chat] message load failed:', err);
+        if (reqId !== msgReqRef.current) return;
+        // P1-14（2026-10-22）：加载失败必须让用户知道。此前只 console.warn，
+        // 界面呈现为「有标题、没消息、输入框还能用」的空会话——用户以为消息丢了。
+        console.error('[chat] message load failed:', err);
+        setMessages([{
+          role: 'system',
+          content: tGlobal('runtime.messagesLoadFailed', { error: String(err?.message || err) }),
+        }]);
       });
     } else { setMessages([]); setWindowStart(0); }
     // 运行保活（Phase 3-5）：切换会话不再中止在途运行——
@@ -409,7 +423,7 @@ export default function ChatArea({
   }, []);
 
   // T2-2：Agent 运行流程（发送/中止/引导/排队/清空/规划/模式/压缩 + 快捷键）已拆出 hooks/useAgentRun.ts
-  const { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext, activeRunId } = useAgentRun({
+  const { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext, activeRunId, runBaselineSha } = useAgentRun({
     input, loading, selectedModel, project, projectPicked, thread, cwd, mcpTools, enabledSkills,
     fileSkills, memories, agentsMd, approvalSettings, planMode, runMode, worktree, sessionExtras,
     messages, compacting, plan, voice,
@@ -604,6 +618,60 @@ export default function ChatArea({
     teamErr, onClearTeamErr: () => setTeamErr(''), teamBusy,
     onSelectTeam: (team) => { setActiveTeam(team); setTeamErr(''); },
   };
+
+  // P1「撤回本轮」：把本轮改过的文件恢复到 run 开始前的状态。
+  // 三处刻意的取舍：
+  //  ① 恢复源用**基线 SHA** 而不是 HEAD——用户可能在 run 之前就有自己的未提交改动，
+  //    回到 HEAD 会把它们一起丢掉（这是「撤回本轮」与「丢弃全部改动」的区别）；
+  //  ② 先 createBackup 再恢复，沿用既有「5 秒撤销」兜底；
+  //  ③ 恢复是破坏性动作，走 confirm 人工确认 + gitDiscardFiles 的审批闸。
+  async function revertThisRun() {
+    const files = Array.from(agentFilesRef.current || []).filter(Boolean);
+    if (files.length === 0) { toast({ message: tGlobal('message.revertNothing') }); return; }
+    if (!project?.path) return;
+    const ok = await confirm({
+      title: tGlobal('message.revertTitle'),
+      message: tGlobal('message.revertMessage', {
+        n: files.length,
+        base: runBaselineSha ? tGlobal('message.revertBaseRun') : 'HEAD',
+      }),
+      danger: true,
+      confirmLabel: tGlobal('message.revertConfirm'),
+    });
+    if (!ok) return;
+    let snapshotId = null;
+    try {
+      const b = await window.mjcode.createBackup?.({ cwd: project.path, files });
+      if (b?.ok) snapshotId = b.snapshotId;
+    } catch { /* 快照失败不阻断，只是失去「撤销撤回」 */ }
+    try {
+      const r = await window.mjcode.gitDiscardFiles({
+        cwd: project.path, conversationId: thread?.id, files,
+        ...(runBaselineSha ? { source: runBaselineSha } : {}),
+      });
+      if (r?.error) { toast({ message: tGlobal('message.revertFailed', { error: r.error }) }); return; }
+      // 改动已回退：清掉本轮文件标记，让右栏变更面板与收尾条同步刷新
+      agentFilesRef.current = new Set();
+      onAgentFilesChange?.([]);
+      toast({
+        message: tGlobal('message.reverted', { n: files.length }),
+        ...(snapshotId ? {
+          actionLabel: tGlobal('app.undo'),
+          onAction: async () => {
+            try { await window.mjcode.restoreBackup?.({ snapshotId }); } catch (e) { console.warn('[chat] revert-undo failed:', e); }
+          },
+        } : {}),
+      });
+    } catch (err) {
+      toast({ message: tGlobal('message.revertFailed', { error: String(err?.message || err) }) });
+    }
+  }
+  // 收尾条按钮 → 派发事件过来（RunFooter 不需要知道会话与基线的细节）
+  useEffect(() => {
+    const onRevert = () => { revertThisRun(); };
+    window.addEventListener('mjcode:revert-run', onRevert);
+    return () => window.removeEventListener('mjcode:revert-run', onRevert);
+  });
 
   // 欢迎页
   if (!thread) {

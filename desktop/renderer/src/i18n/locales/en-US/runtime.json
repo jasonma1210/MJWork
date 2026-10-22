@@ -73,5 +73,6 @@
   "memSaved": "Saved to project memory",
   "memSaveFailed": "Failed to save memory: {error}",
   "threadCreateFailed": "Failed to create the conversation; this run has been stopped: {error}\nTry again; if it keeps failing, check that the local conversation store is writable.",
-  "messageSendFailed": "Failed to write the message to the local conversation; this run has been stopped: {error}\nYour input has been kept, so you can retry directly."
+  "messageSendFailed": "Failed to write the message to the local conversation; this run has been stopped: {error}\nYour input has been kept, so you can retry directly.",
+  "messagesLoadFailed": "Failed to load messages: {error} (switch session or reload to retry)"
 }

@@ -1,3 +1,7 @@
+// P1-8：本套件聚焦「capability 门 / 角色白名单 / MCP 去重」等工具面裁剪规则，
+// 与「宿主是否提供该通道」正交。可用性闸会用最小 handler 夹具把工具裁光，
+// 淹没本套件的结论 —— 故在此关闭它（闸本身由 test/tool-availability.test.mjs 覆盖）。
+process.env.MJCODE_TOOL_AVAILABILITY = '0';
 // 第七轮审查 F-007 / B1-B-06 门禁：MCP 工具**定义**侧的长度闸 + 不可信标记
 //
 // 现状（改前）：第三方 server 的 `description` / `inputSchema` 被 `shared/mcpToolDefs.mjs`

@@ -62,5 +62,7 @@
   "filterRunning": "运行中",
   "filterAwaiting": "待审批",
   "cmdSummary": "打开任务摘要",
-  "cmdTerminal": "打开终端"
+  "cmdTerminal": "打开终端",
+  "threadDeleteFailed": "删除会话失败：{error}",
+  "loadFailed": "数据加载失败：{error}（部分列表可能为空，可刷新重试）"
 }

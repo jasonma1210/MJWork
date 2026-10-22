@@ -4,6 +4,7 @@ import { runAgent, decomposeTask, looksLargeTask } from '../lib/agent';
 // P0-4：上下文压缩实现移到独立模块（窗口现算 / 运行中守卫 / 撤销带），本文件只做状态装配
 import { compactSession } from '../lib/compactSession';
 import { createRunLifecycleCallbacks } from '../lib/runLifecycle';
+import { captureBaseline } from '../lib/runBaseline';
 import { getModelOverrides, buildRunModel } from '../lib/modelConfig';
 import { api } from '../lib/api';
 import { toast } from '../components/feedback';
@@ -50,6 +51,8 @@ export default function useAgentRun(d) {
   // P0-6：在役 runId（state，供 TodoPanel 等视图层订阅本轮的 todos 事件）。
   // ref 版本（activeRunIdRef）继续承担「归属判定」，两者用途不同：ref 不缺一次重渲染。
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  // P1「撤回本轮」：本轮开始前的工作区基线 SHA（空串 = 工作区当时干净，撤回回到 HEAD）
+  const [runBaselineSha, setRunBaselineSha] = useState('');
 
   // 停止 = 只中止「当前查看会话」的运行（注册表按 threadId 精确取 controller，
   // signal 触发后 agent.js 调 mj.agentAbort(runId) 按 run 中止）。
@@ -429,10 +432,11 @@ export default function useAgentRun(d) {
     rs.startedAt = Date.now();
     runStartRef.current = rs.startedAt;
     activeRunIdRef.current = runSeqLocal;
-    // P0-6（2026-10-22）：runId 以 **state** 形式暴露给视图层。
-    // 此前只有 ref（不触发重渲染），于是 TodoPanel 拿不到 runId、`if (!runId) return` 恒成立，
-    // todo_write 维护的进度清单永远不会显示——引擎在发事件、UI 一个字都看不到。
+    // P0-6：runId 必须以 state 暴露——ref 不触发重渲染，TodoPanel 会恒判 `!runId` 而永不显示
     setActiveRunId(runSeqLocal);
+    // P1「撤回本轮」：记录 run 前的工作区基线（采集与降级见 lib/runBaseline）
+    const baselineSha = await captureBaseline(executionRoot);
+    rs.baselineSha = baselineSha; setRunBaselineSha(baselineSha);
 
     // V20：完成收尾从 onDone 回调抽出为具名异步函数——回调侧统一 await + catch，
     // 内部异常不再脱离主 Promise 被静默吞掉。
@@ -772,8 +776,7 @@ export default function useAgentRun(d) {
   }
 
   // /compact：把早期对话摘要化，保留最近若干轮（对标 Codex 的上下文压缩）
-  // P0-4（2026-10-22）：实现移到 lib/compactSession（窗口现算 / 运行中守卫 / 撤销带三条都在那里），
-  // 本函数只负责 compacting 状态与依赖装配——hook 已贴 800 行软档（门禁只减不增）。
+  // P0-4：实现移到 lib/compactSession（窗口现算 / 运行中守卫 / 撤销带）；此处只做状态装配
   async function compactContext() {
     if (compacting) return;
     setCompacting(true);
@@ -791,5 +794,6 @@ export default function useAgentRun(d) {
   }
 
   // P0-6：activeRunId 供视图层（TodoPanel）按 run 订阅 todos 事件，run 结束后为 null
-  return { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext, activeRunId };
+  // P1：runBaselineSha 供「撤回本轮」把文件恢复到这一轮之前的状态
+  return { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext, activeRunId, runBaselineSha };
 }

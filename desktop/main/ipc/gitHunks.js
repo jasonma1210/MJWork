@@ -137,6 +137,8 @@ function registerDestructiveGitIpc(ipcMain, deps, runGit) {
   const DESTRUCTIVE_INPUT_SPEC = {
     cwd: { max: 4096, optional: true, allowEmpty: true },
     conversationId: { max: 200, optional: true, allowEmpty: true },
+    // P1：「撤回本轮」的基线 SHA（run:createBaseline 产出）。只放行十六进制，见通道内注释。
+    source: { max: 64, optional: true, allowEmpty: true },
   };
 
   ipcMain.handle('tool:gitCheckout', async (_, { cwd, files, conversationId } = {}) => {
@@ -163,14 +165,37 @@ function registerDestructiveGitIpc(ipcMain, deps, runGit) {
   // 为什么不用「先 restore --staged 再 checkout」两步：那是两次 IPC，也就是**两张审批卡**，
   // 用户点一次「放弃修改」要连点两次确认。合成一条命令 = 一次审批、一次执行、原子性更好。
   // 批量放弃也走这条通道，避免「逐个文件 checkout」把审批卡刷成 N 张。
-  ipcMain.handle('tool:gitDiscardFiles', async (_, { cwd, files, conversationId } = {}) => {
-    const bad = payloadShapeError({ cwd, files, conversationId }, DESTRUCTIVE_INPUT_SPEC, { arrayKey: 'files' });
+  //
+  // P1（2026-10-22）「撤回本轮」：source 允许指定 run 开始时的基线 SHA（由 run:createBaseline 取得）。
+  // 不指定时仍是 HEAD（原有语义）。**只接受十六进制 SHA**——这是防注入的关键：
+  // 该值会拼进 git 参数，若允许任意字符串，`--source=--force` 这类就能改语义。
+  ipcMain.handle('tool:gitDiscardFiles', async (_, { cwd, files, conversationId, source } = {}) => {
+    const bad = payloadShapeError({ cwd, files, conversationId, source }, DESTRUCTIVE_INPUT_SPEC, { arrayKey: 'files' });
     if (bad) return bad;
     const list = toList(files);
     if (list.length === 0) return { stdout: '', stderr: 'files required', error: 'files required' };
+    const src = typeof source === 'string' && /^[0-9a-f]{7,40}$/i.test(source) ? source : 'HEAD';
     const g = await guardDestructive(deps, 'git_checkout', { cwd, files: list.join(' ') }, conversationId);
     if (!g.ok) return { stdout: '', stderr: g.error, error: g.error, denied: true };
-    return runGit(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...list], cwd);
+    return runGit(['restore', `--source=${src}`, '--staged', '--worktree', '--', ...list], cwd);
+  });
+
+  // P1（2026-10-22）：记录 run 开始前的工作区状态，供「撤回本轮」用。
+  // `git stash create` 只生成一个 commit 对象并返回 SHA——**不改工作区、不写 stash 列表**，
+  // 因此是纯读操作，不需要审批。工作区干净时它返回空，此时撤回等价于回到 HEAD。
+  ipcMain.handle('run:createBaseline', async (_, { cwd } = {}) => {
+    const bad = payloadShapeError({ cwd }, DESTRUCTIVE_INPUT_SPEC);
+    if (bad) return bad;
+    if (!cwd) return { ok: false, reason: 'cwd 缺失，无法建立基线' };
+    try {
+      const r = await runGit(['stash', 'create'], cwd);
+      const raw = String(r?.stdout || '').trim();
+      const sha = /^[0-9a-f]{7,40}$/i.test(raw) ? raw : '';
+      // sha 为空有两种正常情况：工作区干净（撤回=回到 HEAD）、非 git 目录（撤回会失败并如实报错）
+      return { ok: true, sha, clean: !sha };
+    } catch (e) {
+      return { ok: false, reason: String(e?.message || e).slice(0, 200) };
+    }
   });
 }
 

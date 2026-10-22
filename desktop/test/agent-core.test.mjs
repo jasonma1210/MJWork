@@ -1,3 +1,6 @@
+// P1-8：本套件用最小 handler 夹具测引擎核心（含压缩触发），而可用性闸会按通道裁掉工具、
+// 连带改变上下文规模，使压缩阈值类断言失真。闸本身由 tool-availability.test.mjs 覆盖。
+process.env.MJCODE_TOOL_AVAILABILITY = '0';
 // agent-core 直测：toolHandlers 注入式（无 window 依赖）
 // 覆盖：中间消息持久化 / cwd 注入 / usage 归属 / abort / 上下文压缩 /
 //       AGENTS.md 注入 / 子代理 / 预算 / session.jsonl 落盘 / CLI 冒烟

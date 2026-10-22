@@ -38,5 +38,13 @@
   "pathCopied": "路径已复制",
   "outputFiles": "本轮产出 {n} 个文件",
   "diagramRendering": "图表渲染中…",
-  "diagramRenderFailed": "图表渲染失败（Mermaid 语法有误）"
+  "diagramRenderFailed": "图表渲染失败（Mermaid 语法有误）",
+  "revertRun": "撤回本轮",
+  "revertNothing": "本轮没有需要撤回的改动",
+  "revertTitle": "撤回本轮改动？",
+  "revertMessage": "将把本轮改过的 {n} 个文件恢复到{base}的状态，这些文件里未提交的内容会被丢弃。",
+  "revertBaseRun": "本轮开始前",
+  "revertConfirm": "撤回",
+  "reverted": "已撤回 {n} 个文件的改动",
+  "revertFailed": "撤回失败：{error}"
 }

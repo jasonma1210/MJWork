@@ -38,5 +38,13 @@
   "pathCopied": "Path copied",
   "outputFiles": "Output files ({n})",
   "diagramRendering": "Rendering diagram…",
-  "diagramRenderFailed": "Diagram render failed (invalid Mermaid syntax)"
+  "diagramRenderFailed": "Diagram render failed (invalid Mermaid syntax)",
+  "revertRun": "Revert this run",
+  "revertNothing": "This run has no changes to revert",
+  "revertTitle": "Revert changes from this run?",
+  "revertMessage": "The {n} file(s) changed in this run will be restored to {base}. Uncommitted content in those files will be lost.",
+  "revertBaseRun": "the state before this run",
+  "revertConfirm": "Revert",
+  "reverted": "Reverted changes in {n} file(s)",
+  "revertFailed": "Revert failed: {error}"
 }
