@@ -22,9 +22,10 @@ function check(name, ok, detail = '') {
 const WINDOW = 20000;
 check('TRIM_TRIGGER_RATIO === 0.7（与压缩阈值同源）', TRIM_TRIGGER_RATIO === 0.7, `got=${TRIM_TRIGGER_RATIO}`);
 
-// 构造：31 条 assistant/user 交替消息，每条约 1500 字符 ≈ 379 tokens ⇒ 合计 ≈ 11.7k ≈ 窗口 59%
-// （规格 §4 的「≈12k ≈60%」；注意「31 对」若按 62 条算会到 116% 直接触发压缩，故按 31 条构造）
-const history = Array.from({ length: 31 }, (_, i) => ({
+// 构造：27 条 assistant/user 交替消息，每条约 1500 字符 ≈ 379 tokens ⇒ 合计 ≈ 10.2k
+// 加上 SYSTEM 后约 60% 窗口（2026-10-22：BASE_PROMPT 增补工具选择纪律后从 2376→2776 字符，
+// 原 31 条的构造被顶到 ~69%，贴着 70% 触发线；条数下调让夹具留出余量，而不是抬高窗口掩盖）
+const history = Array.from({ length: 27 }, (_, i) => ({
   role: i % 2 === 0 ? 'assistant' : 'user',
   content: `第 ${i} 段：${'y'.repeat(1480)}`,
 }));

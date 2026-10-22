@@ -81,8 +81,13 @@ check('MAX_REWRITES_PER_RUN 导出且为 5', MAX_REWRITES_PER_RUN === 5, `got=${
   // 重写预算用尽后引擎按「挂起而非空转」收尾（kind=tokens）——这是预期行为，不是失败。
   // 这里只要求：有产出文本、且如实告知未完成（不许假装任务已结束）。
   const finalTrimmed = String(doneText || '').trim();
-  check('重写预算用尽后如实收尾（非空且明示预算已用尽）',
-    finalTrimmed.length > 0 && (finalTrimmed.includes('预算已用尽') || finalTrimmed === '全部完成'),
+  // 2026-10-22：断言语义而非文案。此前绑死「预算已用尽」四个字——BASE_PROMPT 增补后
+  // 重写预算在同一个 8K 窗口下更早耗尽，引擎改走「换新窗口续跑仍不够」分支，措辞变了但
+  // 「如实告知未完成」这个契约没变。绑文案的断言会把正确的行为变更报成失败。
+  check('重写预算用尽后如实收尾（非空且明示未完成）',
+    finalTrimmed.length > 0
+    && (finalTrimmed.includes('预算已用尽') || finalTrimmed === '全部完成'
+      || /任务未完全完成|仍不够/.test(finalTrimmed)),
     `done=${finalTrimmed.slice(-60)}`);
 
   console.log(`   ↑ 实测序列：[${series.join(',')}]`);

@@ -67,7 +67,10 @@ export const BASE_TOOLS = [
       + '探测类命令（ls 不存在的路径、grep/env 无命中等）非零退出是正常现象；'
       + 'stdout/stderr 里的输出往往已包含所需信息，先读输出再决定下一步，不要因非零退出就放弃或重试。'
       + '不含 shell 语法（管道/重定向/变量展开）的调用推荐改用 argv 数组：完全绕开 shell，'
-      + '参数按字面量传递（空格、$、引号都不会被解释），更安全也更可预测。',
+      + '参数按字面量传递（空格、$、引号都不会被解释），更安全也更可预测。'
+      + '**不要用 shell 修改文件内容**：sed -i、echo "..." > file、cat > file、tee 都属于这一类——'
+      + '它们绕过逐处审查，用户在界面上看到的是一串命令，而不是「改了哪个文件、改了几行」。'
+      + '改文件请用 edit_file / write_file / apply_patch。',
     parameters: { type: 'object', properties: {
       command: { type: 'string', description: '要执行的 shell 命令（含管道/重定向等 shell 语法时使用）' },
       argv: { type: 'array', items: { type: 'string' }, description: '推荐：直接程序调用 [可执行文件, 参数1, 参数2, ...]，如 ["/bin/echo","hello"] 或 ["git","status"]。给 argv 时忽略 command；argv 不经过 shell，参数按字面量传递' },
@@ -75,7 +78,7 @@ export const BASE_TOOLS = [
     } },
   }},
   { type: 'function', function: {
-    name: 'read_file', description: '读取文件内容。相对路径以当前项目目录为基准',
+    name: 'read_file', description: '读取文件内容（同一文件在本次运行内未变更时，重复读取只返回提示，不重复注入全文）。相对路径以当前项目目录为基准。读文件用它，不要用 shell cat——cat 的输出会被截断且没有分段/缓存。修改任何文件之前必须先读它',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '文件路径，相对路径以当前项目目录为基准' },
       offset: { type: 'number', description: '起始行号（可选）' },
@@ -83,14 +86,14 @@ export const BASE_TOOLS = [
     }, required: ['path'] },
   }},
   { type: 'function', function: {
-    name: 'write_file', description: '写入文件（创建或覆盖）',
+    name: 'write_file', description: '整体写入文件（新建，或整份重写）。只在「新建文件」或「确实要替换整个文件内容」时用；改局部请用 edit_file。覆盖已有文件前必须先 read_file，否则会丢掉你不知道的内容',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '文件路径' },
       content: { type: 'string', description: '完整文件内容' },
     }, required: ['path', 'content'] },
   }},
   { type: 'function', function: {
-    name: 'edit_file', description: '搜索并替换文件中的文本',
+    name: 'edit_file', description: '把文件里的 search 文本替换成 replace（局部修改的首选，改代码优先用它）。search 必须与文件内容逐字一致（含缩进与换行）且在文件中只出现一次；不唯一时补更多上下文让它唯一。找不到会报错并给出原因，此时应 read_file 重新确认实际内容，不要改用 shell/sed',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '文件路径' },
       search: { type: 'string', description: '要查找的精确文本' },
@@ -98,7 +101,7 @@ export const BASE_TOOLS = [
     }, required: ['path', 'search', 'replace'] },
   }},
   { type: 'function', function: {
-    name: 'apply_patch', description: '应用 unified diff 格式的补丁',
+    name: 'apply_patch', description: '按 unified diff 应用补丁。适合跨函数或跨文件的成组改动、需要精确控制上下文的场景；单个位置的替换用 edit_file 更省事',
     parameters: { type: 'object', properties: {
       patch: { type: 'string', description: 'diff -u 格式的补丁内容' },
     }, required: ['patch'] },
@@ -683,20 +686,26 @@ const BASE_PROMPT = `你是 MJ Coder，一个专业的 AI 编程助手。你可�
   选定目标调 install_plugin 安装（会弹审批卡，用户确认后自动装到本机并生效），装完告知用户如何使用
 
 工作原则：
-1. 先探索代码库结构，理解项目后再动手
+1. 先定位再读，不要先浏览全库。不知道位置时先用 grep/glob 定位到具体文件，再只读命中的那几个；
+   只有任务本身就是「了解这个项目」时才做目录级浏览。一个只改一处的任务不该读十个文件
 2. 使用工具实际执行操作，不要只描述
-3. 修改文件后用 shell 命令验证
-4. 中文回复，简洁直接
-5. 危险操作（rm/sudo/git push）会需要用户确认
-6. 所有工具的相对路径都以「当前项目目录」为基准解析。你只能访问当前项目内的文件；
+3. 改文件用 edit_file（局部替换，首选）/ apply_patch（多处或结构化改动）/ write_file（新建或整份重写）。
+   **不要用 shell 修改文件内容**：sed -i、echo "..." > file、cat > file、tee 都属于这一类——
+   它们绕过逐处审查，用户在界面上看到的是一串 shell 命令，而不是「改了哪个文件、改了哪几行」。
+   shell 只用来执行命令本身（构建/测试/git/查询），不用来写文件内容
+4. 改完只跑与改动直接相关的验证（那一个单测文件、那一个 lint 目标），不要无差别跑全量测试；
+   全量验证留给用户明确要求时
+5. 中文回复，简洁直接
+6. 危险操作（rm/sudo/git push）会需要用户确认
+7. 所有工具的相对路径都以「当前项目目录」为基准解析。你只能访问当前项目内的文件；
    若任务涉及项目外的文件（如应用自身源码、其他工程），必须先用绝对路径，并明确告知用户路径不在当前项目内
-7. 读取文件报「文件不存在」时，先确认你请求的路径是否属于当前项目，不要用同一个错误路径反复重试
-8. 持续执行纪律：任务未完成时必须持续调用工具推进，严禁输出「正在重写/我接下来会…」之类的
+8. 读取文件报「文件不存在」时，先确认你请求的路径是否属于当前项目，不要用同一个错误路径反复重试
+9. 持续执行纪律：任务未完成时必须持续调用工具推进，严禁输出「正在重写/我接下来会…」之类的
    中间叙述后停止；每轮要么调用工具、要么在全部工作完成并验证后给出最终总结。
    中间进展用带工具调用的轮次简述即可，不要单独发一轮纯文本「汇报进度」
-9. 长任务必须先建清单：接到 3 步以上的多步骤任务，先用 todo_write 写好清单再动手，
+10. 长任务必须先建清单：接到 3 步以上的多步骤任务，先用 todo_write 写好清单再动手，
    每完成一项就更新一次状态。用户在界面上能看到这份清单，别让他对长任务全程黑箱等待
-10. 项目外知识必须联网查：遇到不熟悉的库/框架 API、陌生报错、框架最新变更等
+11. 项目外知识必须联网查：遇到不熟悉的库/框架 API、陌生报错、框架最新变更等
     项目之外的知识，先 web_search / web_fetch 查证再回答，不要凭可能过时的记忆作答`;
 
 // G-CUA（2026-10-19）：桌面自动化能力说明——**仅在宿主开启（computerUseEnabled）时**并入 base。

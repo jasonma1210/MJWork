@@ -140,5 +140,39 @@ check('B7 activate_tools 有执行分支且单调累积（不删已加载的工�
   check('D9 可用性闸的告警文案含条数与样例（可诊断）', /下架 \$\{removed\.length\} 个/.test(AVAIL_SRC));
 }
 
+// ── E. 工具选择指导（2026-10-22 真机反馈）──
+// 症状：明明能 edit_file，模型用 shell 拼 sed；窄任务把一堆无关工具过一遍。
+// 根因不是「工具太多」，而是**描述信息不对称**——shell 的说明有 400 字符（还教 argv 怎么用），
+// 而 edit_file 只有 8 个字「搜索并替换文件中的文本」。模型自然挑信息更充分的那个。
+// 另外 BASE_PROMPT 里「先探索代码库结构」「修改文件后用 shell 命令验证」两条在直接鼓励这两个症状。
+{
+  const { BASE_TOOLS } = await import('../agent-core/index.js');
+  const descOf = (n) => BASE_TOOLS.find((t) => t.function.name === n)?.function.description || '';
+
+  check('E1 edit_file 描述说明了「改代码优先用它」', /首选|优先/.test(descOf('edit_file')));
+  check('E2 edit_file 描述含失败处置（重新读，而不是改用 sed）',
+    /read_file 重新确认/.test(descOf('edit_file')) && /不要改用 shell/.test(descOf('edit_file')));
+  check('E3 shell 描述明确禁止用来改文件', /不要用 shell 修改文件内容/.test(descOf('shell')));
+  check('E4 shell 描述给出反模式清单（sed -i / 重定向 / tee）',
+    /sed -i/.test(descOf('shell')) && /cat > file/.test(descOf('shell')));
+  check('E5 write_file 描述划清了与 edit_file 的边界', /改局部请用 edit_file/.test(descOf('write_file')));
+  check('E6 read_file 描述点明不要用 shell cat', /不要用 shell cat/.test(descOf('read_file')));
+  check('E7 文件工具的说明长度不再显著短于 shell（信息对称是选择偏好的前提）',
+    descOf('edit_file').length >= descOf('shell').length / 4,
+    `edit=${descOf('edit_file').length} shell=${descOf('shell').length}`);
+
+  // BASE_PROMPT 的两条诱因必须已修掉（否则描述改得再好也会被系统提示拽回去）
+  check('E8 系统提示不再要求「先探索代码库结构」（那是窄任务到处翻的根因）',
+    !/先探索代码库结构/.test(ENGINE_SRC));
+  check('E9 系统提示改为「先定位再读」并说明窄任务不该读一堆文件',
+    /先定位再读，不要先浏览全库/.test(ENGINE_SRC) && /不该读十个文件/.test(ENGINE_SRC));
+  check('E10 系统提示不再说「修改文件后用 shell 命令验证」',
+    !/修改文件后用 shell 命令验证/.test(ENGINE_SRC));
+  check('E11 系统提示写明改文件的三档工具与 shell 的分工',
+    /改文件用 edit_file（局部替换，首选）/.test(ENGINE_SRC) && /不用来写文件内容/.test(ENGINE_SRC));
+  check('E12 系统提示要求「只跑相关验证」而非无差别全量',
+    /不要无差别跑全量测试/.test(ENGINE_SRC));
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);
