@@ -2,7 +2,6 @@
 import { IconHammer, IconRefresh, IconSearch, IconWrench, IconZap } from './icons';
 import InlineAlert from './InlineAlert';
 import WorktreeBar from './WorktreeBar';
-import TodoPanel from './TodoPanel';
 import AgentDock from './AgentDock';
 import Composer from './Composer';
 import { projectDisplayName } from '../lib/projectName';
@@ -87,8 +86,10 @@ export default function WelcomePage({
         onClosed={() => { setWorktree(null); setRunMode('local'); }}
         onMsg={(m) => setModeMsg(m)}
       />
-      {/* P0-B：任务清单——让长任务的进度对用户可见（模型经 todo_write 实时维护） */}
-      <TodoPanel />
+      {/* P0-6（2026-10-22）：此处原本挂任务清单组件但从不传 runId。
+          欢迎页属于「无会话」态，按定义不存在在役 run，组件首行 `if (!runId) return`
+          使它恒为 null——是一个永不渲染的挂载（死代码）。真实的任务清单挂在 ChatArea
+          （那里能拿到 activeRunId）。 */}
       {/* WorkBuddy 式 Agent 运行胶囊：在役数字员工一览（点击展开流程与强制关闭） */}
       <AgentDock />
       <Composer {...composerProps} workspaceBound={false} />

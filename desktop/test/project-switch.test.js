@@ -155,8 +155,8 @@ check('历史重放的 tool 卡片与运行中卡片一致', () => {
   // 2026-10-17（排版调整）：运行态不再单独挂在消息流最底部，而是把 liveCalls 并入「最后一轮」
   // 由 RoundBlock 与答复正文之上的 ToolTraceGroup 统一渲染——用户要求轨迹出现在回复第一行。
   const chat = read('components/MessageStream.tsx');
-  assert.match(chat, /renderMessages\(visibleMessages,[^)]*toolCalls\)/,
-    '运行态轨迹未并入最后一轮（应经 renderMessages 的 liveCalls 参数传入）');
+  assert.match(chat, /renderMessages\(visibleMessages,[^)]*toolCalls, !!loading\)/,
+    '运行态轨迹未并入最后一轮（应经 renderMessages 的 liveCalls 参数传入，并在 P0-7 起同时传 running）');
   assert.match(chat, /extraCalls=\{it\.no === lastRoundNo \? liveCalls : \[\]\}/,
     'RoundBlock 未接收最后一轮的 liveCalls');
   assert.doesNotMatch(chat, /<ToolTraceGroup calls=\{toolCalls\}/,

@@ -70,7 +70,10 @@ export const suspendedDataSchema = z.object({
   saved: z.boolean(),
   // 'timeout'：模型调用超时（供应商挂起）时先存断点再抛错——断点同样可被「继续」接续。
   // 不收进此枚举会让该事件被安全降级成 error 事件，用户看到一条契约失败提示。
-  kind: z.enum(['tokens', 'rounds', 'timeout']),
+  // 'wallclock'（2026-10-22 P0-3）：整任务墙钟触顶。引擎在 agent-core 里就发这个值，
+  // 但枚举此前只有前三个 —— 于是任何超过默认 30 分钟的任务都被降级成 error 并 reject 整轮，
+  // 主进程却仍在收尾落库，表现为「界面报契约失败、库里却有总结」。补登记修掉。
+  kind: z.enum(['tokens', 'rounds', 'timeout', 'wallclock']),
   summary: z.string(),
   usage: z.any().optional(),
   roundsUsed: z.number(),

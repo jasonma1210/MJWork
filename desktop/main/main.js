@@ -89,6 +89,13 @@ function broadcastApprovalEnd(approvalId, reason) {
   } catch { /* 窗口已销毁时无需广播 */ }
 }
 
+// P0-5（2026-10-22）：审批归属解析——runId → 发起它的会话（实现见 approvalOrigin.js）。
+// 用 getter 延迟求值：agentRunner / localStore 都在本文件下方才就绪，而审批随时可能发生。
+const resolveApprovalOrigin = require('./approvalOrigin').createApprovalOriginResolver({
+  getAgentRunner: () => agentRunner,
+  getLocalStore: () => localStore,
+});
+
 function requestApproval(tool, args) {
   const summary = approval.approvalSummary(tool, args);
   const approvalId = approvalChannel.nextId();
@@ -104,7 +111,13 @@ function requestApproval(tool, args) {
     return waitP;
   }
   // V21：审批卡需显示请求来源的工作根——cwd 随摘要下发（无 cwd 时不带该字段）
-  win.webContents.send('tool:approval-request', { approvalId, tool, rememberable: approval.isRememberable(tool), ...(args?.cwd ? { cwd: args.cwd } : {}), ...summary });
+  // P0-5：同时带上发起会话的归属（threadId/threadTitle），供审批卡标注「来自哪个会话」，
+  // 并让渲染层把 awaiting_approval 写到**那个**会话而不是当前正在看的会话。
+  win.webContents.send('tool:approval-request', {
+    approvalId, tool, rememberable: approval.isRememberable(tool),
+    ...(args?.cwd ? { cwd: args.cwd } : {}), ...summary,
+    ...resolveApprovalOrigin(runScope.getStore()?.runId || null),
+  });
   return waitP;
 }
 
@@ -1035,6 +1048,9 @@ agentRunner.initAgentRunner({
     if (!localStore) throw new Error('本地数据层未初始化');
     return localStore.addMessage({ threadId: conversationId, ...message });
   },
+  // P0-1（2026-10-22）：运行历史的唯一读取口——agentRunner 用它从会话库装配 messages，
+  // 取代渲染层内存快照（后者只含用户消息与最终总结，中间工具往返不在其中 ⇒ 刷新前后两种行为）。
+  listMessages: (conversationId) => (localStore ? localStore.listMessages(conversationId) : []),
   // V08：持久 ACK——最终总结落库后强制刷盘，只有 durable 成功才允许 mainPersisted:true
   flushPersistence: () => {
     if (!localStore) return { ok: false, error: '本地数据层未初始化' };

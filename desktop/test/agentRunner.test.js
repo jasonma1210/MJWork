@@ -1,6 +1,6 @@
 // P0-4 主进程 Agent 运行器测试：事件流 / 中止 / 未知 runId / sender 销毁防护 / done 兜底
 // T0-2 追加：启动载荷契约拒绝（fail-closed）/ 非法事件降级为 error（不静默）
-const { initAgentRunner, startAgentRun, abortRun, abortAllRuns, agentRunnerReady } = require('../main/agentRunner');
+const { initAgentRunner, startAgentRun, abortRun, abortAllRuns, agentRunnerReady, getConversationIdFor } = require('../main/agentRunner');
 
 let pass = 0;
 let fail = 0;
@@ -210,6 +210,106 @@ const vp = (runId, extra = {}) => ({
     await sleep(30);
     check('无 rolePreset 时引擎参数不带该字段（行为与既往一致）',
       seenOpts[2]?.rolePreset === undefined && seenOpts[2]?.approvalMode === 'on-request');
+  }
+
+  // ── P0-1（2026-10-22）：运行历史的唯一真源是会话库 ──
+  // 事故形状：渲染层 messagesRef 只含「用户消息 + 最终总结」（中间 assistant(tool_calls)/tool
+  // 结果由本文件落库、但 message 事件不再转发），于是同一会话「不刷新」时模型看不到自己上一轮
+  // 读过什么、跑过什么；「刷新一次」（从库全量拉回）历史又完整了 —— 同一会话两种行为，不可复现。
+  // 本门禁守四件事：库为真源 / 形状转换 / 刷新前后一致 / 装配失败不挡运行。
+  {
+    // 库里的真实存储形状（localStore camelCase）：一次完整工具往返 + 上一轮总结 + 本轮诉求
+    // （本轮 user 已由渲染层在发起 run 前落库 —— 这是正常路径的事实，不是测试造的特例）
+    const stored = [
+      { role: 'user', content: '改一下登录' },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.js"}' } }] },
+      { role: 'tool', content: 'file body', toolCallId: 'c1' },
+      { role: 'assistant', content: '已改好' },
+      { role: 'user', content: '第二个文件呢' },
+    ];
+    const seen = [];
+    const runWith = async (runId, extra) => {
+      // listMessages 是宿主依赖，不是载荷字段：先摘出来，避免把函数混进 IPC 载荷
+      const { listMessages: listFn, ...payloadExtra } = extra;
+      initAgentRunner({
+        loadAgentCore: async () => ({
+          runAgent: async (opts) => { seen.push(opts); opts.onDone?.('ok', null, false); return 'ok'; },
+        }),
+        createToolHandlers: () => ({}),
+        persistMessage: () => {},
+        listMessages: typeof listFn === 'function' ? listFn : () => stored,
+      });
+      startAgentRun(vp(runId, payloadExtra), makeSender());
+      await sleep(30);
+      return seen[seen.length - 1];
+    };
+
+    const first = await runWith('h1', { conversationId: '7', messages: [{ role: 'user', content: '第二个文件呢' }] });
+    const msgs = first?.messages || [];
+    check('P0-1 历史来自会话库（含工具往返，不依赖渲染层内存）', msgs.length === 5, `len=${msgs.length}`);
+    check('P0-1 工具调用转模型形状（toolCalls→tool_calls）',
+      Array.isArray(msgs[1]?.tool_calls) && msgs[1].tool_calls[0]?.id === 'c1' && !('toolCalls' in msgs[1]));
+    check('P0-1 工具结果保留 tool_call_id', msgs[2]?.role === 'tool' && msgs[2]?.tool_call_id === 'c1');
+    check('P0-1 本轮诉求在末位且未把旧 user 顶到开头',
+      msgs[0]?.content === '改一下登录' && msgs[4]?.role === 'user' && msgs[4]?.content === '第二个文件呢');
+
+    // 刷新一致性：把载荷换成「刷新后从库拉回的全量快照」——发给模型的必须逐字段相同
+    const second = await runWith('h2', {
+      conversationId: '7',
+      messages: [...stored.map((m) => ({ role: m.role, content: m.content })), { role: 'user', content: '第二个文件呢' }],
+    });
+    check('P0-1 刷新前后发给模型的历史逐字段一致',
+      JSON.stringify(second?.messages) === JSON.stringify(first?.messages));
+
+    // vision 部件只在运行期存在（落库恒为文本）：payload 版必须原样保留部件
+    const parts = [{ type: 'text', text: '看图' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,x' } }];
+    const third = await runWith('h3', { conversationId: '7', messages: [{ role: 'user', content: parts }] });
+    check('P0-1 payload 版本轮消息原样入史（vision 部件不被库里的纯文本版覆盖）',
+      Array.isArray(third?.messages?.[4]?.content) && third.messages[4].content.length === 2);
+
+    // 末尾不是 user（本轮未落库 / 上一轮中断）⇒ 追加，不得回头覆盖旧 user
+    const fourth = await runWith('h4', {
+      conversationId: '9',
+      messages: [{ role: 'user', content: '新问题' }],
+      listMessages: () => stored.slice(0, 4),
+    });
+    check('P0-1 库末尾非 user 时追加本轮（顺序不被打乱）',
+      fourth?.messages?.length === 5 && fourth.messages[4]?.content === '新问题' && fourth.messages[0]?.content === '改一下登录');
+
+    // 加固：库读取抛错 / 宿主未注入 —— 回落载荷，绝不挡运行
+    const fifth = await runWith('h5', {
+      conversationId: '10',
+      messages: [{ role: 'user', content: '只有本轮' }],
+      listMessages: () => { throw new Error('corrupt'); },
+    });
+    check('P0-1 库读取异常时回落载荷（fail-open）',
+      JSON.stringify(fifth?.messages) === JSON.stringify([{ role: 'user', content: '只有本轮' }]));
+    const sixth = await runWith('h6', { messages: [{ role: 'user', content: '无会话 id' }] });
+    check('P0-1 无会话 id 时回落载荷（纯工具调用/测试通道不受影响）',
+      JSON.stringify(sixth?.messages) === JSON.stringify([{ role: 'user', content: '无会话 id' }]));
+  }
+
+  // ── P0-5（2026-10-22）：审批归属——runId → 发起它的会话 ──
+  // 事故形状：审批载荷只有 tool/cwd，后台会话（本产品支持切走继续跑）的审批卡与当前会话
+  // 长得一模一样；渲染层还把 awaiting_approval 写到 activeThread ⇒ 亮错会话、真在等的会话不亮。
+  // 归属信息的唯一来源是这里：run 启动时登记，run 结束即删。
+  {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    initAgentRunner({
+      loadAgentCore: async () => ({
+        runAgent: async (opts) => { opts.onDone?.('ok', null, false); await gate; return 'ok'; },
+      }),
+      createToolHandlers: () => ({}),
+      persistMessage: () => {},
+    });
+    startAgentRun(vp('c1', { conversationId: 'thread-42' }), makeSender());
+    await sleep(30);
+    check('P0-5 run 进行中可反查发起会话', getConversationIdFor('c1') === 'thread-42', `got=${getConversationIdFor('c1')}`);
+    check('P0-5 未知 runId 返回 null（不臆造归属）', getConversationIdFor('no-such-run') === null);
+    release();
+    await sleep(60);
+    check('P0-5 run 结束后清理映射（Map 无界增长防线）', getConversationIdFor('c1') === null, `got=${getConversationIdFor('c1')}`);
   }
 
   console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

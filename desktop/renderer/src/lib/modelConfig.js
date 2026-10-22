@@ -91,6 +91,22 @@ export function effectiveContextWindow(provider, model) {
   return resolveContextWindow(provider, model).window;
 }
 
+// P0-1① / P0-4（2026-10-22）：把 selectedModel 补成「运行用模型」——注入 context_window
+// 与 reasoning_effort。**send 与 /compact 必须共用这一份口径**：
+// 此前压缩直接拿 selectedModel（不含 context_window），引擎回落 4096 ⇒ 长会话被激进裁剪
+// 后整个覆盖数据库（事故见 lib/compactSession 注释）。窗口口径只留这一处。
+export function buildRunModel(selectedModel) {
+  const mc = getModelConfig(modelKeyOf(selectedModel?.provider, selectedModel?.model));
+  return {
+    ...selectedModel,
+    model: {
+      ...(selectedModel?.model || {}),
+      context_window: effectiveContextWindow(selectedModel?.provider, selectedModel?.model),
+      ...(mc?.reasoning_effort ? { reasoning_effort: mc.reasoning_effort } : {}),
+    },
+  };
+}
+
 // P1-12: 窗口数值格式化（32K / 200K / 1M），与 getContextOptions() 的 label 风格一致
 export function fmtK(n) {
   const v = Number(n) || 0;

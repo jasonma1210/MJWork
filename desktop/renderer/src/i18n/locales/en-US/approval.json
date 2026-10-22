@@ -27,6 +27,7 @@
   "hotkeyTitle": "Keyboard shortcuts",
   "hotkeyHint": "1 Deny · 2 Allow once · 3 This chat · 4 Always",
   "workingRoot": "Working root",
+  "fromThread": "From session",
   "attachReason": "Attach reason",
   "reasonPlaceholder": "Optional: explain why or what you expect (e.g. \"use npm, not pnpm\"). On denial the agent sees the reason and adjusts."
 }

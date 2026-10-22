@@ -181,8 +181,11 @@ check('审批挂起即置线程状态 awaiting_approval（写入端闭环）', (
   assert.match(card, /onPendingChange/);
   // 2026-10-15：审批卡改为 FIFO 队列后，上报由「队列是否非空」驱动，
   // 不再是在两处各写死一次 true/false。契约不变：有挂起必上报、清空必上报恢复。
-  assert.match(card, /pendingCbRef\.current\?\.\(queue\.length > 0\)/, '有挂起需上报（队列非空）');
-  assert.match(card, /\[queue\.length\]/, '队列清空需上报恢复（依赖队列长度）');
+  // 2026-10-22（P0-5）：第二参带队首审批的归属会话——App 据此把 awaiting_approval
+  // 写到**发起审批的那个会话**，而不是当前正在看的会话。
+  assert.match(card, /pendingCbRef\.current\?\.\(queue\.length > 0, headThreadId\)/, '有挂起需上报（队列非空 + 归属会话）');
+  assert.match(card, /const headThreadId = queue\[0\]\?\.threadId \|\| null/, '归属会话取自队首审批');
+  assert.match(card, /\[queue\.length, headThreadId\]/, '队列清空需上报恢复（依赖队列长度与归属会话）');
   assert.match(card, /const pending = queue\[0\]/, '取队首展示，保证上报与展示同一条');
 });
 

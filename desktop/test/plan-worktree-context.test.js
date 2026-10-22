@@ -130,7 +130,13 @@ check('token 估算与压缩函数已从引擎导出', () => {
 
 check('/compact 已接到实际压缩', () => {
   assert.match(runHook, /async function compactContext/);
-  assert.match(runHook, /compactHistory\(convo, selectedModel, window\.mjcode\.chat\)/);
+  // 2026-10-22（P0-4）：实现搬到 lib/compactSession，且**必须**用运行用模型（含 context_window）
+  // ——此前传 selectedModel 会让引擎回落 4096 窗口，把长会话裁到 15% 再覆盖数据库。
+  assert.match(runHook, /await compactSession\(\{/, 'hook 必须真的调用压缩实现（搬走不等于断开）');
+  const compactLib = read('lib/compactSession.ts');
+  assert.match(compactLib, /compactHistory\(convo, runModel, chat, \{ force: true \}\)/,
+    '压缩必须传 runModel（含窗口）且强制生效');
+  assert.match(compactLib, /const runModel = buildRunModel\(model\)/, '窗口口径统一走 buildRunModel');
 });
 
 // ── D4 Diff 三级还原 ──

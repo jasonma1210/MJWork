@@ -6,6 +6,20 @@ desktop / server / renderer 三个 package.json 的 version 必须保持一致�
 
 ## [0.7.0-beta] - 2026-10-22
 
+### 修复（P0 运行链路七项：历史单一真源 / 中止双写 / 墙钟契约 / 压缩数据安全 / 审批归属 / 待办接线 / 运行可见性，2026-10-22）
+
+用户视角审查（`docs/MJCode-业务逻辑与前端展现审查-用户视角-2026-10-22.md`）给出的七条 P0。前三条是「同一轮运行里两个写者 / 两个真源」的同类缺陷，后四条是「事件发了没人收」的接线断裂；共同判据都是**用户能感知**：历史错乱、停止后两条回复、长任务必崩、压缩毁历史、审批亮错会话、进度永不可见、改动无落点。
+
+- **历史单一真源**（`main/agentRunner.js` 新增 `resolveRunHistory`，`main.js` 注入 `listMessages`）：历史此前取渲染层内存 `messagesRef`，而它只含「用户消息 + 最终总结」——中间 `assistant(tool_calls)` 与 `tool` 结果虽由主进程落库，但 `message` 事件不转发。于是同一会话「不刷新」时模型看不到自己上一轮读过什么、跑过什么；「刷新一次」历史又完整了：同一会话两种行为，且问题不可复现。现在只要宿主提供 `listMessages` 就一律从会话库装配；本轮 user 消息用 payload 版**原位替换**（保留 vision 部件，库里那条恒为纯文本）；读库异常 fail-open 回落载荷。
+- **中止单一写者**（`renderer/src/lib/agent.js` + `useAgentRun` 新增 `onAborted`）：点「停止」时该文件立刻 `onDone('', null, true)`（不带 meta），`finalizeRun` 因缺 `mainPersisted` 判定「非主进程模式」→ 落一条「（已停止）」；主进程同时也把**真实**总结落库 ⇒ 同一轮两条 assistant，其中一条是假的，用户再发一句时两条都进上下文。现在中止只做两件事：通知主进程 + 立即收敛 UI；真实收尾交给主进程这个唯一写者，另加 20s 兜底（主进程失联才本地收尾）。
+- **墙钟事件契约对齐**（`shared-ipc/contract.mjs` + `lib/agent.js`）：引擎墙钟触顶时发 `kind:'wallclock'`，契约枚举只有 `tokens|rounds|timeout` ⇒ 被 `safeAgentEventEnvelope` 降级成 error ⇒ 渲染层 reject 整轮。**任何超过默认 30 分钟的任务必现「IPC 契约校验失败」**，而主进程仍在收尾落库（界面报错、库里却有总结）。契约补 `wallclock`；渲染层新增 `suspended` 消费分支（此前四类挂起全部被 `default` 丢弃）。
+- **压缩数据安全**（新增 `renderer/src/lib/compactSession.ts`）：`/compact` 此前拿 `selectedModel` 直接压，而 `context_window` 只在 send 的 runModel 副本里注入 ⇒ 引擎回落 4096 ⇒ 超过约 3.3k token 的会话全被判激进档、只留 15% 尾部，随后 `replaceMessages` **整体覆盖数据库**；同一函数还没有 `loading` 守卫，运行中压缩会与主进程正在追加的中间消息互相覆盖。现在窗口走统一口径 `buildRunModel`（新增于 `lib/modelConfig.js`，send 与压缩共用一份）、加运行中守卫、压缩前留撤销带（toast 一键撤回）。
+- **审批归属**（新增 `main/approvalOrigin.js`，`ApprovalCard` + `App.jsx`）：审批载荷此前只有 tool/cwd，后台会话（本产品支持切走继续跑）弹出的审批与当前会话长得一模一样；`onPendingChange` 一律写 `activeThread` ⇒ 亮错会话、真正在等的会话不亮，卡结束后还把没有 run 的会话置成 `running`。现在载荷带 `threadId`/`threadTitle`，卡片显示「来自会话」并可点击跳转，状态按来源会话写；无归属的无人值守审批不写任何会话状态（宁可少一个徽标，不写错会话）。
+- **待办清单接线**（`ChatArea.jsx` 传 `activeRunId`）：`TodoPanel` 首行 `if (!runId) return undefined`，而两处挂载都是裸挂载 ⇒ 订阅从未建立、组件恒返回 null ⇒ `todo_write` 那套「长任务进度可见」等于没上线（引擎在发事件、界面一个字看不到）。现在 hook 以 **state** 暴露在役 runId（ref 不触发重渲染，这是原来的坑）、按会话 key 强制重挂以清上一轮清单；欢迎页那处恒空挂载移除。
+- **运行可见性**（`MessageStream.tsx`）：`ToolTraceGroup` 的 `defaultOpen` 默认 false，注释写着「运行态本轮传 true」但两处调用都没传 ⇒ 用户发起任务只看到一行「N 次调用 · 点击展开」。现在运行中的最后一轮强制展开；收尾条新增「查看 N 个改动」（`Button` 原语 + `mjcode:open-diff` 直达右栏变更面板）——此前任务说「已修改 3 个文件」而界面没有任何落点。
+- **守护测试**：新增 4 个套件 —— `agent-abort-suspend`（15 项：中止不伪造 / 真实 done 仍接收 / 四类挂起全部消费 / 非法 kind 仍被拒）、`compact-safety`（14 项：窗口取值真实决定裁不裁 + 实现与接线双层）、`todo-panel-wiring`（14 项：生产端 / 消费端 / 挂载 / 裸挂载清零）、`run-visibility`（15 项：两处挂载都传 `defaultOpen` 的**点位数**断言）；`agentRunner` 追加 11 项（库历史装配 / vision 保留 / 失败回落 / 归属反查与清理）、`ipc-contract` 补 `wallclock`、`approval-queue` 追加 7 项归属三段接线。四条形态类断言做了**反向变异验证**（把实现改回旧行为后确认变红，避免「断言没读文件」的空转）。
+- **拆薄（守行数硬档，未新增基线条目）**：`main/approvalOrigin.js`（main.js code 1513→1498，回到 eslint `max-lines` 1500 以内）、`lib/compactSession.ts` 与 `lib/runLifecycle.ts`（`useAgentRun` 883→795）、`hooks/useWindowEventBus.ts`（App 819→798，收敛 6 个 window 事件 `useEffect`）。技术设计文档的套件 / 模块 / 行数三个数字同步到现算值（279 / 179 / 2227）。
+
 ### 调整（R-15 派活入口分流：目标条 + 发送按钮语义切换，2026-10-22）
 第九轮产品边界审查的落地修复——审查结论：单会话 / 自动编排 / MJ 军团三线在能力层已实质分离，但**入口层共用同一个发送按钮**让用户感到「太像」。本版不改引擎结构（共用 `orchestrator.planGoal → workerPool` DAG 底座是上下层关系，不拆），只修入口与呈现：
 - **派活目标条**（`Composer.tsx`）：选中团队后输入区上方出现常驻目标条——团队名 + 成员数 + 预算档 + ✕ 一键取消，替代原 10rem 截断小 chip（成员一多即被截断看不见）；发送按钮军团态切换为派活语义（`IconUsers` 图标 + 专用提示），placeholder 同步切换。不新增按钮、不弹表单、不建页面（军团设计文档 v1.5「对话内协同」定稿）

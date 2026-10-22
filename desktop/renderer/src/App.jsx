@@ -31,6 +31,7 @@ import FeedbackHost, { confirm, toast } from './components/feedback';
 import { projectDisplayName } from './lib/projectName';
 import { getDefaultProject, loadJSON, applyThemeToDocument, rememberModel, pickInitialModel } from './lib/appState';
 import usePendingExpert from './hooks/usePendingExpert';
+import { useWindowEventBus } from './hooks/useWindowEventBus';
 import { useThreadModel } from './hooks/useThreadModel';
 import { useForkThread } from './hooks/useForkThread';
 import THEMES from './lib/themes.json';
@@ -93,11 +94,7 @@ export default function App() {
   // Bug3：启动时从主进程重建 MCP 工具集（重启后自动重连的服务不再丢工具）
   useEffect(() => { restoreMcpTools().then(setMcpTools); }, []);
   // 生态中心连接/断开/JSON 保存 → dirty 事件重建工具集（替代已删除的设置页 McpTab 回调）
-  useEffect(() => {
-    const onDirty = () => { restoreMcpTools().then(setMcpTools); };
-    window.addEventListener('mjcode:mcp-tools-dirty', onDirty);
-    return () => window.removeEventListener('mjcode:mcp-tools-dirty', onDirty);
-  }, []);
+  // 与其它跨组件动作一起收敛到 useWindowEventBus（见下方「窗口事件总线」），避免 App 累积样板。
   // A6：Skill 启用态持久化（此前 useState 初始值从不落盘，重启即重置）
   // 数组守卫：localStorage 曾被写入过非数组（如插件安装误把 plugin 对象存进来）时，
   // 不得原样进入 state，否则下游 enabledSkills.filter 崩溃且每次重启都崩
@@ -207,26 +204,29 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // 模型选择器底部入口：跨组件打开设置（CustomEvent，避免层层传 prop）
-  useEffect(() => {
-    const open = () => setShowSettings(true);
-    window.addEventListener('mjcode:open-settings', open);
-    return () => window.removeEventListener('mjcode:open-settings', open);
-  }, []);
-
-  // T5：「+」菜单 manual 连接器引导跳生态中心（同 CustomEvent 模式，避免层层传 prop）
-  useEffect(() => {
-    const open = () => setShowEcosystem(true);
-    window.addEventListener('mjcode:open-ecosystem', open);
-    return () => window.removeEventListener('mjcode:open-ecosystem', open);
-  }, []);
-
-  // T6-9：「+」菜单新建项目空间（CustomEvent 解耦，避免 PlusMenu → ChatArea → App 层层传 prop）
-  useEffect(() => {
-    const open = () => setShowProjectSpace(true);
-    window.addEventListener('mjcode:new-project-space', open);
-    return () => window.removeEventListener('mjcode:new-project-space', open);
-  }, []);
+  // 窗口事件总线（P0 配套，2026-10-22）：本轮把 5 个「一个事件一个 useEffect」的样板
+  // 收敛成一次注册（此前 App 累计 7 个此类监听，让它长期贴 800 行软档）。
+  // handler 走 ref（见 useWindowEventBus），所以这里每次渲染传新对象是安全的。
+  // 事件名集合视为静态契约：新增事件必须写在这里。
+  useWindowEventBus({
+    // 生态中心连接/断开/JSON 保存 → 重建工具集
+    'mjcode:mcp-tools-dirty': () => { restoreMcpTools().then(setMcpTools); },
+    // 模型选择器底部入口：跨组件打开设置
+    'mjcode:open-settings': () => setShowSettings(true),
+    // T5：「+」菜单 manual 连接器引导跳生态中心
+    'mjcode:open-ecosystem': () => setShowEcosystem(true),
+    // T6-9：「+」菜单新建项目空间
+    'mjcode:new-project-space': () => setShowProjectSpace(true),
+    // P0-5：审批卡的「来自《会话名》」点击 → 切到那个会话（后台会话的审批不再无从追溯）
+    'mjcode:focus-thread': (e) => {
+      const id = e.detail?.threadId;
+      if (!id) return;
+      const target = threads.find((x) => String(x.id) === String(id));
+      if (target) selectThread(target);
+    },
+    // P0-7：收尾条「查看 N 个改动」→ 打开右栏变更面板（此前任务说「已改 3 个文件」而界面无落点）
+    'mjcode:open-diff': () => { setPaneTab('diff'); setPaneOpen(true); },
+  });
 
   // 生态中心「招募」：开新会话并关闭设置/生态页，待 ChatArea 切到新会话
   // （thread=null 清空 extras）的 effect 落定后，再派发 enable-expert 注入角色。
@@ -773,11 +773,15 @@ export default function App() {
         ]}
       />
       {/* P1-D：审批挂起即置线程状态 awaiting_approval（侧栏徽标数据源）；决策后回到 running。
-          此前全库无任何写入端，STATUS_META.awaiting_approval 与徽标渲染都是死代码。 */}
+          此前全库无任何写入端，STATUS_META.awaiting_approval 与徽标渲染都是死代码。
+          P0-5（2026-10-22）：状态必须写到**发起这条审批的会话**。此前一律写 activeThread，
+          于是后台会话请求审批时亮的是你正在看的那个会话的徽标，真正在等的会话永远不亮；
+          且卡结束后把当前会话置成 running —— 而它根本没有 run（假「运行中」永不收敛）。
+          无归属（无人值守 Worker / 定时任务）的审批不写任何会话状态：宁可少一个徽标，不要写错会话。 */}
       <ApprovalCard
-        onPendingChange={(pending) => {
-          if (!activeThread?.id) return;
-          api.setThreadStatus(activeThread.id, pending ? 'awaiting_approval' : 'running').then(() => loadData());
+        onPendingChange={(pending, originThreadId) => {
+          if (!originThreadId) return;
+          api.setThreadStatus(originThreadId, pending ? 'awaiting_approval' : 'running').then(() => loadData());
         }}
       />
       <FeedbackHost />

@@ -14,6 +14,7 @@
   "running": "运行中",
   "elapsed": "已耗时 {dur}",
   "duration": "耗时 {dur}",
+  "viewChanges": "查看 {n} 个改动",
   "roundTokens": "本轮消耗 {n} tokens",
   "totalTokens": "共消耗 {n} tokens",
   "tokensTitle": "输入 {in} / 输出 {out} tokens",

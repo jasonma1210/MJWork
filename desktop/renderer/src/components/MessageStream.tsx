@@ -84,7 +84,7 @@ export default function MessageStream({
   // React 复用同一批 element 就会跳过这些子树的 re-render 与 markdown 重新解析——
   // 每帧只重绘「正在增长的那一段」。
   const rounds = useMemo(
-    () => renderMessages(visibleMessages, !!runSummary || !!loading, onOpenFile, toolCalls),
+    () => renderMessages(visibleMessages, !!runSummary || !!loading, onOpenFile, toolCalls, !!loading),
     // visibleMessages 由 messages/effStart 派生，故直接以二者为依赖（避免数组身份每帧变化）
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [messages, effStart, runSummary, loading, onOpenFile, toolCalls],
@@ -122,6 +122,9 @@ export default function MessageStream({
             contextUsage,
             model,
           } : null}
+          changedCount={runFiles.length}
+          // 走 CustomEvent：收尾条不需要知道右侧面板的编排实现（App 里有唯一入口）
+          onOpenChanges={() => window.dispatchEvent(new CustomEvent('mjcode:open-diff'))}
         />
         {/* T1-1+T1-2：运行态工具轨迹已并入最后一轮块（答复正文之上），此处不再重复渲染 */}
         {/* T1-5：推理模型思考流——Markdown 渐进渲染（与正文一致的排版），默认展开可折叠 */}
@@ -208,7 +211,7 @@ function ForkButton({ messageId }) {
 // · live 模式（运行中）：运行中徽标 + 实时耗时 + 本轮已消耗 + 上下文用量 + 模型，每秒刷新；
 // · 结束态：状态（正常结束/任务暂停/已停止/失败）+ 耗时 + 共消耗 + 模型 + 结束时间。
 // 与单条消息的 meta 小字互补：meta 随消息滚动，此卡永远挂在最后一屏可见。
-export function RunFooter({ summary, live }) {
+export function RunFooter({ summary, live, changedCount = 0, onOpenChanges }) {
   // 组件内已有局部变量 t（定时器），i18n 译函数改名 tr 避免遮蔽
   const { t: tr } = useI18n();
   const [, tick] = useState(0);
@@ -268,6 +271,15 @@ export function RunFooter({ summary, live }) {
         )}
         {summary.model && <span className="truncate">· {summary.model}</span>}
         {summary.endedAt && <span>· {new Date(summary.endedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>}
+        {/* P0-7（2026-10-22）：收尾条此前只有「状态/耗时/token/模型」四个读数，
+            没有任何动作——用户看完不知道下一步该干什么，改动藏在右侧一个没有角标的图标里。
+            这里给出唯一明确的落点：查看本轮改动。 */}
+        {changedCount > 0 && typeof onOpenChanges === 'function' && (
+          <Button variant="accent-ghost" size="xs" onClick={onOpenChanges}>
+            <IconFile size={11} />
+            {tr('message.viewChanges', { n: changedCount })}
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -486,7 +498,7 @@ function markdownComponents(onOpenFile?: (p: string) => void) {
 }
 
 // 轮次块：一轮的 user 气泡 + 工具轨迹组 + assistant 回复（含 meta）。折叠状态本组件持有。
-function RoundBlock({ round, user, assistants, toolResults, isLast, suppressMeta = false, extraCalls = [], onOpenFile }) {
+function RoundBlock({ round, user, assistants, toolResults, isLast, running = false, suppressMeta = false, extraCalls = [], onOpenFile }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(isLast);
   const calls = [];
@@ -561,7 +573,7 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, suppressMeta
                 {/* 本轮执行体流程：紧贴「答复」上方（模型标签之下、正文之上），
                     先看「这一轮做了什么」再看结论。用 label 明示归属，避免用户找不到它在哪。 */}
                 {k === answerIdx && calls.length > 0 && (
-                  <ToolTraceGroup calls={calls} toolResults={toolResults} label={t('toolTrace.roundExecTrace')} />
+                  <ToolTraceGroup calls={calls} toolResults={toolResults} label={t('toolTrace.roundExecTrace')} defaultOpen={running && isLast} />
                 )}
                 {m.content && (
                   <div className="msg-prose"><ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>{m.content}</ReactMarkdown></div>
@@ -586,7 +598,7 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, suppressMeta
           })}
           {/* 兜底：本轮只有工具调用、没有任何 assistant 消息时，轨迹组仍需可见 */}
           {answerIdx === -1 && calls.length > 0 && (
-            <ToolTraceGroup calls={calls} toolResults={toolResults} label={t('toolTrace.roundExecTrace')} />
+            <ToolTraceGroup calls={calls} toolResults={toolResults} label={t('toolTrace.roundExecTrace')} defaultOpen={running && isLast} />
           )}
         </>
       )}
@@ -594,7 +606,10 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, suppressMeta
   );
 }
 
-export function renderMessages(messages, suppressLastMeta = false, onOpenFile, liveCalls = []) {
+// running（P0-7）：本轮是否正在跑。运行中强制展开工具组——
+// 此前 ToolTraceGroup 的 defaultOpen 恒为 false（注释写着「运行态本轮传 true」但两处调用都没传），
+// 用户发起任务后只看到一行「3 次调用 · 点击展开」，完全看不出它正在跑 shell 还是正在改文件。
+export function renderMessages(messages, suppressLastMeta = false, onOpenFile, liveCalls = [], running = false) {
   // tool_call_id -> tool 消息内容 索引
   const toolResults = new Map();
   for (const m of messages) {
@@ -639,6 +654,7 @@ export function renderMessages(messages, suppressLastMeta = false, onOpenFile, l
       assistants={it.assistants}
       toolResults={toolResults}
       isLast={it.no === lastRoundNo}
+      running={running}
       suppressMeta={suppressLastMeta && it.no === lastRoundNo}
       extraCalls={it.no === lastRoundNo ? liveCalls : []}
       onOpenFile={onOpenFile}

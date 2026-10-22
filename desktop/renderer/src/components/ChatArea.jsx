@@ -409,7 +409,7 @@ export default function ChatArea({
   }, []);
 
   // T2-2：Agent 运行流程（发送/中止/引导/排队/清空/规划/模式/压缩 + 快捷键）已拆出 hooks/useAgentRun.ts
-  const { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext } = useAgentRun({
+  const { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext, activeRunId } = useAgentRun({
     input, loading, selectedModel, project, projectPicked, thread, cwd, mcpTools, enabledSkills,
     fileSkills, memories, agentsMd, approvalSettings, planMode, runMode, worktree, sessionExtras,
     messages, compacting, plan, voice,
@@ -665,8 +665,11 @@ export default function ChatArea({
           onClosed={() => { setWorktree(null); setRunMode('local'); }}
           onMsg={(m) => setModeMsg(m)}
         />
-        {/* P0-B：任务清单——让长任务的进度对用户可见（模型经 todo_write 实时维护） */}
-        <TodoPanel />
+        {/* P0-B：任务清单——让长任务的进度对用户可见（模型经 todo_write 实时维护）
+            P0-6（2026-10-22）：此前两处挂载都是「裸挂载」（组件标签不传任何 props），
+            而 TodoPanel 首行是 `if (!runId) return undefined` ⇒ 订阅根本不建立、组件恒返回 null
+            ⇒ 这套能力等于没上线。这里按会话 key 强制重挂：切会话时清掉上一轮的清单。 */}
+        <TodoPanel key={thread?.id != null ? String(thread.id) : 'no-thread'} runId={activeRunId} />
         {/* WorkBuddy 式 Agent 运行胶囊：在役数字员工一览（点击展开流程与强制关闭）；
             R6.1：任务组绑定会话——threadId/cwd 作为坞归属上下文传入 */}
         <AgentDock threadId={thread?.id != null ? String(thread.id) : null} cwd={cwd} />

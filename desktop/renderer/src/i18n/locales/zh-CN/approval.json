@@ -21,6 +21,7 @@
   "collapse": "收起",
   "noDetail": "（无详情）",
   "workingRoot": "工作根",
+  "fromThread": "来自会话",
   "allowOnce": "允许一次",
   "allowConversation": "本对话同类允许",
   "allowAlways": "始终允许",

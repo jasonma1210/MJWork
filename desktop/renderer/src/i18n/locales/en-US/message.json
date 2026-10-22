@@ -14,6 +14,7 @@
   "running": "Running",
   "elapsed": "Elapsed {dur}",
   "duration": "Duration {dur}",
+  "viewChanges": "View {n} change(s)",
   "roundTokens": "{n} tokens used this turn",
   "totalTokens": "{n} tokens used",
   "tokensTitle": "Input {in} / Output {out} tokens",

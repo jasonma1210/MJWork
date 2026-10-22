@@ -1,8 +1,10 @@
 // @ts-nocheck -- T2-2 存量代码原样搬移（零行为变更）；渐进 TS 路线下补全类型属后续任务（T0-3 门禁只约束新文件扩展名）
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { runAgent, decomposeTask, looksLargeTask } from '../lib/agent';
-import { compactHistory } from '../../../agent-core/index.js';
-import { getModelConfig, getModelOverrides, modelKeyOf, effectiveContextWindow } from '../lib/modelConfig';
+// P0-4：上下文压缩实现移到独立模块（窗口现算 / 运行中守卫 / 撤销带），本文件只做状态装配
+import { compactSession } from '../lib/compactSession';
+import { createRunLifecycleCallbacks } from '../lib/runLifecycle';
+import { getModelOverrides, buildRunModel } from '../lib/modelConfig';
 import { api } from '../lib/api';
 import { toast } from '../components/feedback';
 import { runRegistry, runIndex, makeRunState } from '../lib/runRegistry';
@@ -44,6 +46,10 @@ export default function useAgentRun(d) {
     abortRef, activeThreadIdRef, activeRunIdRef, runStartRef, agentFilesRef, messagesRef, steerPendingRef,
     onNewMessage, onThreadStatus, onAgentFilesChange, onThreadCreated, onAutoProject, onSubagentEvent, relayRef,
   } = d;
+
+  // P0-6：在役 runId（state，供 TodoPanel 等视图层订阅本轮的 todos 事件）。
+  // ref 版本（activeRunIdRef）继续承担「归属判定」，两者用途不同：ref 不缺一次重渲染。
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
   // 停止 = 只中止「当前查看会话」的运行（注册表按 threadId 精确取 controller，
   // signal 触发后 agent.js 调 mj.agentAbort(runId) 按 run 中止）。
@@ -423,6 +429,10 @@ export default function useAgentRun(d) {
     rs.startedAt = Date.now();
     runStartRef.current = rs.startedAt;
     activeRunIdRef.current = runSeqLocal;
+    // P0-6（2026-10-22）：runId 以 **state** 形式暴露给视图层。
+    // 此前只有 ref（不触发重渲染），于是 TodoPanel 拿不到 runId、`if (!runId) return` 恒成立，
+    // todo_write 维护的进度清单永远不会显示——引擎在发事件、UI 一个字都看不到。
+    setActiveRunId(runSeqLocal);
 
     // V20：完成收尾从 onDone 回调抽出为具名异步函数——回调侧统一 await + catch，
     // 内部异常不再脱离主 Promise 被静默吞掉。
@@ -476,7 +486,7 @@ export default function useAgentRun(d) {
         model: selectedModel?.model?.model_id || '',
         endedAt: Date.now(),
       };
-      if (activeRunIdRef.current === rs.runId) activeRunIdRef.current = null;
+      if (activeRunIdRef.current === rs.runId) { activeRunIdRef.current = null; setActiveRunId(null); }
       // 2026-10-18 真机修复：UI 复位必须在**同步段**完成。
       // 此前复位在函数末尾（`stillActive` 那段），而它前面有若干 await（落库/记忆/排队接力）。
       // 点「停止」后 agent.js 会立刻本地 settle 回调这里，可只要落库慢一拍，用户就盯着
@@ -558,19 +568,9 @@ export default function useAgentRun(d) {
     };
 
     try {
-      // P0-1①: 打通上下文窗口接线（此前只注入 reasoning_effort，context_window 从未进 payload
-      // → 引擎只能吃 4096 内联兜底，真实 128K 模型被按 4K 频繁压缩）。
-      // 取值走 modelConfig 三级语义：用户手选 > provider×modelId 映射表 > 默认档 32768。
-      const mc = getModelConfig(modelKeyOf(selectedModel?.provider, selectedModel?.model));
-      const ctxWin = effectiveContextWindow(selectedModel?.provider, selectedModel?.model);
-      const runModel = {
-        ...selectedModel,
-        model: {
-          ...(selectedModel?.model || {}),
-          context_window: ctxWin,
-          ...(mc?.reasoning_effort ? { reasoning_effort: mc.reasoning_effort } : {}),
-        },
-      };
+      // P0-1① / P0-4：运行用模型（窗口与 reasoning_effort 口径统一在 lib/modelConfig.buildRunModel，
+      // 与 /compact 共用一份——此前两处各算一次，压缩那次漏了窗口 ⇒ 按 4096 裁历史）
+      const runModel = buildRunModel(selectedModel);
       // P1-11: 任务-模型分档（可选 + 回落主模型）。getModelOverrides() 无配置时返回 null
       // → 字段整个不出现（零破坏：主进程/引擎按「缺省=跟随主模型」处理）。
       const modelOverrides = getModelOverrides();
@@ -647,6 +647,12 @@ export default function useAgentRun(d) {
         },
         // T1-3/T1-4：子代理与编排事件上抛（threadId 由本闭包携带，后台会话不错桶）
         onSubagentEvent: (evt) => { onSubagentEvent?.(threadKey, evt); },
+        // P0-2 / P0-3：中止收敛与挂起上报（实现见 lib/runLifecycle，含两条语义边界说明）
+        ...createRunLifecycleCallbacks({
+          rs, threadKey, abortRef, activeThreadIdRef,
+          setLoading, setStreamingText, setReasoningText, setRunSummary,
+          modelId: selectedModel?.model?.model_id || '',
+        }),
         onDone: async (finalText, usage, aborted, meta = {}) => {
           // V20：完成回调全程 try/catch——此前回调内异常（如 setPlanReport 缺失的
           // ReferenceError）会成为 unhandled rejection 被静默吞掉，收尾状态无声丢失。
@@ -682,7 +688,7 @@ export default function useAgentRun(d) {
         model: selectedModel?.model?.model_id || '',
         endedAt: Date.now(),
       };
-      if (activeRunIdRef.current === rs.runId) activeRunIdRef.current = null;
+      if (activeRunIdRef.current === rs.runId) { activeRunIdRef.current = null; setActiveRunId(null); }
       if (errActive) {
         // 此前错误消息不带 model_name → meta 行整体隐藏，用户侧三样全缺（模型/耗时/token）无从判断
         setMessages((m) => [...m, { role: 'assistant', content: tGlobal('runtime.errorPrefix', { msg }), model_name: selectedModel?.model?.model_id || '', created_at: Date.now() }]);
@@ -766,34 +772,24 @@ export default function useAgentRun(d) {
   }
 
   // /compact：把早期对话摘要化，保留最近若干轮（对标 Codex 的上下文压缩）
-  // P2-6 收口：压缩结果落库（本地模式整体替换消息表），重进会话不再回到压缩前；
-  // 在线模式服务端无替换路由，降级为仅当前窗口生效并如实提示
+  // P0-4（2026-10-22）：实现移到 lib/compactSession（窗口现算 / 运行中守卫 / 撤销带三条都在那里），
+  // 本函数只负责 compacting 状态与依赖装配——hook 已贴 800 行软档（门禁只减不增）。
   async function compactContext() {
-    if (compacting || !selectedModel || messages.length === 0) return;
+    if (compacting) return;
     setCompacting(true);
     try {
-      const convo = messages.map((m) => ({ role: m.role, content: m.content || '' }));
-      const compacted = await compactHistory(convo, selectedModel, window.mjcode.chat);
-      if (compacted.length >= convo.length) return;
-      setMessages(compacted);
-      setWindowStart(0);
-      if (thread?.id) {
-        try {
-          const r = await api.replaceMessages(thread.id, compacted);
-          if (r?.ok) toast({ message: tGlobal('runtime.compactSaved') });
-          else if (r?.error) toast({ message: tGlobal('runtime.compactNotPersisted', { error: r.error }) });
-        } catch (err) {
-          // 在线模式等无替换通道：仅当前窗口生效（静默降级，不打断压缩流程）
-          console.warn('[chat] compaction persist unavailable (current window only):', err?.message);
-        }
-      }
-    } catch (err) {
-      console.warn('[chat] context compaction failed:', err);
-      toast({ message: tGlobal('runtime.compactFailed', { error: err?.message || tGlobal('runtime.unknownError') }) });
+      await compactSession({
+        messages, model: selectedModel, loading,
+        threadId: thread?.id,
+        chat: window.mjcode.chat,
+        replaceMessages: api.replaceMessages,
+        setMessages, setWindowStart, toast, t: tGlobal,
+      });
     } finally {
       setCompacting(false);
     }
   }
 
-  return { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext };
+  // P0-6：activeRunId 供视图层（TodoPanel）按 run 订阅 todos 事件，run 结束后为 null
+  return { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext, activeRunId };
 }

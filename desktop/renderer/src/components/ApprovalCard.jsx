@@ -69,10 +69,15 @@ export default function ApprovalCard({ onPendingChange }) {
     return () => { if (typeof off === 'function') off(); };
   }, []);
 
+  // 队首审批的归属会话（P0-5）——先提成标量再进依赖数组：
+  // 直接在 deps 里写 `queue[0]?.threadId` 会触发 exhaustive-deps 的「复杂表达式」告警。
+  const headThreadId = queue[0]?.threadId || null;
   // 队列空/非空变化时上报（App 据此置线程状态）
+  // P0-5（2026-10-22）：同时上报**队首审批的归属会话**。App 此前一律写 activeThread，
+  // 于是后台会话的审批会点亮你正在看的那个会话的徽标，真正在等的会话反而不亮。
   useEffect(() => {
-    pendingCbRef.current?.(queue.length > 0);
-  }, [queue.length]);
+    pendingCbRef.current?.(queue.length > 0, headThreadId);
+  }, [queue.length, headThreadId]);
 
   // P1-D：侧栏徽标点击直达——展开卡片并短暂高亮（不切换视图，保持当前上下文可见）
   useEffect(() => {
@@ -159,6 +164,27 @@ export default function ApprovalCard({ onPendingChange }) {
 
         {!collapsed && (
           <>
+            {/* P0-5：来源会话。多会话并行（本产品支持切走后台继续跑）时，
+                「这条审批是谁在等」与「命令作用在哪个目录」一样关键——
+                此前卡片只有工具名 + cwd，后台会话的审批与当前会话长得完全一样。 */}
+            {(pending.threadTitle || pending.threadId) && (
+              <div className="flex items-center gap-2 px-4 pt-3 text-xs text-text2">
+                <span className="shrink-0">{t('approval.fromThread')}</span>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="truncate max-w-[260px] underline-offset-2 hover:underline"
+                  title={pending.threadTitle || pending.threadId}
+                  onClick={() => {
+                    if (!pending.threadId) return;
+                    // 走既有 CustomEvent 解耦：审批卡不需要知道 App 的会话切换实现
+                    window.dispatchEvent(new CustomEvent('mjcode:focus-thread', { detail: { threadId: pending.threadId } }));
+                  }}
+                >
+                  {pending.threadTitle || pending.threadId}
+                </Button>
+              </div>
+            )}
             {/* V21：显示审批请求来源的工作根（多会话/隔离工作区并发时，
                 用户需要知道命令将作用在哪个目录）。主进程摘要未携带时不显示，不硬造。 */}
             {(pending.cwd || pending.workingRoot) && (

@@ -203,6 +203,33 @@ function refsKey(src, mod, keys) {
   check('diff 面板评论区无内联中文字面量（全走 i18n key）',
     !/placeholder="[^"]*[一-龥][^"]*"/.test(panelSrc));
 
+  // ── P0-5（2026-10-22）：审批归属接线 ──
+  // 归属信息必须三段都通：主进程下发 → 卡片展示/上报 → App 按来源会话写状态。
+  // 只断言其中一段等于没测：本项目吃过的教训是「实现改了一处、测试只断言另一处」。
+  {
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main', 'main.js'), 'utf8');
+    const appSrc = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'src', 'App.jsx'), 'utf8');
+    const cardSrc = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'src', 'components', 'ApprovalCard.jsx'), 'utf8');
+    // 只截 requestApproval 函数体：全文 indexOf 会命中 resolveApprovalOrigin 的定义行而空过
+    const start = mainSrc.indexOf('function requestApproval(tool, args)');
+    const body = start < 0 ? '' : mainSrc.slice(start, mainSrc.indexOf('\n}', start));
+    check('P0-5 requestApproval 函数体截取成功（空片段会让下面断言空过）', body.length > 200, `len=${body.length}`);
+    check('P0-5 主进程：审批载荷展开发起会话归属',
+      /\.\.\.resolveApprovalOrigin\(/.test(body));
+    check('P0-5 主进程：归属经 runScope 的 runId 解析',
+      /runScope\.getStore\(\)\?\.runId/.test(body));
+    check('P0-5 渲染层：App 按来源会话写状态（不再写 activeThread）',
+      /onPendingChange=\{\(pending, originThreadId\)/.test(appSrc)
+      && /setThreadStatus\(originThreadId/.test(appSrc));
+    check('P0-5 渲染层：审批卡上报队首审批的 threadId',
+      /pendingCbRef\.current\?\.\(queue\.length > 0, headThreadId\)/.test(cardSrc)
+      && /const headThreadId = queue\[0\]\?\.threadId/.test(cardSrc));
+    check('P0-5 渲染层：审批卡显示来源会话（i18n key approval.fromThread）',
+      /approval\.fromThread/.test(cardSrc));
+    const zhApproval = JSON.parse(fs.readFileSync(path.join(ZH_DIR, 'approval.json'), 'utf8'));
+    check('P0-5 审批来源文案已入 zh 语言包', !!zhApproval.fromThread, `got=${JSON.stringify(zhApproval.fromThread)}`);
+  }
+
   console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
   process.exit(fail === 0 ? 0 : 1);
 })();

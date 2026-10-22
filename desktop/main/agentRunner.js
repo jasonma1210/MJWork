@@ -83,8 +83,70 @@ function lastUserText(messages) {
   return '';
 }
 
+// ── P0-1（2026-10-22）：运行历史的**唯一真源**是会话库，不是渲染层内存 ──
+// 事故形态：渲染层 `messagesRef` 只含「用户消息 + 最终总结」（中间 assistant(tool_calls)/tool
+// 结果由本文件落库但 `message` 事件不再转发），于是同一会话「不刷新」时模型看不到自己上一轮
+// 读过什么、跑过什么，「刷新一次」（从库全量拉回）历史又完整了 —— 刷新前后是两种行为，
+// 且问题不可复现。现改为：只要宿主提供了 listMessages，历史一律从库拼。
+const HISTORY_FALLBACK_LOG = '[agentRun] 库历史装配失败，回落到渲染层载荷：';
+
+/** 存储形状（localStore：camelCase）→ 模型入参形状（OpenAI 兼容：snake_case） */
+function toModelShape(m) {
+  const out = { role: m.role, content: m.content || '' };
+  if (Array.isArray(m.toolCalls) && m.toolCalls.length) out.tool_calls = m.toolCalls;
+  if (m.toolCallId) out.tool_call_id = m.toolCallId;
+  return out;
+}
+
+/**
+ * 装配本次运行的历史。
+ * @param {object} payload 渲染层载荷（messages = 本轮新增消息，末条 user 是本次诉求）
+ * @returns {Array} 模型入参消息数组
+ *
+ * 三条纪律：
+ *  1. 有会话 id 且有 listMessages ⇒ 以库为准（刷新前后一致）；
+ *  2. 本轮 user 消息用 **payload 里的那条**替换库里的同名条 —— payload 可能带 vision 部件
+ *     （图片只在运行期存在，落库恒为文本 `@path`），库里那条是纯文本版；
+ *  3. 任何异常（宿主未注入 / 线程已删 / 库损坏）一律回落到 payload 原样，绝不让装配失败挡运行。
+ */
+function resolveRunHistory(payload) {
+  const tail = Array.isArray(payload?.messages) ? payload.messages : [];
+  const conversationId = payload?.conversationId;
+  if (!conversationId || typeof deps?.listMessages !== 'function') return tail;
+  let stored;
+  try {
+    stored = deps.listMessages(conversationId);
+  } catch (e) {
+    console.warn(`${HISTORY_FALLBACK_LOG}${e?.message || e}`);
+    return tail;
+  }
+  if (!Array.isArray(stored) || stored.length === 0) return tail;
+  const history = stored.filter((m) => m && typeof m.role === 'string').map(toModelShape);
+  if (history.length === 0) return tail;
+  // 本轮诉求：payload 末条 user（可能含图片部件）
+  let lastUser = null;
+  for (let i = tail.length - 1; i >= 0; i -= 1) {
+    if (tail[i]?.role === 'user') { lastUser = tail[i]; break; }
+  }
+  if (!lastUser) return history;
+  // 渲染层在发起 run 之前已把本轮用户消息落库（useAgentRun: `await api.sendMessage` 先于 runAgent），
+  // 所以正常路径下库末尾就是本轮 user —— 用 payload 版**原位替换**它（保留 vision 部件）。
+  // 只在末尾确实是 user 时替换：若末尾是 assistant/tool（本轮未落库、或上一轮中断），
+  // 必须追加而不是回头找一条旧 user 覆盖（那会把新诉求挪到历史开头，顺序错乱）。
+  if (history[history.length - 1]?.role === 'user') {
+    history[history.length - 1] = lastUser;
+    return history;
+  }
+  return [...history, lastUser];
+}
+
 // runId -> { controller, sender }
 const runs = new Map();
+// P0-5（2026-10-22）：runId -> 发起它的会话 id。
+// main.js 的 requestApproval 只能拿到 runId（由 runScope 注入），而审批卡必须告诉用户
+// 「这条审批来自哪个会话」——否则后台会话的审批与当前会话的审批长得一模一样，
+// 用户会顺手批掉另一个任务的命令。run 结束即删，避免 Map 无界增长。
+const runConversations = new Map();
 let runSeq = 0;
 
 // v1（2026-10-19）：意图驱动 MCP 预热的单服务连接上限。用户诉求通常在句首/键位附近，
@@ -247,6 +309,7 @@ function startAgentRun(payload, sender) {
   const emit = makeEmitter(sender, runId);
   runs.set(runId, { controller, sender });
   runApprovalModes.set(runId, runApprovalMode);
+  runConversations.set(runId, String(payload.conversationId || ''));
 
   // 后台执行：不 await（IPC handle 需立即返回，渲染层靠事件流驱动 UI）
   (async () => {
@@ -349,7 +412,9 @@ function startAgentRun(payload, sender) {
     // T3-7：引擎可序列化参数与回调群抽为共享对象——in-process 与子进程两条路径同源，
     // 杜绝「改一处漏一处」的路径漂移（子进程路径经 RPC 传 params，回调在主进程侧执行）。
     const engineParams = {
-      messages: payload.messages,
+      // P0-1（2026-10-22）：历史取自会话库（唯一真源），不再用渲染层内存快照。
+      // 详见 resolveRunHistory 的注释——刷新前后必须发给模型同一份 prompt。
+      messages: resolveRunHistory(payload),
       model: payload.model,
       // 渲染层本已重建的 mcpTools 在前，意图预热补入的在后；按 function.name 去重（base 优先）。
       mcpTools: mergeToolDefs(payload.mcpTools || [], dynamicMcpTools),
@@ -628,6 +693,7 @@ function startAgentRun(payload, sender) {
     } finally {
       runs.delete(runId);
       runApprovalModes.delete(runId);
+      runConversations.delete(runId);
       // T3-1：运行结束即释放该 run 的全部大载荷临时文件（用后即清）
       try { bigPayload.releaseRun(runId); } catch (e) { console.warn('[agentRunner] 大载荷清理失败:', e.message); }
     }
@@ -682,8 +748,13 @@ module.exports = {
   getCurrentApprovalMode: () => currentUserApprovalMode,
   // 无人值守/编排快照用：取「发起该 run 时用户选的档」，run 结束后返回 null（调用方回落设置）
   getApprovalModeFor: (runId) => runApprovalModes.get(runId) || null,
+  // P0-5：取「发起该 run 的会话 id」，供审批卡标注来源；run 结束后返回 null。
+  getConversationIdFor: (runId) => runConversations.get(runId) || null,
   startAgentRunWhenReady,
   // F-005 测试接缝：意图预热的「已在本轮 mcpTools 中的服务不重复连」判定需要被直接驱动
   //（真实链路要跑完整 run 才能到达）。只暴露纯读函数，不改任何行为。
   intentPrewarmToolDefs,
+  // P0-1 测试接缝：历史装配是纯函数（payload + 宿主 listMessages → 数组），
+  // 直接驱动它才能覆盖「刷新前后一致 / vision 部件保留 / 装配失败回落」三条判据。
+  resolveRunHistory,
 };

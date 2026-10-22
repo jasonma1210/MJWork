@@ -21,6 +21,11 @@ const valid = (type, data) => ({ runId: R, type, data });
   check('tool_call 事件合法', validateAgentEvent(valid('tool_call', { name: 'shell', args: { command: 'ls' }, result: { stdout: 'ok' } })).ok);
   check('todos 事件合法', validateAgentEvent(valid('todos', { todos: [{ content: 'a', status: 'pending' }], doneCount: 0, total: 1 })).ok);
   check('suspended 事件合法', validateAgentEvent(valid('suspended', { saved: true, kind: 'tokens', summary: 's', roundsUsed: 3, rescues: 1, windowSpent: 9, budget: 10 })).ok);
+  // P0-3（2026-10-22）：整任务墙钟触顶必须合法。引擎侧真实发送 kind:'wallclock'
+  //（agent-core/index.js），枚举缺它 ⇒ 事件被安全降级成 error ⇒ 渲染层 reject 整轮
+  // ⇒ 任何超过默认 30 分钟的任务必现「IPC 契约校验失败」。这条钉住枚举与生产方对齐。
+  check('suspended 事件合法（kind=wallclock，整任务墙钟）',
+    validateAgentEvent(valid('suspended', { saved: true, kind: 'wallclock', summary: 's', roundsUsed: 3, rescues: 1, windowSpent: 9, budget: 10 })).ok);
   check('done 事件合法（含 usage/mainPersisted）', validateAgentEvent(valid('done', { finalText: '完成', usage: { prompt_tokens: 1, completion_tokens: 1 }, aborted: false, mainPersisted: true })).ok);
   check('error 事件合法（字符串载荷）', validateAgentEvent(valid('error', '炸了')).ok);
   // T1-3：subagent 事件（spawn_subagent / orchestrate_task 生命周期）

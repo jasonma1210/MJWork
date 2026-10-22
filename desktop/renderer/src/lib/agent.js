@@ -46,13 +46,18 @@ function resolveTokenBudget(options) {
 }
 
 let runSeq = 0;
+// P0-2：中止后等主进程终止事件的窗口。取值依据：主进程 abort 会级联到引擎循环与子进程，
+// 正常收尾通常 <2s；20s 已覆盖「正在等一次模型响应」的最坏情况，又远短于用户耐心阈值。
+// 只有超过它才认为主进程失联（引擎崩溃），由渲染层兜底收尾。
+const ABORT_SETTLE_FALLBACK_MS = 20000;
 
 // 主进程模式：把 runAgent 语义映射为「发起 + 事件订阅 + 中止」，对外保持原签名不变
 // （ChatArea 零改动：onMessage/onStream/onToolCall/onDone 回调与 AbortSignal 语义完全一致）
 function runAgentViaMain(options) {
   // onMessage 解构弃用（_前缀 = 有意不转发）：中间消息已由主进程 agentRunner 落库，
   // 若留在 rest 里经 IPC 传函数会 structured-clone 失败；进程内回退模式仍走渲染层 onMessage
-  const { signal, onMessage: _onMessage, onStream, onToolCall, onSubagentEvent, onDone, ...rest } = options;
+  // onAborted（P0-2）：中止时**只收敛 UI** 的回调，不产生消息、不落库。
+  const { signal, onMessage: _onMessage, onAborted, onStream, onToolCall, onSubagentEvent, onSuspended, onDone, ...rest } = options;
   return new Promise((resolve, reject) => {
     const mj = globalThis.window?.mjcode;
     if (!mj?.agentRun || !mj?.onAgentEvent) {
@@ -64,9 +69,15 @@ function runAgentViaMain(options) {
     const runId = options.runId || `run-${Date.now().toString(36)}-${runSeq}`;
     let settled = false;
     let off = null;
+    // P0-2（2026-10-22）：中止后的兜底收尾窗口。见 onAbort 注释。
+    let abortTimer = null;
+    const clearAbortTimer = () => {
+      if (abortTimer) { clearTimeout(abortTimer); abortTimer = null; }
+    };
     const finish = (fn, arg) => {
       if (settled) return;
       settled = true;
+      clearAbortTimer();
       if (typeof off === 'function') off();
       fn?.(arg);
     };
@@ -90,6 +101,11 @@ function runAgentViaMain(options) {
           case 'tool_call': onToolCall?.(evt.data); break;
           // T1-3：子代理事件（spawn_subagent / orchestrate_task 生命周期）→ 渲染层子任务树
           case 'subagent': onSubagentEvent?.(evt.data); break;
+          // P0-3（2026-10-22）：挂起（token 预算触顶 / 轮次上限 / 模型超时 / 整任务墙钟）。
+          // 此前该事件**没有任何消费分支** → 合法挂起被 default 丢弃，
+          // 而墙钟超限因契约枚举缺 wallclock 被降级成 error 直接 reject 整轮
+          //（>30min 的任务必现「IPC 契约校验失败」）。现在显式上报，由调用方标记「已暂停，可继续」。
+          case 'suspended': onSuspended?.(evt.data); break;
           case 'done': {
             finish(null);
             // 第 4 参 meta.mainPersisted / meta.persistState：最终消息在主进程的落库状态
@@ -123,18 +139,31 @@ function runAgentViaMain(options) {
       }
     });
     if (signal) {
-      // 中止即时收尾（Bugfix：此前 UI 要等主进程引擎跑完当前轮才收到真实 done 事件，
-      // 点击「停止」后最长可等数十秒无反馈，「已停止」要刷新才出现）。
-      // 信号一触发就本地 settle：立即回调 onDone(aborted=true) 让 UI 即时收敛；
-      // 主进程侧照常 agentAbort 异步中止清理，迟到的真实 done 事件被 settled 幂等忽略。
+      // P0-2（2026-10-22）：中止改为「只通知、不伪造」。
+      // 事故形态：点「停止」时这里立刻 `onDone('', null, true)`（不带第 4 参 meta），
+      // finalizeRun 因 meta 缺 mainPersisted 判定「非主进程模式」→ 落库一条「（已停止）」；
+      // 与此同时主进程引擎收到 abort 仍照常 finishRun，把**真实**收尾文本落库并 emit done。
+      // 结果：同一轮两条 assistant，其中一条是假的；用户再发一句时两条都进上下文。
+      // 现在中止只做两件事：①通知主进程中止 ②让 UI 立刻收敛（loading 复位，真机体验不能退）。
+      // 真实收尾由主进程这个唯一落库点负责，done 事件到达时正常渲染并带「已停止」标记。
       const onAbort = () => {
         mj.agentAbort(runId);
-        const wasSettled = settled;
-        finish(null);
-        if (!wasSettled) {
-          onDone?.('', null, true);
-          resolve('');
-        }
+        if (settled) return;
+        try { onAborted?.(); } catch (e) { console.warn('[agent] onAborted callback error:', e); }
+        // 兜底：主进程若在窗口内没有任何终止事件（引擎崩溃 / 子进程失联），才由这里收尾，
+        // 保证 UI 不会永久停在 running。此时主进程没有落库，故 meta 留空（由渲染层负责落库）。
+        abortTimer = setTimeout(() => {
+          abortTimer = null;
+          if (settled) return;
+          console.warn(`[agent] no terminal event within ${ABORT_SETTLE_FALLBACK_MS}ms after abort, settling locally runId=${runId}`);
+          const wasSettled = settled;
+          settled = false; // 让 finish 的幂等守卫放行本次兜底
+          finish(null);
+          if (!wasSettled) {
+            onDone?.('', null, true);
+            resolve('');
+          }
+        }, ABORT_SETTLE_FALLBACK_MS);
       };
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });
