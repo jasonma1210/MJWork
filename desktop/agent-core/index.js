@@ -2884,15 +2884,15 @@ export async function runAgent({
   // 与①共用同一个排障开关：两者同属「工具面收敛」，分开关会留下半套状态（真机更难排查）。
   const trimDisabled = globalThis.process?.env?.MJCODE_TOOL_AVAILABILITY === '0';
   const toolFace = trimDisabled
-    ? { tools: allTools, trimmed: false, omitted: 0, window: 0 }
-    : selectToolsForWindow(allTools, model?.model?.context_window);
+    ? { tools: allTools, trimmed: false, omitted: 0, window: 0, share: 0 }
+    : selectToolsForWindow(allTools, model?.model?.context_window, { estimate: (tools) => estimateTokens(JSON.stringify(tools)) });
   let toolsTrimmedByWindow = false;
   // 候选池：窗口裁剪**之前**的可用工具（activate_tools 从这里取）。
   // 必须留住引用——下面 allTools 会被换成 filter 出来的新数组，原数组就没人持有了。
   const toolCandidatePool = allTools;
   if (toolFace.trimmed) {
     toolsTrimmedByWindow = true;
-    console.warn(`[agent] 上下文窗口 ${toolFace.window} < ${MIN_FULL_TOOL_WINDOW}：工具面收敛为 ${toolFace.tools.length} 个常开工具，其余 ${toolFace.omitted} 个需经 activate_tools 申请`);
+    console.warn(`[agent] 工具面收敛：窗口 ${toolFace.window}，工具表占比 ${(toolFace.share * 100).toFixed(1)}% → 只通告 ${toolFace.tools.length} 个常开工具，其余 ${toolFace.omitted} 个需经 activate_tools 申请`);
     allTools = [...toolFace.tools, ACTIVATE_TOOLS_TOOL];
   }
   // ── B1-B-02：三段裁剪（顺序写死，每一段都 fail-closed）──

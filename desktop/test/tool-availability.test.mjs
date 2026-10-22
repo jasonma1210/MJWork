@@ -108,6 +108,20 @@ check('B7 activate_tools 有执行分支且单调累积（不删已加载的工�
   check('C6 未知工具名视为 core（MCP 动态名不误伤）', tierOf('mcp__notion__search') === TIER_CORE);
   check('C7 空集保护：全非 core 时回落原集合',
     selectToolsForWindow([mk('doc_create'), mk('browser_navigate')], 8000).tools.length === 2);
+
+  // C8/C9：判据是「工具表占窗口比例」而非绝对窗口（2026-10-22 真机纠正）。
+  // 旧判据（窗口 < 32000）与默认档 32768 只差 768，等于「默认档刚好躲过裁剪」——
+  // 用户实际就是踩在这个缝里：10.4k 工具表在 32768 窗口下占 32%，每轮三分之一上下文是工具定义。
+  const { BASE_TOOLS, estimateTokens } = await import('../agent-core/index.js');
+  const est = (t) => estimateTokens(JSON.stringify(t));
+  const onDefault = selectToolsForWindow(BASE_TOOLS, 32768, { estimate: est });
+  check('C8 默认档 32768 + 真实工具表 → 必须收敛（占比约 33%）',
+    onDefault.trimmed === true, `share=${(onDefault.share * 100).toFixed(1)}% kept=${onDefault.tools.length}`);
+  const on128k = selectToolsForWindow(BASE_TOOLS, 131072, { estimate: est });
+  check('C9 同一张表在 128K 下不裁（判据是占比，不是「一律裁」）',
+    on128k.trimmed === false, `share=${(on128k.share * 100).toFixed(1)}%`);
+  check('C10 share 字段回传（可观测，日志与诊断都要用）',
+    onDefault.share > 0.2 && on128k.share > 0 && on128k.share < 0.2);
 }
 
 // ── D. 对账 ──

@@ -16,8 +16,18 @@
 // 兼容性纪律（重要）：**默认零行为变化**。只有 contextWindow 显式小于阈值时才裁剪；
 // 未提供窗口、或窗口够大时，一律返回原集合。这样存量测试与用户习惯都不受影响。
 
-/** 窗口低于该值时收敛工具面（低于阈值才裁，等于/大于不裁） */
-export const MIN_FULL_TOOL_WINDOW = 32000;
+/** 窗口低于该值时**无条件**收敛（任何工具表在这个窗口里都是负担） */
+export const MIN_FULL_TOOL_WINDOW = 16000;
+
+/**
+ * 工具表占窗口的比例上限：超过就收敛。
+ *
+ * 为什么用「占比」而不是绝对窗口值（2026-10-22 真机纠正）：
+ * 同一份 10.4k token 的工具表，对 32K 窗口是 32% 的固定开销（每轮三分之一上下文都是工具定义），
+ * 对 1M 窗口只是 1%。用绝对阈值必然两头都不对——旧值 32000 与默认档 32768 只差 768，
+ * 等于「默认档刚好躲过裁剪」，是巧合不是设计。
+ */
+export const TOOL_TABLE_SHARE_LIMIT = 0.2;
 
 export const TIER_CORE = 'core';
 export const TIER_CATALOG = 'catalog';
@@ -71,21 +81,30 @@ export function tierOf(name) {
 
 /**
  * 按窗口选择本轮通告的工具面。
+ * 判据两条，任一成立即收敛：① 窗口小于 MIN_FULL_TOOL_WINDOW；② 工具表占窗口比例超过
+ * TOOL_TABLE_SHARE_LIMIT。窗口未知（<=0）时不裁——没有分母就没有占比。
  * @param {Array} allTools 候选工具（schema 数组）
  * @param {number} contextWindow 本轮有效窗口（<=0 或未提供 = 未知）
  * @param {object} [opts]
  * @param {boolean} [opts.forceCoreOnly] 强制只给 core（宿主显式要求时）
- * @returns {{ tools: Array, trimmed: boolean, omitted: number, window: number }}
+ * @param {(tools:Array)=>number} [opts.estimate] token 估算器（引擎注入 estimateTokens，
+ *        避免本模块反向依赖 agent-core 造成循环 import）
+ * @returns {{ tools: Array, trimmed: boolean, omitted: number, window: number, share: number }}
  */
 export function selectToolsForWindow(allTools, contextWindow, opts = {}) {
   const list = Array.isArray(allTools) ? allTools : [];
   const win = Number(contextWindow) > 0 ? Number(contextWindow) : 0;
-  const needTrim = opts.forceCoreOnly === true || (win > 0 && win < MIN_FULL_TOOL_WINDOW);
-  if (!needTrim) return { tools: list, trimmed: false, omitted: 0, window: win };
+  const tableTokens = typeof opts.estimate === 'function'
+    ? Number(opts.estimate(list)) || 0
+    : 0; // 没有估算器时不臆造数字（此时只剩绝对窗口这一条判据）
+  const share = win > 0 && tableTokens > 0 ? tableTokens / win : 0;
+  const needTrim = opts.forceCoreOnly === true
+    || (win > 0 && (win < MIN_FULL_TOOL_WINDOW || (share > 0 && share > TOOL_TABLE_SHARE_LIMIT)));
+  if (!needTrim) return { tools: list, trimmed: false, omitted: 0, window: win, share };
   const tools = list.filter((t) => tierOf(t?.function?.name) === TIER_CORE);
   // 空集保护：若裁剪把所有工具都干掉了（判定异常），保留原集合而不是让模型无工具可用
-  if (tools.length === 0) return { tools: list, trimmed: false, omitted: 0, window: win };
-  return { tools, trimmed: true, omitted: list.length - tools.length, window: win };
+  if (tools.length === 0) return { tools: list, trimmed: false, omitted: 0, window: win, share };
+  return { tools, trimmed: true, omitted: list.length - tools.length, window: win, share };
 }
 
 /** 取某个分组的工具名（activate_tools 用） */
