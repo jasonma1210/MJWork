@@ -6,6 +6,24 @@ desktop / server / renderer 三个 package.json 的 version 必须保持一致�
 
 ## [0.7.0-beta] - 2026-10-22
 
+### 修复（思考强度整组变灰不可选，2026-10-22 真机）
+
+症状：模型选择器里「思考强度」的 low/medium/high 全部置灰，点不动。
+
+根因两处叠加：
+- `~/.mjcode/models.json` 里模型条目**只写 id、不写 caps**；
+- `modelsFile.parseModelItem` **读取侧只走 `defaultCaps`（不按 ID 推断）**，而新增模型的路径（`addModelToRaw`）是走 `suggestCaps` 的 —— 两处语义不一致。于是 `mimo-v2.6-flash`（名字不含 `reasoner`/`thinking` 之类关键词）被永久标成 `supportsReasoning: false`，`reasoningOptionsFor` 据此把非「默认」档全部 `disabled`。
+
+修复（`main/modelsFile.js`）：
+- `REASONING_HINTS` 增 `mimo`（MiMo 官方文档：V2.5/V2.6 全系支持 thinking，默认关闭）；
+- `parseModelItem` 改为 `{ ...suggestCaps(id), ...provider级caps, ...模型级caps }` —— 读取侧与新增侧对齐，优先级仍是「文件显式声明 > ID 推断 > 默认」，**显式 `false` 不会被推断翻掉**。
+
+验证：真实 `models.json` 解析后 `mimo-v2.6-flash → supportsReasoning: true`、`deepseek-flash → false`（后者不支持 `reasoning_effort`，不能误标，否则下发无效参数）。`model-shape` 追加 5 项（含「显式 false 优先」「显式 true 生效」双向）。
+
+**两条已知限制，写在这里免得当成 bug 报回来**：
+1. MiMo 官方「当前暂不支持自定义调节推理投入档位」——除 `none` 外其余取值均视为开启，`minimal→low`、`xhigh/max→high`。所以三档可选但**效果相同**，档位多寡是 UI 表达而非真实算力差异。
+2. 官方要求**思考模式的多轮工具调用保留 `reasoning_content`**，缺失可能 400。本项目目前 `reasoning_content` 仅推 UI 展示、不落库（`main/main.js` 注释明确），故「思考 + 多轮工具」组合存在 400 风险。未在本轮修（跨引擎/宿主/DB 三处，且需真实报错样本才能确认是否必现），遇到再补。
+
 ### 修复（MiMo V2.6 Flash 登记进窗口事实表：1M 被当 32K 用，2026-10-22 真机）
 
 实际上游是 `mimo-v2.6-flash`（`api.xiaomimimo.com`），官方窗口 **1,048,576**。但 `xiaomimimo.com` 不在 host 规则里 ⇒ `providerKindOf` 返回 `unknown` ⇒ 表查不到 ⇒ 回落默认档 **32768**。后果连锁：

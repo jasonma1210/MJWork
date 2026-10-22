@@ -108,6 +108,29 @@ check('主进程不再有手抄的嵌套构造',
     }
   })());
 
-  console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
+  // ── 模型能力位推断（2026-10-22 真机：思考强度整组变灰不可选）──
+// 根因：models.json 里只写 id、不写 caps，而读取路径只走 defaultCaps（不按 ID 推断），
+// 于是 `mimo-v2.6-flash`（名字不含 reasoner）被永久标成 supportsReasoning:false，
+// 模型选择器把所有思考强度档位置灰。MiMo 官方文档：全系支持 thinking，默认关闭。
+{
+  const mf = require('../main/modelsFile');
+  // 注意：parseModelsFile 吃的是**文件文本**（JSON 字符串），不是对象
+  const one = (modelEntry) => (mf.parseModelsFile(JSON.stringify(
+    [{ name: 'p', url: 'https://api.xiaomimimo.com/v1', apiKey: 'k', models: [modelEntry] }],
+  )).providers || [])[0]?.models?.[0]?.caps || {};
+
+  check('能力推断：mimo-v2.6-flash 支持思考（否则思考强度整组变灰）',
+    one({ id: 'mimo-v2.6-flash' }).supportsReasoning === true);
+  check('能力推断：文件未声明 caps 时按 ID 推断（读取路径与新增路径同源）',
+    one({ id: 'deepseek-reasoner' }).supportsReasoning === true);
+  check('能力推断：deepseek-flash 仍为 false（它不支持 reasoning_effort，不能误标）',
+    one({ id: 'deepseek-flash' }).supportsReasoning === false);
+  check('能力推断：文件显式 false 不被 ID 推断翻掉（显式声明优先）',
+    one({ id: 'mimo-v2.6-flash', supportsReasoning: false }).supportsReasoning === false);
+  check('能力推断：显式 true 也能被采纳（手动开启生效）',
+    one({ id: 'deepseek-flash', supportsReasoning: true }).supportsReasoning === true);
+}
+
+console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
   process.exit(fail === 0 ? 0 : 1);
 })();

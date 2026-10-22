@@ -81,6 +81,10 @@ const IMAGE_HINTS = [
 ];
 const REASONING_HINTS = [
   'reasoner', 'reasoning', 'thinking', '-r1', 'r1-', 'qwq', 'glm-z1', 'magistral',
+  // 2026-10-22：小米 MiMo 全系支持 thinking（默认关闭，用 reasoning_effort / thinking.type
+  // 开启；官方明确「档位不细分，除 none 外均视为开启」）。名字不含 reasoner 之类的关键词，
+  // 不加这条就永远推断成「不支持推理」，思考强度整组变灰。
+  'mimo',
   'deepseek-reasoner', 'o1-', '-o1', 'o3-', '-o3', 'o4-', '-o4',
 ];
 
@@ -103,10 +107,17 @@ function keyRefOf(entry, apiKey) {
 // 解析单个模型项：字符串（=id）或 { id, name, ...caps }
 // 能力字段 = 条目级（capsSource）打底、模型级覆盖——扁平格式的 entry caps 不能丢
 function parseModelItem(item, capsSource = {}) {
-  const caps = defaultCaps({ ...(capsSource || {}), ...(item && typeof item === 'object' ? item : {}) });
+  const itemObj = item && typeof item === 'object' ? item : {};
+  const itemId = typeof item === 'string'
+    ? item.trim()
+    : String(itemObj.id || itemObj.modelId || itemObj.model_id || '').trim();
+  // 2026-10-22：文件里**没写**能力位时按模型 ID 给建议——与新增模型的路径（addModelToRaw）对齐。
+  // 此前读取侧只走 defaultCaps ⇒ `mimo-v2.6-flash` 这类「支持思考但名字不含 reasoner」的模型
+  // 被永久标成 supportsReasoning:false，模型选择器里思考强度整组变灰不可选。
+  // 优先级：文件显式声明（provider 级 → 模型级）> ID 推断 > 默认。显式 false 不会被推断翻掉。
+  const caps = defaultCaps({ ...suggestCaps(itemId), ...(capsSource || {}), ...itemObj });
   if (typeof item === 'string') {
-    const id = item.trim();
-    return id ? { modelId: id, displayName: id, caps } : null;
+    return itemId ? { modelId: itemId, displayName: itemId, caps } : null;
   }
   if (item && typeof item === 'object') {
     const id = String(item.id || item.modelId || item.model_id || '').trim();
