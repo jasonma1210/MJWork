@@ -1,0 +1,427 @@
+{
+  "version": 3,
+  "generatedAt": "2026-10-24T14:50:26.590Z",
+  "note": "② ratchet 基线（位置级）：key = 文件#语句内容哈希；新增即红，消失请重跑 --write",
+  "tiers": {
+    "bareIife": 46,
+    "thenOnly": 0
+  },
+  "files": {
+    "test/agent-abort-suspend.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/agent-watchdog.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/agentRunner.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/apply-patch-hardening.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/approval-queue.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/approvalChannel.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/compact-safety.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/computerUse.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/cuaVision.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/degrade.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/github-pr-review.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/group-budget.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/ipc-contract.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/localStore.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/mcp-auth.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/mcp-dual-stack.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/mcp-multi-transport.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/member-breaker.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/member-runtime-config.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/memory-write-closure.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/model-shape.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/model-windows-parity.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/pluginMarket.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/project-e2e.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/project-space.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/quota-gate.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/role-preset.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/sandbox-windows.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/scheduled-cancel.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/scheduled-store-guard.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/scheduled-task-model.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/scheduled-team-tools.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/sidebar-nav-active.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/spawn-subagent-budget.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/ssrf-guard.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/stop-thread-work.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/subagent-events.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/team-e2e-invariants.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/tool-call-capability.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/updater-errors.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/web-search-config.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/worker-memory-layering.test.mjs": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/worker-session.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/workerPool.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/workspace.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    },
+    "test/worktree.test.js": {
+      "bareIife": 1,
+      "thenOnly": 0
+    }
+  },
+  "points": {
+    "test/agent-abort-suspend.test.mjs#853640d3c841": {
+      "tier": "bareIife",
+      "line": 45,
+      "text": "(async () => { // ── A/B/C：中止语义 ── { const runId = nextRunId(); const ctrl = new AbortController(); "
+    },
+    "test/agent-watchdog.test.mjs#28ceb3030ec1": {
+      "tier": "bareIife",
+      "line": 31,
+      "text": "(async () => { // ── 1. 模型调用挂起 → 看门狗在超时点终止整个运行（错误如实冒泡）── { const t0 = Date.now(); let err = null; co"
+    },
+    "test/agentRunner.test.js#9e97acbb467f": {
+      "tier": "bareIife",
+      "line": 28,
+      "text": "(async () => { // 契约异步加载（动态 import ESM）——先就绪再跑，保证校验行为确定性 await agentRunnerReady(); // ── 正常运行：消息/工具/"
+    },
+    "test/apply-patch-hardening.test.js#995ec4f37245": {
+      "tier": "bareIife",
+      "line": 62,
+      "text": "(async () => { fs.rmSync(REPO, { recursive: true, force: true }); fs.mkdirSync(REPO, { recursive: tr"
+    },
+    "test/approval-queue.test.js#66b96509ba11": {
+      "tier": "bareIife",
+      "line": 38,
+      "text": "(async () => { // ── 结束回调：用户决策 ── const ch = new ApprovalChannel(); const idA = ch.nextId(); let set"
+    },
+    "test/approvalChannel.test.js#21bb339ae875": {
+      "tier": "bareIife",
+      "line": 27,
+      "text": "(async () => { // ── 并发审批按 id 精确分发（原竞态场景：两个等待者，响应不得串扰）── const ch = new ApprovalChannel(); const idA"
+    },
+    "test/compact-safety.test.mjs#b0f4bae5bba7": {
+      "tier": "bareIife",
+      "line": 56,
+      "text": "(async () => { // ── A. 行为：窗口取值决定裁不裁 ── const noWindow = await compactHistory(convo, { provider: { i"
+    },
+    "test/computerUse.test.js#b6b38c5f81c7": {
+      "tier": "bareIife",
+      "line": 303,
+      "text": "(async () => { await loopHappyPath(); await loopStop(); await loopDeny(); await loopMaxSteps(); cons"
+    },
+    "test/cuaVision.test.js#7f359a21322b": {
+      "tier": "bareIife",
+      "line": 521,
+      "text": "(async () => { await executors(); await loopVisionFallback(); await loopVisionStrongConfirm(); await"
+    },
+    "test/degrade.test.js#e572b17ef305": {
+      "tier": "bareIife",
+      "line": 31,
+      "text": "(async () => { // ── degrade：可降级判定 ── await check('ECONNREFUSED 判定为可降级', () => { assert.equal(degrad"
+    },
+    "test/github-pr-review.test.js#381be67bffc2": {
+      "tier": "bareIife",
+      "line": 49,
+      "text": "(async () => { // ── 1. parseUnifiedDiff：结构化（文件 → hunk → 行）── const files = github.parseUnifiedDiff("
+    },
+    "test/group-budget.test.js#c4dbc16172b9": {
+      "tier": "bareIife",
+      "line": 133,
+      "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-gb-')); const db = await op"
+    },
+    "test/ipc-contract.test.mjs#0913203f1493": {
+      "tier": "bareIife",
+      "line": 17,
+      "text": "(async () => { // ── 7 类事件合法形状全部放行（与 agentRunner 真实发送形状一一对应）── check('message 事件合法', validateAgentEv"
+    },
+    "test/localStore.test.js#123899962287": {
+      "tier": "bareIife",
+      "line": 182,
+      "text": "(async () => { const dirTimer = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-timer-')); const"
+    },
+    "test/mcp-auth.test.mjs#28dece96c373": {
+      "tier": "bareIife",
+      "line": 149,
+      "text": "(async () => { const srv = await startMockServer(); const base = `http://127.0.0.1:${srv.address().p"
+    },
+    "test/mcp-dual-stack.test.mjs#2a7041851368": {
+      "tier": "bareIife",
+      "line": 43,
+      "text": "(async () => { // ── A. 新服务端（无状态 2026-07-28）── { const seen = { methods: [], initCount: 0, sessionHe"
+    },
+    "test/mcp-multi-transport.test.js#47b4101b928c": {
+      "tier": "bareIife",
+      "line": 41,
+      "text": "(async () => { // ── 1. stdio 传输（真实子进程端到端）── { const r = await mcp.connectMcpServer({ name: 't-stdio"
+    },
+    "test/member-breaker.test.js#8013d0123805": {
+      "tier": "bareIife",
+      "line": 26,
+      "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-breaker-')); const db = awa"
+    },
+    "test/member-runtime-config.test.js#f1cfee8efc92": {
+      "tier": "bareIife",
+      "line": 43,
+      "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-mrc-')); const db = await o"
+    },
+    "test/memory-write-closure.test.mjs#3a4db4bb2b49": {
+      "tier": "bareIife",
+      "line": 73,
+      "text": "(async () => { // ═══ A. 引擎侧：compactHistory → onCompacted（P0-2）═══ await check('A1 成功压缩时透出 onCompact"
+    },
+    "test/model-shape.test.js#bac924bb9d0b": {
+      "tier": "bareIife",
+      "line": 92,
+      "text": "(async () => { // ── 与 agent-core 入口守卫的交叉验证 ── // 两处对「嵌套形」的理解必须一致：modelShape 的产物必须能通过引擎的校验， // 否则仍会在"
+    },
+    "test/model-windows-parity.test.mjs#a9c3234c3dab": {
+      "tier": "bareIife",
+      "line": 36,
+      "text": "(async () => { // 渲染层 TS 模块：Node ≥22 默认启用类型剥离，可直接 import（与 tsc 的类型检查互补： // 这里验证的是「运行时数据与行为」，类型层由 npm"
+    },
+    "test/pluginMarket.test.js#4b1f5d4fcc58": {
+      "tier": "bareIife",
+      "line": 89,
+      "text": "(async () => { const unsigned = await pm.verifySignature(validManifest, STRICT); check('未签名包拒绝安装', u"
+    },
+    "test/project-e2e.test.js#39f03fdeddc8": {
+      "tier": "bareIife",
+      "line": 35,
+      "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-project-e2e-')); const db ="
+    },
+    "test/project-space.test.js#e0be8d379fab": {
+      "tier": "bareIife",
+      "line": 29,
+      "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-project-space-')); const db"
+    },
+    "test/quota-gate.test.js#5221febcb0c0": {
+      "tier": "bareIife",
+      "line": 24,
+      "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-qgate-')); const db = await"
+    },
+    "test/role-preset.test.mjs#4ba5750d06bc": {
+      "tier": "bareIife",
+      "line": 34,
+      "text": "(async () => { // 1. toolNames 子集：只下发白名单内工具 chatCalls = []; await runAgent({ ...baseArgs, rolePreset"
+    },
+    "test/sandbox-windows.test.js#41d6f440245e": {
+      "tier": "bareIife",
+      "line": 29,
+      "text": "(async () => { // ── A. 设置计划形状（对外契约不变）── const plan = windows.windowsSandboxPlan(); await check('A1 "
+    },
+    "test/scheduled-cancel.test.js#8f6132b8a67b": {
+      "tier": "bareIife",
+      "line": 58,
+      "text": "(async () => { const realFetch = global.fetch; const realTimeouts = streamSettings.getStreamTimeouts"
+    },
+    "test/scheduled-store-guard.test.mjs#dbb89317f25a": {
+      "tier": "bareIife",
+      "line": 64,
+      "text": "(async () => { // ── ① 未加载即写盘 = 数据清空。必须发生在任何 loadStore 之前 ── await check('未加载存储时 persist() 拒绝写盘：磁盘文件"
+    },
+    "test/scheduled-task-model.test.mjs#469d253a1f0b": {
+      "tier": "bareIife",
+      "line": 51,
+      "text": "(async () => { await check('快照归一：完整形状原样保留', () => { assert.deepEqual(normalizeTaskModel(A), A); }); "
+    },
+    "test/scheduled-team-tools.test.mjs#006e9a5300be": {
+      "tier": "bareIife",
+      "line": 170,
+      "text": "(async () => { // ── ① 引擎通告面：runParams 是否带 teamContext ────────────────────────── await check('声明了 t"
+    },
+    "test/sidebar-nav-active.test.js#c6cb6efd6632": {
+      "tier": "bareIife",
+      "line": 44,
+      "text": "(async () => { const { activeNavOf } = await import('../renderer/src/lib/navState.ts'); // ── 行为：穷举 "
+    },
+    "test/spawn-subagent-budget.test.mjs#e17f98f9c2fb": {
+      "tier": "bareIife",
+      "line": 66,
+      "text": "(async () => { // ── ① provider 不回 usage：按内容长度估算，预算闸仍然有效 ── // 默认预算 50000；单轮回复 210,000 字符 ≈ 52,500 t"
+    },
+    "test/ssrf-guard.test.js#7173a3eaa6b7": {
+      "tier": "bareIife",
+      "line": 97,
+      "text": "(async () => { const rejectResolvedPrivate = await new Promise((resolve) => { guard.guardedLookup('l"
+    },
+    "test/stop-thread-work.test.js#4cd177c1bbe5": {
+      "tier": "bareIife",
+      "line": 53,
+      "text": "(async () => { let aborted; const run = async (name, fn) => { total++; try { await fn(); console.log"
+    },
+    "test/subagent-events.test.mjs#40513540bdd2": {
+      "tier": "bareIife",
+      "line": 66,
+      "text": "(async () => { // ── ① 正常收尾：spawn → progress×2 → done，tokens/summary/ms 齐全 ── { const events = await"
+    },
+    "test/team-e2e-invariants.test.js#1a320583ef9e": {
+      "tier": "bareIife",
+      "line": 73,
+      "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-e2e-')); const db = await o"
+    },
+    "test/tool-call-capability.test.mjs#f9a85a238fb3": {
+      "tier": "bareIife",
+      "line": 52,
+      "text": "(async () => { // ── 0. 能力读取的四种落点（纯函数断言，保证「兼容读取」不被后续改动悄悄收窄）── check('resolveSupportsToolCall 读 model"
+    },
+    "test/updater-errors.test.mjs#4e3ce1824d2c": {
+      "tier": "bareIife",
+      "line": 101,
+      "text": "(async () => { const downloadHandler = handlers.get('updater:download'); total++; if (typeof downloa"
+    },
+    "test/web-search-config.test.js#5c9cef41507b": {
+      "tier": "bareIife",
+      "line": 32,
+      "text": "(async () => { // ── 1. 提供方元数据 ── check('内置 8 家提供方且 id 唯一', sp.SEARCH_PROVIDERS.length === 8 && new "
+    },
+    "test/worker-memory-layering.test.mjs#859ee339aef1": {
+      "tier": "bareIife",
+      "line": 40,
+      "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-worker-mem-')); const db = awai"
+    },
+    "test/worker-session.test.js#05390d48e827": {
+      "tier": "bareIife",
+      "line": 49,
+      "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-ws-')); const db = await op"
+    },
+    "test/workerPool.test.js#dbca39571bf1": {
+      "tier": "bareIife",
+      "line": 44,
+      "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-wp-')); const db = await op"
+    },
+    "test/workspace.test.js#24038605dc93": {
+      "tier": "bareIife",
+      "line": 16,
+      "text": "(async () => { const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-ws-')); const docs = path.j"
+    },
+    "test/worktree.test.js#eda4d1f1c11f": {
+      "tier": "bareIife",
+      "line": 22,
+      "text": "(async () => { const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-wt-')); const repo = path.j"
+    }
+  }
+}
