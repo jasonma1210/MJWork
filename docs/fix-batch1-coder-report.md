@@ -455,6 +455,15 @@ cd /Users/jianma/Desktop/MJCode && git diff --numstat -- desktop/main/main.js
 最可能的原因：**并行会话在同一工作区做变异**，gate 扫描到瞬时被改的源码。建议：全量跑与变异实验不要同时进行
 （否则任何 gate 都可能随机红，读数不可信）。
 
+> **订正（2026-10-24 22:0x，主理人，依据验证方证据）**：以上归因**不成立**。真实机制是
+> **两个 `npm test` 同时在跑**，不是「变异撞扫描」。证据：① 该窗口内验证方未改动仓库任何文件
+> （其探针走 esbuild `stdin`，零落盘）；② 报错是 `ENOENT .../renderer/src/__i18n_probe_7.jsx`，
+> 而 `__i18n_probe_*` 由 `test/render-smoke.mjs:163` 生成——两个 run-all 并发时，
+> 后启动的实例会删掉先启动实例正在用的探针文件，`legacy-ledger` 的「现算」与 `lint-gate`
+> 的目录枚举因此失真。
+> **正确纪律**：全量测试必须**单一 owner**，同一时刻只允许一个 `npm test`；隔离不同工具的
+> 并发是本条的必要条件，不是充分条件。根治项见 S5（探针改 `os.tmpdir()` 或 esbuild `stdin` 零落盘）。
+
 ## RB-1 后仍存在的风险
 
 1. `scheduled-team-tools` 的抽取器依赖 `main.js` 里 `toolHooks.wrap(sguard.wrap({...}))` 的书写形态：
