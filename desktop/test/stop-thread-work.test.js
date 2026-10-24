@@ -162,6 +162,21 @@ const G = (id, status, thread) => ({ group_id: id, status, thread_id: thread });
     assert.ok(open > start, 'function stop() 后面没有函数体');
     const end = matchBrace(hook, open);
     assert.ok(end > open, `stop() 函数体括号未配对（起点 ${open}）`);
+    // ── 窗口边界的形态不变量：必须由两条**互相独立**的路径算出来并一致 ──
+    // 路径 A = 括号配对（跳过字符串 / 模板串 / 注释）；路径 B = 缩进层级（不跳任何东西，只看行首）。
+    // 为什么需要 B：A 一旦漏跳字符串或注释，深度就会溢出，配对点一路滑到后面某个 `}`，
+    // 窗口**外扩**吞掉后面的函数体 —— 而下面那三条内容断言（calls >= 3 等）照样全中，
+    // 套件会 11/11 全绿。OVR-1 实测过：把 matchBrace 的跳注释/跳字符串整段删掉、
+    // 再在 stop() 里塞一个 `const __ovr = '{';`，套件 **exit=0 仍全绿**，一条断言都拦不住。
+    // 这正是「结论正确但窗口已越界」：今天靠内容断言洗干净，换个代码布局就抽到相邻代码去了。
+    const lineStart = hook.lastIndexOf('\n', start) + 1;
+    const indent = hook.slice(lineStart, start); // `function stop()` 所在行的缩进
+    const closeAt = hook.indexOf(`\n${indent}}`, start);
+    assert.ok(closeAt > start, `找不到缩进层 ${JSON.stringify(indent)} 的闭合花括号（stop() 的缩进层级变了？）`);
+    const endByIndent = closeAt + 1 + indent.length;
+    assert.equal(end, endByIndent,
+      `stop() 抽取窗口的两条路径不一致：括号配对算到 ${end}，缩进层级算到 ${endByIndent}`
+      + `（多半是配对漏跳了字符串/注释导致窗口外扩，抽到的已经不是 stop() 自己的函数体）`);
     // 窗口必须严格等于 stop() 自己的函数体。早先用「下一个注释标记」当终点：
     // 一旦 stop() 被掏成空壳、真逻辑改名下移，窗口会溢出到后面那个函数的函数体，
     // 三个断言照样全过 —— 产品真坏了测试却全绿（S10 T14 实测假绿）。故改括号配对。
