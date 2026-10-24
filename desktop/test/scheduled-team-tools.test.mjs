@@ -138,6 +138,21 @@ function extractScheduledToolHandlersLiteral() {
   assert.ok(start > 0, 'main.js 里找不到 runScheduledAgentTask（结构变了就要同步本抽取器）');
   const bodyEnd = matchBracket(MAIN_SRC, MAIN_SRC.indexOf('{', MAIN_SRC.indexOf(')', start)));
   const body = MAIN_SRC.slice(start, bodyEnd > 0 ? bodyEnd : undefined);
+  // ── 外层窗口（runScheduledAgentTask 的函数体）同样要两条路径互证 ────────────
+  // 只有内层字面量的守卫不够：这个窗口是「在里面找 marker」的搜索范围，它一旦外扩，
+  // body 就不再是这个函数自己的体 —— 后面 indexOf(marker) 命中的可能是**被吞进来的
+  // 别的函数**里的同款装配，那时「定时通道的装配被删了」也照样绿。
+  // OVR-3b 实测：外层窗口外扩（掉到文件尾 matchBracket 返回 -1，或落到文件内某个 }）
+  // ⇒ 无本守卫时 exit=0 / 5/5 **静默放行**；有本守卫才红（括号配对算到 61336 vs 缩进层级 61025）。
+  const fnLineStart = MAIN_SRC.lastIndexOf('\n', start) + 1;
+  const fnIndent = /^\s*/.exec(MAIN_SRC.slice(fnLineStart))[0];
+  const fnCloseAt = MAIN_SRC.indexOf(`\n${fnIndent}}`, start);
+  assert.ok(bodyEnd > 0, 'runScheduledAgentTask 的函数体括号未配对（窗口一路吃到文件尾了？）');
+  assert.ok(fnCloseAt > start, `找不到缩进层 ${JSON.stringify(fnIndent)} 的闭合花括号（runScheduledAgentTask 的缩进层级变了？）`);
+  const fnEndByIndent = fnCloseAt + 1 + fnIndent.length;
+  assert.equal(bodyEnd, fnEndByIndent,
+    `runScheduledAgentTask 函数体窗口的两条路径不一致：括号配对算到 ${bodyEnd}，缩进层级算到 ${fnEndByIndent}`
+    + `（多半是配对漏跳了字符串/注释导致窗口外扩，body 已经不是这个函数自己的体）`);
   const marker = 'toolHooks.wrap(sguard.wrap(';
   const at = body.indexOf(marker);
   assert.ok(at > 0, '定时通道里找不到 toolHooks.wrap(sguard.wrap(...)) 装配（结构变了就要同步本抽取器）');
