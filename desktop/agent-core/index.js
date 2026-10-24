@@ -2522,7 +2522,10 @@ export { TOOL_HANDLER_NAMES };
 // A-08：引擎内部显式 case 处理的工具（模型侧名称）。此常量是「哪些工具不经宿主 RPC」
 // 的机器可读事实来源——宿主 registry.js 与 tool-registration-matrix 都引用它，
 // 避免这条例外只存在于注释里（注释无法被门禁校验）。
-export const ENGINE_BUILTIN_TOOL_NAMES = ['todo_write'];
+// T-04：清单曾只列 todo_write，漏了同为「引擎内部 switch 分支处理、无宿主通道」的
+//   spawn_subagent 与 deep_research（二者在 TOOL_HANDLER_NAMES 里映射为 undefined）。
+//   两侧（本文件与 main/engineProcess/registry.js）必须完全一致，由 A-08 双向断言看守。
+export const ENGINE_BUILTIN_TOOL_NAMES = ['todo_write', 'spawn_subagent', 'deep_research'];
 
 export async function runAgent({
   messages, model, onStream, onToolCall, onDone, onMessage, onSuspend, onBudget, onTodos,
