@@ -127,15 +127,39 @@ const G = (id, status, thread) => ({ group_id: id, status, thread_id: thread });
   // ── 源码形态：stop() 不能再有「静默空操作」 ──
   const hook = fs.readFileSync(path.join(ROOT, 'renderer', 'src', 'hooks', 'useAgentRun.ts'), 'utf8');
 
+  /** 从 `{` 起配对到它自己的 `}`（跳过字符串/模板串/注释里的括号）。与 onboarding-model-apply 的 matchBrace 同口径。 */
+  function matchBrace(src, startIdx) {
+    let depth = 0;
+    for (let i = startIdx; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === '"' || ch === "'" || ch === '`') {
+        const q = ch; i++;
+        while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === q) break; i++; }
+        continue;
+      }
+      if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); if (nl < 0) return -1; i = nl; continue; }
+      if (ch === '/' && src[i + 1] === '*') { const e = src.indexOf('*/', i + 2); if (e < 0) return -1; i = e + 1; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) return i; }
+    }
+    return -1;
+  }
+
   check('stop() 注册表键统一 String()（写入侧就是 String(thread.id)）', () => {
     assert.match(hook, /runRegistry\.get\(String\(tid\)\)/);
   });
 
   check('stop() 无条件兜底：父 run 不在时按 runId 直接中止，并取消编排组', () => {
     const start = hook.indexOf('function stop()');
-    const end = hook.indexOf('// Esc 快捷停止生成');
-    assert.ok(start > 0 && end > start, '找不到 stop() 函数体');
-    const body = hook.slice(start, end);
+    assert.ok(start > 0, '找不到 function stop()（函数名/形态变了就要同步本抽取器）');
+    const open = hook.indexOf('{', start);
+    assert.ok(open > start, 'function stop() 后面没有函数体');
+    const end = matchBrace(hook, open);
+    assert.ok(end > open, `stop() 函数体括号未配对（起点 ${open}）`);
+    // 窗口必须严格等于 stop() 自己的函数体。早先用「下一个注释标记」当终点：
+    // 一旦 stop() 被掏成空壳、真逻辑改名下移，窗口会溢出到后面那个函数的函数体，
+    // 三个断言照样全过 —— 产品真坏了测试却全绿（S10 T14 实测假绿）。故改括号配对。
+    const body = hook.slice(start, end + 1);
     // 三个分支（有 controller / 有 abortRef / 两者都没有）都必须取消编排组。
     // 只断言「出现过一次」是不够的 —— 前两个分支天然会带一次，漏掉兜底分支也能过（变异验证踩过）。
     const calls = (body.match(/abortGroupsForThread\(tid\)/g) || []).length;
