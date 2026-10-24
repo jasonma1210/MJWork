@@ -7,6 +7,7 @@ import Switch from './ui/Switch';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import { useI18n, tGlobal } from '../i18n';
+import { REPEATS, validateCron, nextCronRun, humanSchedule } from '../lib/schedulePresets';
 // 窗口解析与主进程同一张表（lib/modelWindows.ts ↔ main/modelWindows.js 有 parity 测试）
 import { resolveWindow } from '../lib/modelWindows';
 // §7.6 / P1-6：定时任务可预先声明「用哪支军团跑」（team_id 随任务落库，空 = 匿名编排）
@@ -21,87 +22,10 @@ const STATUS_META = {
   missed: { labelKey: 'scheduled.statusMissed', cls: 'text-danger' },
 };
 
-// ── Cron 解析（5 字段：分 时 日 月 周），支持 * 数字 a-b 列表与 /步进 ──
-function cronFieldOk(f) {
-  return /^[\d*,\-/]+$/.test(f) && f.length > 0;
-}
-
-function cronFieldMatches(f, v) {
-  return f.split(',').some((p) => {
-    let base = p;
-    let step = 1;
-    if (p.includes('/')) {
-      const parts = p.split('/');
-      base = parts[0];
-      step = Number(parts[1]) || 1;
-    }
-    if (base === '*' || base === '?') return v % step === 0;
-    if (base.includes('-')) {
-      const [a, b] = base.split('-').map(Number);
-      if (Number.isNaN(a) || Number.isNaN(b)) return false;
-      return v >= a && v <= b && (v - a) % step === 0;
-    }
-    const n = Number(base);
-    return !Number.isNaN(n) && v === n;
-  });
-}
-
-// 语法校验：返回错误文案或 null（非 hook 纯函数：调用时经 tGlobal 求值）
-function validateCron(expr) {
-  const fields = String(expr || '').trim().split(/\s+/);
-  if (fields.length !== 5) return tGlobal('scheduled.cronFiveFields');
-  if (!fields.every(cronFieldOk)) return tGlobal('scheduled.cronFieldChars');
-  if (Number(fields[0]) > 59 || Number(fields[1]) > 23) return tGlobal('scheduled.cronMinuteHour');
-  if (Number(fields[2]) > 31 || Number(fields[3]) > 12) return tGlobal('scheduled.cronDayMonth');
-  if (Number(fields[4]) > 7) return tGlobal('scheduled.cronDow');
-  return null;
-}
-
-// 下次运行时间：从下一分钟起逐分钟扫描（上限 366 天）；注释：日/周同时受限时按 AND 处理（本产品模板不涉及 OR 场景）
-function nextCronRun(expr) {
-  if (validateCron(expr)) return null;
-  const fields = String(expr).trim().split(/\s+/);
-  const d = new Date();
-  d.setSeconds(0, 0);
-  for (let i = 0; i < 366 * 24 * 60; i++) {
-    d.setMinutes(d.getMinutes() + 1);
-    if (
-      cronFieldMatches(fields[0], d.getMinutes()) &&
-      cronFieldMatches(fields[1], d.getHours()) &&
-      cronFieldMatches(fields[2], d.getDate()) &&
-      cronFieldMatches(fields[3], d.getMonth() + 1) &&
-      cronFieldMatches(fields[4], d.getDay())
-    ) return new Date(d);
-  }
-  return null;
-}
-
-// 星期名 i18n key（下标与 JS getDay 对齐：0=周日）
-const DOW_KEYS = ['daySun', 'dayMon', 'dayTue', 'dayWed', 'dayThu', 'dayFri', 'daySat'];
-
-// cron → 人话（TRAE 卡片同款「每天 10:00」样式；无法归约时回退原表达式）
-// 非 hook 纯函数：调用时经 tGlobal 求值（渲染期每次调用，切语言即时生效）
-function humanSchedule(expr) {
-  const f = String(expr || '').trim().split(/\s+/);
-  if (f.length !== 5) return expr;
-  const [m, h, dom, mon, dow] = f;
-  const time = /^\d+$/.test(h) && /^\d+$/.test(m)
-    ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` : null;
-  if (dom === '*' && mon === '*' && dow === '*') return time ? tGlobal('scheduled.everyDayTime', { time }) : tGlobal('scheduled.everyDayExpr', { expr });
-  if (dom === '*' && mon === '*' && dow === '1-5') return time ? tGlobal('scheduled.weekdaysTime', { time }) : tGlobal('scheduled.weekdaysExpr', { expr });
-  if (dom === '*' && mon === '*' && /^\d$/.test(dow)) {
-    return time ? tGlobal('scheduled.weeklyDay', { day: tGlobal(`scheduled.${DOW_KEYS[Number(dow) % 7]}`), time }) : expr;
-  }
-  return expr;
-}
-
-// labelKey 而非 label：顶层常量不持有求值结果，渲染时经 t() 取文案
-const REPEATS = [
-  { id: 'daily', labelKey: 'scheduled.repeatDaily', toCron: (t) => `${t.m} ${t.h} * * *` },
-  { id: 'weekday', labelKey: 'scheduled.repeatWeekday', toCron: (t) => `${t.m} ${t.h} * * 1-5` },
-  { id: 'weekly', labelKey: 'scheduled.repeatWeekly', toCron: (t) => `${t.m} ${t.h} * * 1` },
-  { id: 'custom', labelKey: 'scheduled.repeatCustom', toCron: null },
-];
+// Cron 解析 / 重复模板 / 下次运行 / 人话描述：**已抽到 lib/schedulePresets.ts**。
+// 为什么必须共用一份：「发布任务」界面（选「定时任务」时内联同样的三个控件）与这一页
+// 必须算出同一个 cron，否则「预览写 09:00、实际跑在 10:00」这类漂移没有门禁能发现。
+// 那些函数是纯函数（文案经传入的 t 求值），所以也能被 Node 侧门禁直接断言。
 
 // 小开关（TRAE 卡片右侧同款）：视觉与语义统一由 ui/Switch 承载（P1-9）
 
@@ -210,7 +134,7 @@ export default function ScheduledTasks() {
     const r = REPEATS.find((x) => x.id === form.repeat);
     return r?.toCron ? r.toCron({ h: Number.isNaN(h) ? 9 : h, m: Number.isNaN(m) ? 0 : m }) : '';
   })();
-  const formCronErr = formCron ? validateCron(formCron) : null;
+  const formCronErr = formCron ? validateCron(formCron, tGlobal) : null;
   // 任务量 vs 模型窗口：提示词里写了「100 条」这种量级，而所选模型窗口很小时给一条提醒。
   // 不阻断（引擎会自动分批 + 续跑），但要让用户在创建时就知道为什么慢、该换什么。
   const pickedModel = modelOptions.find((o) => o.value === form.modelRef);
@@ -567,7 +491,7 @@ export default function ScheduledTasks() {
               <p className="text-xs text-danger mb-1">{formCronErr}</p>
             ) : (
               <p className="text-xs text-text2 mb-1">
-                {t('scheduled.scheduleLabel', { value: form.repeat === 'custom' ? form.schedule : humanSchedule(formCron) })}
+                {t('scheduled.scheduleLabel', { value: form.repeat === 'custom' ? form.schedule : humanSchedule(formCron, tGlobal) })}
                 {formCron && (() => { const d = nextCronRun(formCron); return d ? t('scheduled.nextRun', { time: d.toLocaleString('zh-CN') }) : ''; })()}
                 {form.validType === 'until' && form.validUntil && t('scheduled.untilDate', { date: form.validUntil })}
               </p>
@@ -640,7 +564,7 @@ export default function ScheduledTasks() {
                   <IconClock size={12} />
                   {task.trigger_type === 'event'
                     ? t('scheduled.eventTrigger', { source: task.event_source || '?', event: task.event_name || '?' })
-                    : humanSchedule(task.schedule)}
+                    : humanSchedule(task.schedule, tGlobal)}
                   {task.trigger_type !== 'event' && (
                     <span className="font-mono opacity-60">{t('scheduled.cronParens', { cron: task.schedule })}</span>
                   )}

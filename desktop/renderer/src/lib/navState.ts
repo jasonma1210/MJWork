@@ -7,24 +7,20 @@
 //   ② 选中样式是 `bg-hover`，与 hover 同色 → 即使 active 传对了，视觉上仍等于没选中。
 // 本函数只解决 ①；②由 Sidebar 的 NavItem 用 select-bg/select-fg 专用令牌解决。
 //
-// 2026-10-24 双入口重组（设计文档 §7.7 / §9 P0-1）：一级导航从 4 项
-// （新建会话 / 定时任务 / 生态中心 / 团队编制）收敛为 2 项（新建任务 / 助理），
-// 生态中心按 D8 降级为弹层（不再是一级入口，但仍保留可达入口与选中态）。
-// 「定时任务」与「团队编制」不再是独立入口，而是「助理」工作台内的子 Tab
-// （Tab1 军团编制 / Tab3 定时任务）。
+// ── 一级导航的两次调整（务必连起来读，否则会误判「为什么又加回来」）──
+// 2026-10-24 第一次（设计文档 §7.7 / §9 P0-1）：4 项（新建会话 / 定时任务 / 生态中心 /
+//   团队编制）收敛为 2 项（新建任务 / 助理），定时任务与团队编制降为助理的子 Tab。
+// 2026-10-24 第二次（用户实测反馈）：「一级菜单下面还是要有定时任务」。
+//   ⇒ **定时任务升回一级入口**（它是「什么时候跑」这一维度的唯一管理面，藏在助理的子 Tab 里
+//   会让用户找不到），团队编制仍留在助理（它是助理的编制管理，不是并列的运行维度）。
+//   最终：新建任务 / 助理 / 定时任务 三项一级入口 + 生态中心（底部，弹层）。
 //
-// ⚠ 破坏性变更的兼容口径（必须同时满足这三条，否则旧调用方会突然全失效）：
-//   ① NavKey 的联合类型里**保留** 'scheduled' | 'teams' ⇒ 旧代码按字面量比较
-//      （`k === 'scheduled'`）仍能编译、仍能跑；
-//   ② activeNavOf **不再返回**这两个值 ⇒ 旧代码若按返回值分支会落到「都不匹配」的分支，
-//      这正是「定时任务/军团编制不再是独立入口」的真实语义；
-//   ③ NavViewState 同时保留 showScheduled / showTeams 作为**兼容输入**（可选字段）：
-//      它们为 true 时 activeNavOf 仍返回 'assistant' —— 于是只改了视图状态、
-//      没改判定的旧调用方拿到的仍是「某个一级入口被选中」，而不是静默返回 ''。
-export type NavKey = 'new' | 'assistant' | 'ecosystem' | '' | 'scheduled' | 'teams';
+// ⚠ 兼容口径：`'teams'` 仍保留在 NavKey 联合类型里（旧代码按字面量比较仍能编译），
+//   但 `activeNavOf` **不返回**它——团队编制是助理的子态，统一收敛到 `'assistant'`。
+export type NavKey = 'new' | 'assistant' | 'scheduled' | 'ecosystem' | '' | 'teams';
 
 /** 助理工作台的子 Tab（见 lib/assistantTabs.ts；此处只做类型引用，避免循环依赖） */
-export type NavAssistantTab = 'teams' | 'aiTeam' | 'scheduled' | 'complex';
+export type NavAssistantTab = 'publish' | 'teams' | 'aiTeam';
 
 export interface NavViewState {
   /** 助理工作台是否在前台（一级入口「助理」） */
@@ -32,9 +28,9 @@ export interface NavViewState {
   /** 助理工作台当前子 Tab（可选；不影响一级选中态，仅供展示层回显） */
   assistantTab?: NavAssistantTab;
   /**
-   * 定时任务页是否在前台 —— **兼容输入**。
-   * 重组后它是「助理」的子 Tab（不再是独立入口），但旧调用方仍可能传这个字段，
-   * 此时 activeNavOf 仍返回 'assistant'（助理子态统一收敛到同一个入口）。
+   * 定时任务页是否在前台 —— **一级入口**（2026-10-24 第二次调整后恢复）。
+   * 与 showAssistant 互斥由调用方的 resetView 保证；万一同时为 true，
+   * 本函数让 `scheduled` 优先（更具体的那个应当点亮）。
    */
   showScheduled?: boolean;
   /** 工作台是否在前台 */
@@ -42,8 +38,8 @@ export interface NavViewState {
   /** 生态中心（弹层）是否打开 */
   showEcosystem: boolean;
   /**
-   * MJ 军团（团队编制页）是否在前台 —— **兼容输入**，语义同 showScheduled
-   * （它是助理 Tab1，不再是独立入口）。
+   * MJ 军团（团队编制页）是否在前台 —— **兼容输入**：
+   * 它是助理 Tab，不再是独立入口，故仍返回 'assistant'。
    */
   showTeams?: boolean;
   /** 是否选中了某个会话 */
@@ -51,10 +47,12 @@ export interface NavViewState {
 }
 
 export function activeNavOf(view: NavViewState): NavKey {
-  // 助理及其兼容子态（定时任务 / 军团编制）统一收敛为一个一级入口。
-  // 顺序说明：助理排在生态中心之前——生态中心是**覆盖在当前页之上的弹层**，
-  // 打开它时底层仍是助理页，一级导航应当继续点亮「助理」。
-  if (view.showAssistant || view.showScheduled || view.showTeams) return 'assistant';
+  // 定时任务是一级入口：排在最前，保证「点了定时任务就一定点亮它」。
+  if (view.showScheduled) return 'scheduled';
+  // 助理及其兼容子态（团队编制）统一收敛为一个一级入口。
+  if (view.showAssistant || view.showTeams) return 'assistant';
+  // 生态中心是**覆盖在当前页之上的弹层**：打开它时底层仍是助理页，
+  // 但用户关注点已切到生态中心，故让它优先于 assistant 以下的判定（与调整前一致）。
   if (view.showEcosystem) return 'ecosystem';
   if (view.showDashboard || view.hasActiveThread) return '';
   return 'new';

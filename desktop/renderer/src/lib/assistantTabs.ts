@@ -6,13 +6,19 @@
 //   放在组件文件里会让另外两处反向 import 组件（React 依赖 ⇒ Node 侧测试加载不了），
 //   放这里则三处共用同一份清单（单一事实来源）。
 //
-// Tab 语义（设计文档 §7.7 信息架构图）：
-//   teams    —— Tab1 军团编制（原样搬入 TeamsPage，不改业务逻辑）
-//   aiTeam   —— Tab2 AI 建团（草案卡片逐条采纳/编辑/否决）
-//   scheduled—— Tab3 定时任务（原样搬入 ScheduledTasks）
-//   complex  —— Tab4 复杂问题（显式选「按团队执行」的发起入口）
-
-export type AssistantTab = 'teams' | 'aiTeam' | 'scheduled' | 'complex';
+// Tab 语义（2026-10-24 二次调整：定时任务回到一级入口，见下）：
+//   publish  —— **发布任务（默认）**：唯一发起面。一句话 + 选军团（不选=自动构建）
+//               + 类型（复杂任务 / 定时任务）；复杂任务下方有看板，定时任务就地展开
+//               重复/有效期/时间并给执行计划预览
+//   teams    —— 军团编制（原样搬入 TeamsPage，不改业务逻辑）
+//   aiTeam   —— AI 建团（草案卡片逐条采纳/编辑/否决）
+//
+// 为什么删掉 scheduled / complex 两个 Tab：
+//   · scheduled —— 用户明确要求「一级菜单下面还是要有定时任务」⇒ 它升回**一级入口**，
+//     不再藏在助理里（一个能力不该同时有两个并列入口，否则「在哪管理」会有两个答案）；
+//   · complex   —— 它就是「发布任务」的类型之一（复杂任务），独立成 Tab 会与 publish
+//     抢同一个职责，且用户在两个地方都能派活时，「默认走哪条」变得不可解释。
+export type AssistantTab = 'publish' | 'teams' | 'aiTeam';
 
 export interface AssistantTabDef {
   id: AssistantTab;
@@ -21,14 +27,13 @@ export interface AssistantTabDef {
 }
 
 export const ASSISTANT_TABS: readonly AssistantTabDef[] = [
+  { id: 'publish', labelKey: 'assistant.tabPublish' },
   { id: 'teams', labelKey: 'assistant.tabTeams' },
   { id: 'aiTeam', labelKey: 'assistant.tabAiTeam' },
-  { id: 'scheduled', labelKey: 'assistant.tabScheduled' },
-  { id: 'complex', labelKey: 'assistant.tabComplex' },
 ];
 
-/** 助理页的默认 Tab（进入助理页先落在「军团编制」——设计文档 §7.4 路径①） */
-export const DEFAULT_ASSISTANT_TAB: AssistantTab = 'teams';
+/** 助理页的默认 Tab（进入助理先落在「发布任务」——用户诉求：助理里的发布任务只有一个界面） */
+export const DEFAULT_ASSISTANT_TAB: AssistantTab = 'publish';
 
 /** Tab id 合法性判定（外部输入不可信时用，避免把非法 id 塞进视图状态） */
 export function isAssistantTab(v: unknown): v is AssistantTab {

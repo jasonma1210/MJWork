@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
 import ThreadList from './ThreadList';
-import { IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers } from './icons';
+import { IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock } from './icons';
 import { activeNavOf } from '../lib/navState';
 import logo from '../assets/logo.png';
 import { useI18n } from '../i18n';
 
-// 左侧栏（2026-10-24 双入口重组）：一级导航从 4 项收敛为 2 项 ——「新建任务」+「助理」。
+// 左侧栏（2026-10-24 二次调整后）：一级导航 3 项 ——「新建任务」+「助理」+「定时任务」。
 //
-// 取舍说明（对应设计文档 §9 P0-2 与 D8「生态中心的层级 = 降级为弹层」）：
-//   · 「定时任务」与「团队编制」不再是独立入口，它们是**助理工作台的子 Tab**
-//     （Tab1 军团编制 / Tab3 定时任务）⇒ 侧栏删掉这两项；
+// 取舍说明（第一版把定时任务并进助理，用户实测后要求恢复，故本版加回）：
+//   · 「定时任务」是**一级入口**：「什么时候跑」是与「做什么」并列的运行维度，
+//     藏进助理子 Tab 后用户找不到（用户原话：「一级菜单下面还是要有定时任务」）；
+//   · 「团队编制」仍是助理的子 Tab（它是编制管理，不是并列的运行维度）⇒ 侧栏不单列；
 //   · 「生态中心」按 D8 降级为弹层，但**必须仍然可达** ⇒ 放在底部次级区
 //     （与「已归档」「设置」同列），弹层打开时它高亮（activeNav==='ecosystem'）。
 //     为什么不放回一级区：用户只要 2 个一级入口（D8 的推荐结论）；
@@ -17,7 +18,7 @@ import { useI18n } from '../i18n';
 //     删掉就断了「招募数字员工 → 组成军团」这条主链路。
 export default function Sidebar({
   threads, activeThread, onSelect, onNew, onDelete, onRenameThread, onAssignThread, onOpenArchive,
-  onOpenAssistant, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
+  onOpenAssistant, onOpenScheduled, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
   projects, activeProject, onSelectProject, onRemoveProject, onRenameProject,
   onNewThread, filter, view,
 }) {
@@ -28,8 +29,9 @@ export default function Sidebar({
     assistantTab: view?.assistantTab,
     showDashboard: !!view?.showDashboard,
     showEcosystem: !!view?.showEcosystem,
-    // 兼容输入：旧调用方仍可能传这两个字段（它们现在是助理的子 Tab）
+    // 定时任务：一级入口（2026-10-24 第二次调整恢复）
     showScheduled: !!view?.showScheduled,
+    // 兼容输入：团队编制仍是助理的子 Tab
     showTeams: !!view?.showTeams,
     hasActiveThread: !!activeThread,
   });
@@ -54,12 +56,13 @@ export default function Sidebar({
         <div className="text-xs text-text2 mt-1 truncate">{t('sidebar.tagline')}</div>
       </div>
 
-      {/* 一级导航（对标 Codex 的 New chat）：两个入口 ——「新建任务」与「助理」。
+      {/* 一级导航：三个入口 ——「新建任务」「助理」「定时任务」。
           选中态由 activeNavOf 计算（互斥且穷尽）；此前只有 New chat 传 active，
           且判据是 !activeThread —— 在定时任务页里没有打开会话，于是该亮的不亮。 */}
       <div className="px-2 space-y-1">
         <NavItem icon={<IconEdit size={16} />} label={t('sidebar.newChat')} onClick={onNew} active={activeNav === 'new'} />
         <NavItem icon={<IconUsers size={16} />} label={t('sidebar.assistant')} onClick={onOpenAssistant} active={activeNav === 'assistant'} />
+        <NavItem icon={<IconClock size={16} />} label={t('sidebar.scheduled')} onClick={onOpenScheduled} active={activeNav === 'scheduled'} />
       </div>
 
       {/* 会话（项目 → 会话 二级结构） */}

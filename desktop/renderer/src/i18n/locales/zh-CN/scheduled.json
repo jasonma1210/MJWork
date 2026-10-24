@@ -116,5 +116,8 @@
   "expectsFileHint": "默认开启。开启后，若这一轮没有任何文件产出，任务判为失败（避免「成功了但什么也没生成」）。只做提交或只做汇报的任务可以关掉。",
   "expectsFileOff": "不校验产出文件（其他失败仍会判失败）",
   "expectsFileOn": "产出：校验",
-  "expectsFileOffShort": "产出：不校验（其他失败仍判失败）"
+  "expectsFileOffShort": "产出：不校验（其他失败仍判失败）",
+  "planForever": "{plan} · 下次运行 {next}",
+  "planUntil": "{plan} · 下次运行 {next} · 有效至 {date}",
+  "noNextRun": "无"
 }

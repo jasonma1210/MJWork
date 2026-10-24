@@ -54,21 +54,23 @@ const sidebar = blankComments(SIDEBAR);
             for (const hasActiveThread of [false, true])
               combos.push({ showAssistant, showScheduled, showDashboard, showEcosystem, showTeams, hasActiveThread });
 
-  await check('穷举 64 种视图组合：返回值只可能是四个已定义字面量', () => {
-    const allowed = new Set(['new', 'assistant', 'ecosystem', '']);
+  await check('穷举 64 种视图组合：返回值只可能是五个已定义字面量', () => {
+    // 第二版（2026-10-24 用户要求）：定时任务升回一级入口 ⇒ 'scheduled' 是合法返回值；
+    // 'teams' 仍不返回（它是助理子 Tab）。
+    const allowed = new Set(['new', 'assistant', 'scheduled', 'ecosystem', '']);
     for (const c of combos) {
       const got = activeNavOf(c);
       assert.ok(allowed.has(got), `${JSON.stringify(c)} → ${got}`);
     }
   });
 
-  await check('兼容别名：showScheduled=true 时返回「助理」（不再是独立入口）', () => {
+  await check('定时任务页在前台时选中「定时任务」（一级入口）', () => {
     for (const c of combos.filter((x) => x.showScheduled)) {
-      assert.equal(activeNavOf(c), 'assistant', JSON.stringify(c));
+      assert.equal(activeNavOf(c), 'scheduled', JSON.stringify(c));
     }
   });
 
-  await check('兼容别名：showTeams=true 时返回「助理」（不再是独立入口）', () => {
+  await check('兼容输入：showTeams=true 时返回「助理」（团队编制是助理子 Tab，不是独立入口）', () => {
     for (const c of combos.filter((x) => !x.showScheduled && x.showTeams)) {
       assert.equal(activeNavOf(c), 'assistant', JSON.stringify(c));
     }
@@ -82,7 +84,7 @@ const sidebar = blankComments(SIDEBAR);
 
   await check('助理子态与主态等价：assistantTab 不影响一级选中态', () => {
     const base = { showAssistant: true, showScheduled: false, showDashboard: false, showEcosystem: false, showTeams: false, hasActiveThread: false };
-    for (const tab of ['teams', 'aiTeam', 'scheduled', 'complex']) {
+    for (const tab of ['publish', 'teams', 'aiTeam']) {
       assert.equal(activeNavOf({ ...base, assistantTab: tab }), 'assistant', tab);
     }
   });
@@ -106,15 +108,15 @@ const sidebar = blankComments(SIDEBAR);
   await check('互斥：任一组合下被选中的一级入口不超过一个', () => {
     for (const c of combos) {
       const got = activeNavOf(c);
-      const lit = ['new', 'assistant', 'ecosystem'].filter((k) => k === got);
+      const lit = ['new', 'assistant', 'scheduled', 'ecosystem'].filter((k) => k === got);
       assert.ok(lit.length <= 1, `${JSON.stringify(c)} → ${got}`);
     }
   });
 
   // ── 连线契约：组件必须真的用上这个判定 ──
-  await check('App 把视图标志（含助理子页）作为 view 传给 Sidebar', () => {
-    assert.match(app, /view=\{\{\s*showAssistant,\s*assistantTab,\s*showDashboard,\s*showEcosystem\s*\}\}/,
-      '缺少 view={{ showAssistant, assistantTab, showDashboard, showEcosystem }}');
+  await check('App 把视图标志（含定时任务页）作为 view 传给 Sidebar', () => {
+    assert.match(app, /view=\{\{\s*showAssistant,\s*assistantTab,\s*showScheduled,\s*showDashboard,\s*showEcosystem\s*\}\}/,
+      '缺少 view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem }}');
   });
 
   await check('Sidebar 用 activeNavOf 计算，且入口各自绑定字面量', () => {
@@ -123,15 +125,14 @@ const sidebar = blankComments(SIDEBAR);
     // 助理及其兼容子态都必须喂进判定（兼容字段丢失会让旧调用方静默不亮）
     assert.match(sidebar, /showScheduled: !!view\?\.showScheduled/, '缺少兼容输入 showScheduled');
     assert.match(sidebar, /showTeams: !!view\?\.showTeams/, '缺少兼容输入 showTeams');
-    for (const key of ['new', 'assistant', 'ecosystem']) {
+    // 第二版：一级导航三项都必须是真实绑定（scheduled 已升回入口）
+    for (const key of ['new', 'assistant', 'scheduled']) {
       assert.match(sidebar, new RegExp(`active=\\{activeNav === '${key}'\\}`),
         `NavItem「${key}」缺少 active={activeNav === '${key}'}`);
     }
-    // 一级导航里不得再出现 scheduled / teams 两项（它们已降级为助理的子 Tab）
-    for (const dead of ['scheduled', 'teams']) {
-      assert.ok(!new RegExp(`active=\\{activeNav === '${dead}'\\}`).test(sidebar),
-        `一级导航仍绑定已降级的入口「${dead}」`);
-    }
+    // 团队编制仍在助理内 ⇒ 一级导航不得给它单独的 active 绑定
+    assert.ok(!/active=\{activeNav === 'teams'\}/.test(sidebar),
+      '一级导航仍绑定「teams」（它应留在助理里）');
   });
 
   await check('NavItem 输出 aria-current="page"（语义 + 可测锚点）', () => {

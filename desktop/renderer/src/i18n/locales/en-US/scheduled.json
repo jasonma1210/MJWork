@@ -116,5 +116,8 @@
   "expectsFileHint": "On by default. When on, a run that produced no file is marked failed (so \"succeeded but generated nothing\" cannot slip through). Turn it off for tasks that only commit or only report.",
   "expectsFileOff": "Output files not verified (other failures still fail)",
   "expectsFileOn": "Output: verified",
-  "expectsFileOffShort": "Output: not verified (other failures still fail)"
+  "expectsFileOffShort": "Output: not verified (other failures still fail)",
+  "planForever": "{plan} · next run {next}",
+  "planUntil": "{plan} · next run {next} · until {date}",
+  "noNextRun": "none"
 }

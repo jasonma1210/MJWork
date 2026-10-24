@@ -1,16 +1,19 @@
-// 双入口导航门禁（设计文档 §9 P1-8 要求的 `nav-state-dual-entry` 套件）
+// 一级导航门禁（设计文档 §9 P1-8 要求的 `nav-state-dual-entry` 套件）
 //
-// 守护什么：一级导航从 4 项重组为 2 项（新建任务 / 助理）后，
-//   `activeNavOf` 的**新语义**与**兼容别名**都不能被悄悄改回去。
+// 守护什么：一级导航的**返回值域**与**收敛规则**不能被悄悄改回去。
+//   2026-10-24 第一版：4 项 → 2 项（新建任务 / 助理），定时任务降为助理子 Tab。
+//   2026-10-24 第二版（用户实测要求）：**定时任务升回一级入口** ⇒ 3 项
+//     （新建任务 / 助理 / 定时任务）；团队编制仍在助理内。
+//   本套件随之改写为第二版的判据 —— 这正是它存在的意义：语义变了，门禁必须先红，
+//   然后**显式**改成新语义，而不是让旧断言在一片红里被顺手删掉。
 //
-// 断言范式纪律（tester 变异验证结论，见设计文档 §9 P1-8）：
+// 断言范式纪律：
 //   · **必须用行为断言**——直接 import `renderer/src/lib/navState.ts` 与
 //     `renderer/src/lib/assistantTabs.ts`，穷举视图组合、实调纯函数，断言返回值；
 //   · **禁止只做源码正则匹配**当主判据（源码形态会随格式化漂移，且挡不住语义回退）。
-//     正则只在最后两条「连线」检查里用，且仅用于「组件真的调了这个判定」这种结构性事实。
+//     正则只用在最后几条「连线」检查里，且仅用于「组件真的挂了这个分支」这种结构性事实。
 //
-// 本套件自己也要能被证伪：删掉 `activeNavOf` 的 assistant 分支后必须变红（见实施报告
-// 的变异验证记录：变异 → 具体哪条断言红 → 恢复）。
+// 本套件自己也要能被证伪：删掉 `activeNavOf` 的 scheduled 分支后必须变红。
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -45,11 +48,12 @@ function allCombos() {
   return out;
 }
 const COMBOS = allCombos();
-const ALLOWED = new Set(['new', 'assistant', 'ecosystem', '']);
+// 第二版：'scheduled' 是**合法**返回值（一级入口），'teams' 仍不返回（它是助理子 Tab）
+const ALLOWED = new Set(['new', 'assistant', 'scheduled', 'ecosystem', '']);
 
 // ── A. 一级选中态：行为断言 ──
 
-await check('A1 穷举 64 种视图组合：返回值域收敛为 4 个字面量（穷尽）', () => {
+await check('A1 穷举 64 种视图组合：返回值域收敛为 5 个字面量（穷尽）', () => {
   assert.equal(COMBOS.length, 64, `组合数应为 64，实际 ${COMBOS.length}`);
   for (const c of COMBOS) {
     const got = activeNavOf(c);
@@ -57,35 +61,37 @@ await check('A1 穷举 64 种视图组合：返回值域收敛为 4 个字面量
   }
 });
 
-await check('A2 兼容别名不再泄漏到返回值：scheduled / teams 永不被返回', () => {
+await check('A2 兼容别名不泄漏：teams 永不被返回（它是助理子 Tab）；scheduled 仅在 showScheduled 时返回', () => {
   for (const c of COMBOS) {
     const got = activeNavOf(c);
-    assert.notEqual(got, 'scheduled', `仍在返回 'scheduled'：${JSON.stringify(c)}`);
     assert.notEqual(got, 'teams', `仍在返回 'teams'：${JSON.stringify(c)}`);
+    if (got === 'scheduled') {
+      assert.equal(c.showScheduled, true, `未开定时任务页却返回 'scheduled'：${JSON.stringify(c)}`);
+    }
   }
 });
 
 await check('A3 互斥：被点亮的一级入口恒不超过一个（含兼容输入）', () => {
   for (const c of COMBOS) {
     const got = activeNavOf(c);
-    const lit = ['new', 'assistant', 'ecosystem'].filter((k) => k === got);
+    const lit = ['new', 'assistant', 'scheduled', 'ecosystem'].filter((k) => k === got);
     assert.ok(lit.length <= 1, `多个入口同时点亮：${JSON.stringify(c)} → ${got}`);
   }
 });
 
-await check('A4 助理子态统一返回 assistant：showAssistant / showScheduled / showTeams 三者任一为真', () => {
+await check('A4 助理及团队编制收敛到 assistant；定时任务**不**收敛到 assistant（它是一级入口）', () => {
   for (const c of COMBOS) {
-    const shouldAssistant = c.showAssistant || c.showScheduled || c.showTeams;
+    const shouldAssistant = c.showAssistant || c.showTeams;
     if (!shouldAssistant) continue;
+    if (c.showScheduled) continue; // 定时任务优先，见 A8
     assert.equal(activeNavOf(c), 'assistant', `助理子态未收敛：${JSON.stringify(c)}`);
   }
 });
 
-await check('A5 兼容输入单独生效：只有 showScheduled（旧定时任务页）也返回 assistant', () => {
-  const v = { showAssistant: false, showScheduled: true, showDashboard: false, showEcosystem: false, showTeams: false, hasActiveThread: false };
-  assert.equal(activeNavOf(v), 'assistant');
-  const w = { ...v, showScheduled: false, showTeams: true };
-  assert.equal(activeNavOf(w), 'assistant');
+await check('A5 单独生效：只开定时任务页 ⇒ scheduled；只开团队编制 ⇒ assistant', () => {
+  const base = { showAssistant: false, showDashboard: false, showEcosystem: false, hasActiveThread: false };
+  assert.equal(activeNavOf({ ...base, showScheduled: true, showTeams: false }), 'scheduled');
+  assert.equal(activeNavOf({ ...base, showScheduled: false, showTeams: true }), 'assistant');
 });
 
 await check('A6 助理优先于生态中心（弹层盖在助理之上，底层入口应保持点亮）', () => {
@@ -104,11 +110,18 @@ await check('A7 工作台与会话中不点亮一级导航；空白新建任务�
   assert.equal(activeNavOf(base), 'new');
 });
 
+await check('A8 定时任务优先于助理（两者同时为真时更具体的那个点亮，避免「点了却亮在别处」）', () => {
+  const v = { showAssistant: true, showScheduled: true, showDashboard: false, showEcosystem: false, showTeams: false, hasActiveThread: false };
+  assert.equal(activeNavOf(v), 'scheduled');
+});
+
 // ── B. 助理子页目录与挂载方式 ──
 
-await check('B1 助理子页目录恰为设计文档 §7.7 的四个 Tab', () => {
+await check('B1 助理子页目录恰为三个 Tab：发布任务（默认）/ 军团 / AI 建团', () => {
   const ids = ASSISTANT_TABS.map((x) => x.id);
-  assert.deepEqual(ids, ['teams', 'aiTeam', 'scheduled', 'complex']);
+  assert.deepEqual(ids, ['publish', 'teams', 'aiTeam']);
+  // 定时任务已升回一级入口 ⇒ 不得再作为助理 Tab（两个并列入口会让「在哪管理」有两个答案）
+  assert.ok(!ids.includes('scheduled'), '定时任务不应再是助理子 Tab');
 });
 
 await check('B2 每个 Tab 的文案键都存在且指向 assistant 模块（禁硬编码文案的第一道闸）', () => {
@@ -118,10 +131,13 @@ await check('B2 每个 Tab 的文案键都存在且指向 assistant 模块（禁
   }
 });
 
-await check('B3 默认 Tab 合法；isAssistantTab 对非法输入返回 false（防脏值进视图状态）', () => {
+await check('B3 默认 Tab 是「发布任务」；isAssistantTab 对非法输入返回 false（防脏值进视图状态）', () => {
+  assert.equal(DEFAULT_ASSISTANT_TAB, 'publish', `默认 Tab 应为 publish，实际 ${DEFAULT_ASSISTANT_TAB}`);
   assert.ok(isAssistantTab(DEFAULT_ASSISTANT_TAB), `默认 Tab 非法：${DEFAULT_ASSISTANT_TAB}`);
-  for (const ok of ['teams', 'aiTeam', 'scheduled', 'complex']) assert.ok(isAssistantTab(ok), ok);
-  for (const bad of ['', null, undefined, 'teams ', 'Teams', 'unknown', 0]) assert.equal(isAssistantTab(bad), false, String(bad));
+  for (const ok of ['publish', 'teams', 'aiTeam']) assert.ok(isAssistantTab(ok), ok);
+  for (const bad of ['', null, undefined, 'teams ', 'Teams', 'unknown', 'scheduled', 'complex', 0]) {
+    assert.equal(isAssistantTab(bad), false, String(bad));
+  }
 });
 
 await check('B4 文案键在 zh-CN 与 en-US 双侧都存在（Tab 条不会出现裸 key）', () => {
@@ -134,34 +150,36 @@ await check('B4 文案键在 zh-CN 与 en-US 双侧都存在（Tab 条不会出�
   }
 });
 
-await check('B5 App 只挂一个助理工作台，且不再直接挂 TeamsPage / ScheduledTasks（按 tab 挂载）', () => {
-  const app = read('App.jsx');
+await check('B5 App 把视图标志（含 showScheduled）传给 Sidebar，并按 showScheduled 挂定时任务页', () => {
+  const app = stripComments(read('App.jsx'));
+  assert.match(app, /view=\{\{\s*showAssistant[^}]*showScheduled[^}]*\}\}/, 'App 未把 showScheduled 传给 Sidebar');
+  // 定时任务是一级入口 ⇒ App 直接挂载它是**预期**（第一版这里是反面断言，已按新语义翻转）
+  assert.match(app, /showScheduled\s*&&\s*<ScheduledTasks/, 'App 未按 showScheduled 挂载定时任务页');
+  // 助理页仍按 tab 挂载（不把四个子页一次性全挂上）
   assert.match(app, /<AssistantPage[^>]*tab=\{assistantTab\}[^>]*onTab=\{setAssistantTab\}/, 'App 未按 tab 挂载 AssistantPage');
-  assert.ok(!/<TeamsPage\s*\/>/.test(app), 'App 仍直接挂载 <TeamsPage/>（应搬入助理 Tab1）');
-  assert.ok(!/<ScheduledTasks\s*\/>/.test(app), 'App 仍直接挂载 <ScheduledTasks/>（应搬入助理 Tab3）');
+  assert.ok(!/<TeamsPage\s*\/>/.test(app), 'App 仍直接挂载 <TeamsPage/>（应留在助理 Tab）');
 });
 
-await check('B6 AssistantPage 按 tab 条件挂载四个子视图（不是同时挂载）', () => {
-  const page = read('components/AssistantPage.tsx');
+await check('B6 AssistantPage 按 tab 条件挂载三个子视图，且不再有 scheduled/complex 分支', () => {
+  const page = stripComments(read('components/AssistantPage.tsx'));
   for (const pair of [
+    ["tab === 'publish'", '<PublishTaskPage'],
     ["tab === 'teams'", '<TeamsPage'],
     ["tab === 'aiTeam'", '<AiTeamBuilder'],
-    ["tab === 'scheduled'", '<ScheduledTasks'],
-    ["tab === 'complex'", '<ComplexTaskLauncher'],
   ]) {
     const i = page.indexOf(pair[0]);
     assert.ok(i > 0, `AssistantPage 缺分支 ${pair[0]}`);
-    assert.ok(page.slice(i, i + 200).includes(pair[1]), `${pair[0]} 分支未挂载 ${pair[1]}`);
+    assert.ok(page.slice(i, i + 220).includes(pair[1]), `${pair[0]} 分支未挂载 ${pair[1]}`);
   }
+  assert.ok(!page.includes("tab === 'scheduled'"), 'AssistantPage 不应再有 scheduled 分支（已升一级入口）');
+  assert.ok(!page.includes('<ScheduledTasks'), 'AssistantPage 不应再挂 ScheduledTasks');
 });
 
 await check('B7 Tab 条具备可访问性语义：tabs 原语提供 role/aria，助理页复用它（不再散落裸 button）', () => {
   const page = read('components/AssistantPage.tsx');
   const prim = read('components/ui/TabBar.tsx');
-  // 助理页必须用原语（否则又会新增一段裸 <button>，抬高 ui-conventions 棘轮）
   assert.match(page, /<TabBar/, 'AssistantPage 未使用 ui/TabBar 原语');
   assert.ok(!/<button/.test(stripComments(page)), 'AssistantPage 仍含裸 <button>（应收敛到 ui/TabBar）');
-  // 语义在**原语内唯一一处**实现
   assert.match(prim, /role="tablist"/);
   assert.match(prim, /role="tab"/);
   assert.match(prim, /aria-selected=\{on\}/);
