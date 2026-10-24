@@ -700,17 +700,17 @@ function approvalSummary(tool, args = {}) {
           + '需要文件/网络/持久状态时请改用 code_exec（会另行走逐次确认）。',
       };
     }
-    // ── G-doc：文档生成审批卡（写明输出路径 + 内容体量概览，避免用户盲批）──
+    // ── G-doc 审批卡（写明输出路径 + 体量概览）；P0-2：传 artifactId 时写「来源工件@版本」而非「0 个内容块」（本文件顶 800 行，三处均一行换一行）──
     case 'doc_create':
       return {
         level: 'L2', title: '生成 Word 文档',
-        detail: `输出：${String(args.path || '')}\n标题：${String(args.title || '（无）')}\n`
-          + `内容块：${Array.isArray(args.blocks) ? args.blocks.length : 0} 个\n\n${docPreview(args.blocks)}`,
+        detail: `输出：${String(args.path || '')}\n标题：${String(args.title || (args.artifactId ? '（取工件标题）' : '（无）'))}\n`
+          + (args.artifactId ? `来源工件：${String(args.artifactId)}@${String(args.version || '最新版本')}（正文取自工件库，不再由工具参数重复传入）` : `内容块：${Array.isArray(args.blocks) ? args.blocks.length : 0} 个\n\n${docPreview(args.blocks)}`),
       };
     case 'xlsx_create':
       return {
         level: 'L2', title: '生成 Excel 表格',
-        detail: `输出：${String(args.path || '')}\n工作表：${Array.isArray(args.sheets) ? args.sheets.length : 0} 个\n\n`
+        detail: `输出：${String(args.path || '')}\n${args.artifactId ? `来源工件：${String(args.artifactId)}@${String(args.version || '最新版本')}` : `工作表：${Array.isArray(args.sheets) ? args.sheets.length : 0} 个\n\n`}`
           + (Array.isArray(args.sheets) ? args.sheets.slice(0, 6).map((s, i) => {
             const heads = Array.isArray(s?.header) ? s.header.map((h) => String(h)).join(' | ') : '';
             return `· [${String(s?.name || `Sheet${i + 1}`)}] 表头：${heads.slice(0, 80) || '（无）'} / ${Array.isArray(s?.rows) ? s.rows.length : 0} 行`;
@@ -719,8 +719,7 @@ function approvalSummary(tool, args = {}) {
     case 'pptx_create':
       return {
         level: 'L2', title: '生成 PPT 演示文稿',
-        detail: `输出：${String(args.path || '')}\n主标题：${String(args.title || '（无）')}\n`
-          + `内容页：${Array.isArray(args.slides) ? args.slides.length : 0} 页\n\n`
+        detail: `输出：${String(args.path || '')}\n主标题：${String(args.title || '（无）')}\n${args.artifactId ? `来源工件：${String(args.artifactId)}@${String(args.version || '最新版本')}（一页一章）\n\n` : `内容页：${Array.isArray(args.slides) ? args.slides.length : 0} 页\n\n`}`
           + (Array.isArray(args.slides) ? args.slides.slice(0, 6).map((s) => `· ${String(s?.title || '（无标题）').slice(0, 60)}`).join('\n') : ''),
       };
     case 'pdf_generate':

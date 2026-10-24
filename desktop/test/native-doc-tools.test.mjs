@@ -69,8 +69,18 @@ function initDeps({ gov = { profile: 'normal', fsMode: 'read-write', sandboxNetw
     JSON.stringify(byName.doc_create?.parameters?.required) === '["path"]'
     && (byName.doc_create?.parameters?.properties?.blocks?.items?.properties?.type?.enum || []).includes('heading')
     && (byName.doc_create?.parameters?.properties?.blocks?.items?.properties?.type?.enum || []).includes('table'));
-  check('xlsx_create schema required=[path,sheets]',
-    JSON.stringify(byName.xlsx_create?.parameters?.required) === '["path","sheets"]');
+  // P0-2（2026-10-24）契约变更：xlsx 的正文也可来自工件库（artifactId），故 schema 不再强制 sheets，
+  // 必填性下沉到 handler（sheets 与 artifactId 都没有时明确报错，见本节末尾的「空 sheets 被拒」）。
+  // 这不是放宽判据：旧断言把「sheets 必填」写成了契约，等于把「内容只能由模型全文传入」这一缺陷
+  // 固化成预期；这里把它拆成两条更具体的新契约（内容来源二选一 + 桥参数已声明）。
+  check('xlsx_create schema required=[path]，且同时声明 sheets 与 artifactId 两个内容来源',
+    JSON.stringify(byName.xlsx_create?.parameters?.required) === '["path"]'
+    && !!byName.xlsx_create?.parameters?.properties?.sheets
+    && !!byName.xlsx_create?.parameters?.properties?.artifactId);
+  check('doc_create / pptx_create schema 声明可选 artifactId + version（工件 → 产物桥）',
+    ['doc_create', 'pptx_create'].every((n) => !!byName[n]?.parameters?.properties?.artifactId
+      && !!byName[n]?.parameters?.properties?.version)
+    && ['doc_create', 'xlsx_create', 'pptx_create'].every((n) => !!byName[n]?.parameters?.properties?.version));
   check('pptx_create schema required=[path]',
     JSON.stringify(byName.pptx_create?.parameters?.required) === '["path"]');
   check('pdf_generate schema required=[path,html]',

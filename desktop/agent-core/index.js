@@ -518,10 +518,14 @@ export const BASE_TOOLS = [
       + '.docx 文件的场景。内容用 blocks 数组表达，每个块按 type 分派：'
       + 'heading（标题，level 1-3）、paragraph（正文段，可 bold）、bullet（无序列表）、numbered（有序列表）、'
       + 'table（表格，给 headers + rows）、quote（引用）、code（代码块，等宽字体）、pagebreak（分页）。'
+      + '若正文已经在工件库（artifact_* 工具维护的那份），传 artifactId（可用 version 指定版本，缺省取最新版）'
+      + '即可直接从工件渲染成 docx，**不要再把全文塞进 blocks**——否则同一份内容存两处、改稿要双写。'
       + '写文件会弹一次审批确认；输出路径可写相对项目目录的路径或绝对路径。',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '输出 .docx 文件路径（相对路径以项目目录为基准）' },
-      title: { type: 'string', description: '文档主标题（作为标题样式渲染在最前）' },
+      artifactId: { type: 'string', description: '工件 ID（可选）：传了就从工件库取该版本正文渲染，此时不要再给 blocks（两者同时给会被拒绝）' },
+      version: { type: 'string', description: '工件版本（如 V0.07）；缺省 = 该工件最新版本' },
+      title: { type: 'string', description: '文档主标题（作为标题样式渲染在最前；传 artifactId 时缺省取工件标题）' },
       subtitle: { type: 'string', description: '副标题（可选，居中显示）' },
       blocks: {
         type: 'array', description: '内容块列表（按顺序渲染）',
@@ -541,9 +545,14 @@ export const BASE_TOOLS = [
     name: 'xlsx_create',
     description: '生成 Excel 表格（.xlsx，原生离线生成）。用于预算表、统计报表、数据清单、费用明细等场景。'
       + 'sheets 为工作表数组，每个表可给 header（表头，自动加粗并冻结首行）、rows（二维数据数组，数字保持数值类型）、'
-      + 'widths（列宽）或 autoWidth（按内容自动估算列宽）。写文件会弹一次审批确认。',
+      + 'widths（列宽）或 autoWidth（按内容自动估算列宽）。'
+      + '也支持传 artifactId（+可选 version）直接从工件渲染——但工件必须是表格型（当前工件库只有叙述型，'
+      + '传入会被 fail-closed 拒绝，不会把正文摊成表格）。sheets 与 artifactId 二选一（都给会被拒绝）。'
+      + '写文件会弹一次审批确认。',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '输出 .xlsx 文件路径（相对路径以项目目录为基准）' },
+      artifactId: { type: 'string', description: '工件 ID（可选）：仅表格型工件可用，叙述型工件会被明确拒绝；与 sheets 互斥' },
+      version: { type: 'string', description: '工件版本（如 V0.07）；缺省 = 该工件最新版本' },
       sheets: {
         type: 'array', description: '工作表列表（至少一个）',
         items: { type: 'object', properties: {
@@ -555,15 +564,18 @@ export const BASE_TOOLS = [
           autoWidth: { type: 'boolean', description: '未给 widths 时是否按内容自动估算列宽（默认 true）' },
         } },
       },
-    }, required: ['path', 'sheets'] },
+    }, required: ['path'] },
   }},
   { type: 'function', function: {
     name: 'pptx_create',
     description: '生成 PPT 演示文稿（.pptx，原生离线生成，16:9）。用于汇报、方案宣讲、项目介绍等场景。'
       + '给 title 时自动生成一页封面；slides 为内容页数组（title 页标题、bullets 要点列表、body 正文、notes 演讲者备注）。'
+      + '若内容已在工件库，传 artifactId（+可选 version，缺省最新版）即按「一页一章」直接从工件渲染，无需再传 slides。'
       + '写文件会弹一次审批确认。',
     parameters: { type: 'object', properties: {
       path: { type: 'string', description: '输出 .pptx 文件路径（相对路径以项目目录为基准）' },
+      artifactId: { type: 'string', description: '工件 ID（可选）：传了就从工件库取该版本正文渲染，此时不要再给 slides（两者同时给会被拒绝）' },
+      version: { type: 'string', description: '工件版本（如 V0.07）；缺省 = 该工件最新版本' },
       title: { type: 'string', description: '演示文稿主标题（会生成封面页）' },
       subtitle: { type: 'string', description: '封面副标题' },
       author: { type: 'string', description: '作者（写入文档属性）' },

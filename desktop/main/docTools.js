@@ -29,6 +29,8 @@ const { audit } = require('./audit/auditLog');
 const { gateArtifactWrite } = require('./tools/artifactWriteGate');
 // 超时数值单一事实来源（与引擎 TOOL_TIMEOUT_OVERRIDES 对账，见 main/tools/timeouts.js 头注释）
 const { DOC_GEN_IMPL_TIMEOUT_MS } = require('./tools/timeouts');
+// P0-2：工件 → 产物桥（artifactId + version → 章节正文 → 产物内容模型）
+const artifactProduct = require('./tools/artifactProduct');
 
 let electron = null;
 try { electron = require('electron'); } catch { electron = null; }
@@ -52,6 +54,9 @@ const TOOL_KEYS = {
 
 function summarize(tool, args = {}) {
   const p = String(args.path || '').slice(0, 160);
+  // P0-2：传了 artifactId 时正文来自工件库，摘要要写来源而不是「0 个内容块」
+  const art = String(args.artifactId || '').trim();
+  if (art) return `${p}（来源工件 ${art}@${String(args.version || '').trim() || '最新版本'}）`;
   if (tool === 'doc_create') return `${p}（${Array.isArray(args.blocks) ? args.blocks.length : 0} 个内容块）`;
   if (tool === 'xlsx_create') return `${p}（${Array.isArray(args.sheets) ? args.sheets.length : 0} 个工作表）`;
   if (tool === 'pptx_create') return `${p}（${Array.isArray(args.slides) ? args.slides.length : 0} 页）`;
@@ -165,8 +170,33 @@ async function toolDocCreate(args = {}) {
   if (docxLib.__loadError) return { ok: false, error: `docx 库不可用：${docxLib.__loadError}` };
   const absPath = resolveOutPath(args.path, args.cwd, '.docx');
   if (!absPath) return { ok: false, error: 'path 必填（输出 .docx 的路径）' };
-  const blocks = Array.isArray(args.blocks) ? args.blocks : [];
-  if (!blocks.length && !args.title) return { ok: false, error: '请提供 title 或 blocks（至少一个内容块）' };
+  let blocks = Array.isArray(args.blocks) ? args.blocks : [];
+  let title = args.title;
+  let artMeta = null;
+  // P0-2：给了 artifactId 就从工件库取该版本正文渲染，模型不再重复传全文。
+  // 类型/版本不符 → 结构化失败（不落盘、不弹审批），绝不静默降级成空文档。
+  // 歧义闸：artifactId 与 blocks 同时给 ⇒ 正文有两个真源，必须报错而不是「谁优先看运气」
+  //（空数组不算给了内容，避免历史调用方补 `blocks: []` 占位时被误伤）。
+  if (String(args.artifactId || '').trim() && blocks.length) {
+    return {
+      ok: false,
+      code: 'ARTIFACT_SOURCE_CONFLICT',
+      error: 'artifactId 与 blocks 不能同时给：正文只能有一个来源。要按工件渲染就删掉 blocks，要手写正文就删掉 artifactId。',
+    };
+  }
+  if (String(args.artifactId || '').trim()) {
+    const src = artifactProduct.loadArtifactForProduct({
+      artifactId: args.artifactId,
+      version: args.version,
+      product: artifactProduct.PRODUCTS.DOCX,
+      store: deps?.getArtifactStore?.(),
+    });
+    if (src.ok !== true) return src;
+    blocks = artifactProduct.sectionsToDocBlocks(src.sections);
+    title = String(args.title || src.title || '');
+    artMeta = { artifactId: src.artifactId, version: src.version };
+  }
+  if (!blocks.length && !title) return { ok: false, error: '请提供 title 或 blocks（至少一个内容块）' };
 
   const gate = await gateWrite(TOOL_KEYS.doc_create, args, absPath);
   if (gate.ok === false) return gate;
@@ -174,7 +204,7 @@ async function toolDocCreate(args = {}) {
   try {
     const { Document, Packer, Paragraph, HeadingLevel, AlignmentType } = docxLib;
     const children = [];
-    if (args.title) children.push(new Paragraph({ text: String(args.title), heading: HeadingLevel.TITLE }));
+    if (title) children.push(new Paragraph({ text: String(title), heading: HeadingLevel.TITLE }));
     if (args.subtitle) children.push(new Paragraph({ text: String(args.subtitle), alignment: AlignmentType.CENTER }));
     children.push(...buildDocxBlocks(docxLib, blocks));
     const doc = new Document({
@@ -187,7 +217,8 @@ async function toolDocCreate(args = {}) {
       sections: [{ children }],
     });
     const buf = await Packer.toBuffer(doc);
-    return await writeArtifact(TOOL_KEYS.doc_create, args, absPath, buf, gate.asked, { title: args.title || null });
+    // 返回体带 artifactId/version：调用方可据此核对「产物 == 工件该版本」
+    return await writeArtifact(TOOL_KEYS.doc_create, args, absPath, buf, gate.asked, { title: title || null, ...(artMeta || {}) });
   } catch (e) {
     audit(TOOL_KEYS.doc_create, absPath, `error: ${e.message}`, 'error');
     return { ok: false, error: `生成 Word 文档失败：${e.message}` };
@@ -216,7 +247,33 @@ async function toolXlsxCreate(args = {}) {
   const absPath = resolveOutPath(args.path, args.cwd, '.xlsx');
   if (!absPath) return { ok: false, error: 'path 必填（输出 .xlsx 的路径）' };
   const sheets = Array.isArray(args.sheets) ? args.sheets.filter((s) => s && typeof s === 'object') : [];
-  if (!sheets.length) return { ok: false, error: 'sheets 必填（至少一个工作表）' };
+  // 二选一的三个边界（schema 的 required 表达不了互斥，故必填性下沉到 handler，逐条钉住）：
+  //   ① 都不给 → 结构化报错；② 都给 → 歧义，明确报错（不靠参数顺序碰运气）；③ 只给 artifactId → 见下。
+  if (String(args.artifactId || '').trim() && sheets.length) {
+    return {
+      ok: false,
+      code: 'ARTIFACT_SOURCE_CONFLICT',
+      error: 'artifactId 与 sheets 不能同时给：工作表只能有一个来源。要按工件渲染就删掉 sheets，要手写表格就删掉 artifactId。',
+    };
+  }
+  // P0-2：工件 → 表格的桥只对「声明支持 xlsx 的 kind」开放。当前工件库的 kind 全是叙述型，
+  // 因此这里必然 fail-closed —— 这是刻意的：把段落硬摊进单元格是静默降级，宁可明确拒绝。
+  if (String(args.artifactId || '').trim()) {
+    const src = artifactProduct.loadArtifactForProduct({
+      artifactId: args.artifactId,
+      version: args.version,
+      product: artifactProduct.PRODUCTS.XLSX,
+      store: deps?.getArtifactStore?.(),
+    });
+    if (src.ok !== true) return src;
+    // 走到这里说明工件库新增了表格型 kind，但表格渲染尚未实现：明确报错，不返回「成功但没落盘」
+    return {
+      ok: false,
+      code: 'ARTIFACT_PRODUCT_NOT_IMPLEMENTED',
+      error: `工件 ${src.artifactId}@${src.version} 可渲染为表格，但表格渲染尚未实现；请改用 sheets 直接传内容`,
+    };
+  }
+  if (!sheets.length) return { ok: false, error: 'sheets 必填（至少一个工作表；或改用 artifactId 从工件渲染）' };
 
   const gate = await gateWrite(TOOL_KEYS.xlsx_create, args, absPath);
   if (gate.ok === false) return gate;
@@ -265,8 +322,31 @@ async function toolPptxCreate(args = {}) {
   const Lib = PptxGenJS.default || PptxGenJS;
   const absPath = resolveOutPath(args.path, args.cwd, '.pptx');
   if (!absPath) return { ok: false, error: 'path 必填（输出 .pptx 的路径）' };
-  const slides = Array.isArray(args.slides) ? args.slides.filter((s) => s && typeof s === 'object') : [];
-  if (!slides.length && !args.title) return { ok: false, error: '请提供 title 或 slides（至少一页）' };
+  let slides = Array.isArray(args.slides) ? args.slides.filter((s) => s && typeof s === 'object') : [];
+  let title = args.title;
+  let artMeta = null;
+  // P0-2：传 artifactId 时由工件章节生成内容页（一页一章，页标题 = 章节标题），模型不再重复传全文
+  // 歧义闸同 doc/xlsx：artifactId 与 slides 同时给 ⇒ 两个真源，报错而不是挑一个。
+  if (String(args.artifactId || '').trim() && slides.length) {
+    return {
+      ok: false,
+      code: 'ARTIFACT_SOURCE_CONFLICT',
+      error: 'artifactId 与 slides 不能同时给：内容页只能有一个来源。要按工件渲染就删掉 slides，要手写页面就删掉 artifactId。',
+    };
+  }
+  if (String(args.artifactId || '').trim()) {
+    const src = artifactProduct.loadArtifactForProduct({
+      artifactId: args.artifactId,
+      version: args.version,
+      product: artifactProduct.PRODUCTS.PPTX,
+      store: deps?.getArtifactStore?.(),
+    });
+    if (src.ok !== true) return src;
+    slides = artifactProduct.sectionsToPptxSlides(src.sections);
+    title = String(args.title || src.title || '');
+    artMeta = { artifactId: src.artifactId, version: src.version };
+  }
+  if (!slides.length && !title) return { ok: false, error: '请提供 title 或 slides（至少一页）' };
 
   const gate = await gateWrite(TOOL_KEYS.pptx_create, args, absPath);
   if (gate.ok === false) return gate;
@@ -275,10 +355,10 @@ async function toolPptxCreate(args = {}) {
     const pptx = new Lib();
     pptx.layout = 'LAYOUT_16x9';
     if (args.author) pptx.author = String(args.author);
-    pptx.subject = String(args.title || '');
-    if (args.title) {
+    pptx.subject = String(title || '');
+    if (title) {
       const s = pptx.addSlide();
-      s.addText(String(args.title), { x: 0.6, y: 2.1, w: 8.8, h: 1.2, fontSize: 36, bold: true, color: PPT_COLORS.accent, align: 'left' });
+      s.addText(String(title), { x: 0.6, y: 2.1, w: 8.8, h: 1.2, fontSize: 36, bold: true, color: PPT_COLORS.accent, align: 'left' });
       if (args.subtitle) s.addText(String(args.subtitle), { x: 0.6, y: 3.3, w: 8.8, h: 0.7, fontSize: 18, color: PPT_COLORS.body });
     }
     for (const raw of slides) {
@@ -296,7 +376,7 @@ async function toolPptxCreate(args = {}) {
     await pptx.writeFile({ fileName: absPath });
     const bytes = (await fsp.stat(absPath)).size;
     audit(TOOL_KEYS.pptx_create, summarize(TOOL_KEYS.pptx_create, args), `ok ${bytes}B`, gate.asked ? 'approved' : 'recorded');
-    return { ok: true, path: absPath, bytes, pages: slides.length + (args.title ? 1 : 0) };
+    return { ok: true, path: absPath, bytes, pages: slides.length + (title ? 1 : 0), ...(artMeta || {}) };
   } catch (e) {
     audit(TOOL_KEYS.pptx_create, absPath, `error: ${e.message}`, 'error');
     return { ok: false, error: `生成 PPT 失败：${e.message}` };

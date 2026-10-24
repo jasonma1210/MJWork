@@ -8,11 +8,16 @@
 //     面板不做全文拉取——否则 2MB 工件会一次性穿过 IPC，把主进程和渲染层一起拖慢。
 const { ipcMain } = require('electron');
 const guard = require('./payloadGuard');
+// P0-2：把工件库解析器发布给「工件 → 产物桥」（main/tools/artifactProduct.js）。
+// 为什么在这里发布：main.js 是本轮冻结文件（max-lines 余量为 0），而本域已由 main.js 注入
+// getArtifactStore —— 复用同一个 getter，不新建存储实例、不引入第二条装配路径。
+const artifactProduct = require('../tools/artifactProduct');
 
 let deps = null;
 
 function initArtifactsIpc(injected) {
   deps = injected || {};
+  artifactProduct.setArtifactStoreProvider(() => deps.getArtifactStore?.());
   registerHandlers();
 }
 
