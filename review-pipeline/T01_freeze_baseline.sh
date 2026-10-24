@@ -54,8 +54,9 @@ if ! git -C "$REPO_ROOT" worktree add --detach --force "$WT" "$MJRP_SHA" >>"$OUT
   printf 'FAIL [T-01]：worktree 创建失败，见 %s\n' "$OUT_DIR/T-01.worktree.log" >&2
   exit 7
 fi
-# 依赖软链：仓库根与 desktop 两端（缺 preserve-symlinks 时 electron 打桩会失效，报假红）
-for d in "$REPO_ROOT/node_modules" "$REPO_ROOT/desktop/node_modules"; do
+# 依赖软链：三处都要（缺任意一处 ⇒ 该层依赖 100% MODULE_NOT_FOUND 假红）
+#   仓库根 / desktop / desktop/renderer —— 实测只链前两处会让 11 个套件误报「崩溃/超时」。
+for d in "$REPO_ROOT/node_modules" "$REPO_ROOT/desktop/node_modules" "$REPO_ROOT/desktop/renderer/node_modules"; do
   if [ -d "$d" ]; then
     rel="${d#$REPO_ROOT/}"
     ln -sfn "$d" "$WT/$rel"
