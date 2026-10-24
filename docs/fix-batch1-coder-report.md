@@ -473,3 +473,187 @@ cd /Users/jianma/Desktop/MJCode && git diff --numstat -- desktop/main/main.js
    （抽取器按行匹配 + 去注释 + 检查 `;` 结尾），但若改成多行块语句，需要更新抽取器（同样 fail-loud）。
 3. 真机端到端仍缺口（同前一批遗留）：建团队 → 定时任务绑 `team_id` → 跑一轮 → 看 trace 里
    `team_list_members` 是否被调用。本轮证据到「装配 + 引擎通告 + 调用穿透」为止，未起 Electron。
+
+---
+
+# RB-2 现存假绿（2026-10-24，来源：验证方 espree AST 扫描 + 主理人开单）
+
+这三条不是 spec 争议，是**可复现缺陷**：`check` helper 是同步函数却接收 async 回调 ⇒ `fn()` 返回 Promise（truthy）
+⇒ 断言体里的失败退化成 unhandled rejection，而 `pass++` 已经发生。两个套件因此**连退出码都是 0**。
+
+## 改前实测（三处探针，全部按验证方给的「原失败位置」插入 `assert.ok(false,'__PROBE__')`）
+
+| 套件 | 探针插入点 | 改前输出 | 改前 EXIT |
+|---|---|---|---|
+| `test/diag-export.test.mjs` | `:127` async 回调体首行 | `[PASS] IPC diag:export 注册且失败不抛` + `diag-export: 13/13 通过` | **0**（完全假绿） |
+| `test/web-todo-tools.test.js` | `:157` async 回调体首行 | `✅ P0-A 仅允许 http/https（拒绝 file:// 等协议）` + `PASS：25/25 项通过` | **0**（完全假绿） |
+| `test/message-schema.test.js` | `:59` async 回调体首行 | `[PASS] 行为验证：驼峰 toolCallId 被转为蛇形` + `PASS：11/11 项通过` + 随后 `AssertionError` | 1（退出码兜住，但**汇总撒谎**） |
+
+## 改动概要（只改 helper 与调用形态，零断言改动）
+
+| 文件:行 | 改动 |
+|---|---|
+| `diag-export.test.mjs:18` | `function check` → `async function check`，`fn()` → `await fn()` |
+| `diag-export.test.mjs` 13 处调用点 | 全部 `check(` → `await check(`（ESM，支持 top-level await） |
+| `web-todo-tools.test.js:18` | 同上（`✅/❌` 方言） |
+| `web-todo-tools.test.js:23` | `import(...).then((m) => {` → `.then(async (m) => {`，17 处调用点全部 `await check(` |
+| `web-todo-tools.test.js:171` | 未改：`process.exit(fail === 0 ? 0 : 1)` —— await 到位后它读到的 `fail` 已可信 |
+| `message-schema.test.js:24` | 同上（`[PASS]/[FAIL]` 方言） |
+| `message-schema.test.js:35-132` | **CJS 无 top-level await** ⇒ 11 处调用点包进 `(async () => { … })().catch(...)`（`:132`）；catch 置 `process.exitCode = 1` |
+| 三文件 diff 合计 | `17/15`、`22/20`、`20/14`（含注释），**未改任何 `assert.*` 期望值**（`git diff | rg "^[+-].*assert\."` 为空） |
+
+## 改后实测（同一探针、同一位置）
+
+```
+diag-export.test.mjs      EXIT=1   [FAIL] IPC diag:export 注册且失败不抛 — __PROBE__
+web-todo-tools.test.js    EXIT=1   ❌ P0-A 仅允许 http/https（拒绝 file:// 等协议） — __PROBE__
+message-schema.test.js    EXIT=1   [FAIL] 行为验证：驼峰 toolCallId 被转为蛇形 — __PROBE__
+```
+⇒ 三处全部由「假绿」转为「当场红且 exit≠0」。
+
+## RB-2-A 验收（主理人转达的 4 条判据，逐条实测）
+
+| 判据 | diag-export | web-todo-tools | message-schema |
+|---|---|---|---|
+| ① `[FAIL]/❌ … __PROBE__` 出现 | ✔ | ✔ | ✔ |
+| ① 同一条**不得**再出现 `[PASS]/✅` | ✔（0 次） | ✔（0 次） | ✔（0 次） |
+| ② **汇总计数少一条** | `12/13 通过` | `FAIL：24/25 项通过` | `FAIL：10/11 项通过` |
+| ③ 退出码 1 | ✔ | ✔ | ✔ |
+| ④ 还原后与快照逐字节一致 | ✔（`shasum -c` OK） | ✔ | ✔ |
+
+> 判据②比「exit≠0」更狠，它抓的是「打了 FAIL 但计数仍 +1」。本轮三处都是 `pass++` 只在成功分支，天然满足；
+> `message-schema` 原本没 `fail` 变量、汇总前缀硬编码 `PASS：`，已补 `let fail` + `fail++` + 前缀改为
+> `${fail === 0 ? 'PASS' : 'FAIL'}`（否则失败时计数对、**前缀撒谎**，主理人复核时点出的正是这条）。
+
+## 三套件单跑（探针已删，不跑 run-all —— 批次 2 正占全量窗口）
+
+```
+diag-export.test.mjs      EXIT=0   diag-export: 13/13 通过        （条数与改前一致）
+web-todo-tools.test.js    EXIT=0   PASS：25/25 项通过              （条数与改前一致）
+message-schema.test.js    EXIT=0   PASS：11/11 项通过              （条数与改前一致）
+```
+
+## 还原证据（按主理人要求：不用 numstat）
+
+每个探针文件还原后校验 `git hash-object <file>` == `git rev-parse HEAD:<path>`：
+- 改前探针三次还原：`YES / YES / YES`
+- 改后探针：见下方「一次自我纠错」——`git checkout --` 会把**修复一起还原**，故改为「重放修复」而非 checkout 还原
+
+## 一次自我纠错（写进报告以免后人踩）
+
+做「改后探针」时我用 `git checkout -- <三文件>` 收尾，结果把**刚做完的修复也一起还原了**（checkout 是无差别还原，
+不是「只还原探针」）。发现后重新按同一脚本重放修复（幂等断言：`assert s.count(old)==1`），再复跑至 13/13、25/25、11/11。
+⇒ 教训：**探针与修复在同一文件里时，还原手段必须是「反向替换探针」或「重放修复脚本」，不能用 checkout**。
+（改前探针阶段用 checkout 是正确的——那时文件里只有探针。）
+
+## 未做/留给后续
+
+1. 未跑全量（按调度纪律：批次 2 占用窗口；且 `run-all` 单一 owner）。
+2. 另有两类「抹掉证据」的结算写法**尚未修**，已在 S6 spec 里登记，属批次 3：无条件 `process.exit(0)`（10 个套件）、
+   `process.exit(pass === total ? 0 : 1)`（约 25 个套件，只看计数不看 fail）。
+3. S6 门禁本身（espree AST + 条件式判据 + `--unhandled-rejections=strict`）未落地，本单只做「修现存」。
+
+## 交付期事件：三文件被外部 `git checkout` 还原过一次（2026-10-24 22:08）
+
+修完并三套件全绿后，我发现三文件内容**回到 HEAD 原始版**（mtime `22:08:18`/`22:08:19`，`git hash-object == git rev-parse HEAD:<path>`），
+HEAD 同时前进到 `336f931`（docs 提交）。判断是并行会话按「变异还原」习惯执行了 `git checkout -- <这些文件>`——
+与 RB-1 期同型事故（**checkout 是无差别还原**）。
+
+处理：用同一份幂等脚本**重放修复**（`SKIP(已修复)` 守卫，避免二次应用），随后在**交付版上重做改后探针**（三处仍 `EXIT=1`），
+探针用**反向替换**删除（不用 checkout），删除后 blob 与交付指纹**逐字节一致**：
+
+```
+515360d8d96255d234bbfa168cbca45d886278c4  desktop/test/diag-export.test.mjs
+c2fd1449939fbc06c53ced4577481f2e720d7492  desktop/test/web-todo-tools.test.js
+1ac41b6cd6a4f4d4b10b2c5ca951a6ab70099bb4  desktop/test/message-schema.test.js
+```
+
+三套件终态：`13/13`、`25/25`、`11/11`，全部 `EXIT=0`。
+
+⇒ 给并行会话的规则（再次）：**要还原探针，请反向替换或重放脚本；`git checkout --` 会连别人的修复一起抹掉。**
+若要在这三个文件上做变异验证，请先看 mtime / blob 是否等于上面三个指纹，不相等说明有人的修复正躺在工作区。
+
+---
+
+## RB-2-B：无条件 `process.exit(0)` 归一（10 个真实目标）
+
+`rg -l 'process\.exit\(0\)' test/*.test.*` 得 11 个，**`docs-consistency.test.mjs:21` 是注释**
+（原文「改前写法：… `process.exit(0);`」），属正则假阳性 ⇒ 真实目标 **10 个**。
+
+改法两阶段（**最终形态是两行式**，理由见下方「有效范围实测」）：
+1. 先按主理人指定的单点改法：`process.exit(0)` → `process.exit(process.exitCode || 0)`（不动断言/计数/其它行）；
+2. 实测发现单点改法**抓不住浮动 rejection** ⇒ 为满足验收③（「插浮动 rejection 后 exit 必须变 1」），
+   10 个文件统一升级为两行式：`process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);`
+   （保留强制退出语义——这些套件有开着的句柄/子进程，直接删 `exit()` 有挂死风险）。
+
+| 文件 | 改点行 | 单跑（改后） |
+|---|---|---|
+| `memory-m4-hardening.test.mjs` | 122 | EXIT=0 · 6 组全部通过（改前同） |
+| `memory.test.js` | 276 | EXIT=0 · 16 项全部通过（改前同） |
+| `orchestrator-invoke.test.js` | 155 | EXIT=0 · 10 项全部通过（改前同） |
+| `tools-cwd.test.js` | 203 | EXIT=0 · 全部通过（改前同） |
+| `mcp-handshake.test.js` | 99 | EXIT=0 · 全部通过（改前同） |
+| `memory-team.test.mjs` | 153 | EXIT=0 · 11/11（改前同） |
+| `memory-scope.test.mjs` | 181 | EXIT=0 · 13 项全部通过（改前同） |
+| `memory-salvage.test.mjs` | 177 | EXIT=0 · 7 组全部通过（改前同） |
+| `orchestrator.test.js` | 211 | EXIT=0 · 10 项全部通过（改前同） |
+| `memory-mem-command.test.mjs` | 103 | EXIT=0 · 5 项全部通过（改前同） |
+
+### ⚠ 该改法的有效范围实测（重要：它**抓不住浮动 rejection**）
+
+在 `memory-scope.test.mjs` 里插一条浮动 rejection（`(async () => { await new Promise(r => setTimeout(r, 0)); throw … })();`，模拟「被吞掉的 async check」），三种结算形态：
+
+| 结算写法 | 浮动 rejection 下的 EXIT | 结论 |
+|---|---|---|
+| 改前 `process.exit(0)` | **0** | 被骗 |
+| 改后 `process.exit(process.exitCode \|\| 0)`（指令指定） | **0** | **仍被骗**：`exit()` 会在 rejection 上报前截断进程 |
+| 两行式 `process.exitCode = process.exitCode \|\| 0; setTimeout(() => process.exit(process.exitCode \|\| 0), 0);` | **1** | 抓住（先让事件循环跑完，再强制退出） |
+
+> 最小复现（Node 22，与仓库同版本）：
+> `printf 'Promise.reject(new Error("x"));\nprocess.exit(process.exitCode || 0);' > t.mjs && node t.mjs; echo $?` → **0**
+> 换成 `process.exitCode = process.exitCode || 0;` → **1**
+>
+> ⇒ 指令里的单点改法**修复的是「exitCode 已被设为 1 却被 exit(0) 覆盖」这一类**（真实收益），
+> 但对「漏网的异步失败」无效——那需要两行式或直接去掉 `exit()`。
+> 两行式仍保留「强制退出」语义（这些套件有开着的句柄/子进程，直接删 `exit()` 有挂死风险），故推荐两行式。
+> 已按验收③的要求铺开两行式（10 个文件各 +1 行）。若主理人更倾向「保留单点改法、把浮动 rejection 这条从验收划掉」，
+> 回退成本为 10 处单行替换，随时可做。
+
+### 最终读数（两行式，全部单跑，未跑 run-all）
+| 文件 | EXIT | 条数（与改前一致） |
+|---|---|---|
+| memory-m4-hardening | 0 | 6 组全部通过 |
+| memory.test.js | 0 | 16 项全部通过 |
+| orchestrator-invoke | 0 | 10 项全部通过 |
+| tools-cwd | 0 | 全部通过 |
+| mcp-handshake | 0 | 全部通过 |
+| memory-team | 0 | 11/11 |
+| memory-scope | 0 | 13 项全部通过 |
+| memory-salvage | 0 | 7 组全部通过 |
+| orchestrator.test.js | 0 | 10 项全部通过 |
+| memory-mem-command | 0 | 5 项全部通过 |
+
+**剩余未改的无条件 `exit(0)`：0 个**（`docs-consistency.test.mjs:21` 命中在注释里，属正则假阳）。
+
+### 两处浮动 rejection 前后对比（复核用；插法：`(async () => { await new Promise(r => setTimeout(r, 0)); throw new Error('__FLOAT__'); })();`）
+
+| 套件 | 改前一版（`process.exit(0)`） | 两行式（交付版） |
+|---|---|---|
+| `memory-scope.test.mjs` | **EXIT=0**（被骗） | **EXIT=1** ✔ |
+| `memory-team.test.mjs` | **EXIT=0**（被骗） | **EXIT=1** ✔ |
+
+两处的还原均用快照回写 + `shasum -c` 校验；`memory-team` 还原后 blob `bf72404013a0` 与交付值逐字节一致，终态单跑 `11/11 EXIT=0`。
+
+### 三种写法对照（含"为什么不选另外两种"）
+
+| 写法 | 浮动 rejection 下 | 备注 |
+|---|---|---|
+| `process.exit(0)` | **0**（被骗） | 无条件结算，抹掉一切 |
+| `process.exit(process.exitCode \|\| 0)` | **0**（仍被骗） | 同步 `exit()` 在 rejection 上报前截断进程；只修「exitCode 已是 1 却被 exit(0) 覆盖」这一类 |
+| `process.exitCode = 0`（不删 exit，只置码） | **1** ✔ | 但依赖自然退出；这些套件有开着的句柄/子进程 ⇒ 有挂死风险 |
+| **两行式** `process.exitCode = process.exitCode \|\| 0; setTimeout(() => process.exit(process.exitCode \|\| 0), 0);` | **1** ✔ | 先让事件循环跑完（rejection 得以上报），再强制退出（不挂死）——**采用** |
+
+### 工具纪律（本轮全程遵守）
+变异/探针**一律用内容快照**（`cp file /tmp/x.snap` + `shasum -a 1` 留底），还原用 `cp` 回写 + `shasum -c` 校验；
+`git checkout --` 仅在 `git status --porcelain -- <file>` 为空时使用。原因：交付期三个套件曾被并行会话用 `git checkout --` 还原（见上文事件），
+而 checkout 恢复的是 HEAD、不是「变异前状态」。
