@@ -79,29 +79,53 @@ define('IntersectionObserver', class { observe() {} unobserve() {} disconnect() 
 const { createRequire: makeRequire } = await import('node:module');
 const rendererRequire = makeRequire(path.join(DESKTOP, 'renderer/package.json'));
 
+// S5（批次 3-3）：探针**一律不落盘**。
+// 原实现把临时 entry 写进 `renderer/src/__i18n_probe_N.jsx` 再删；两个后果：
+//   ① 并发跑两个 npm test 时会互删同名探针（固定名 `__tdz_probe.jsx`/`__scope_probe.jsx` 必撞），
+//      表现为 ENOENT / legacy-ledger 现算失真；
+//   ② 被 SIGKILL 或超时杀掉时 `finally` 不执行 ⇒ 探针永久留在源码树（.gitignore 只能防提交，防不住残留）。
+// 改用 esbuild 的 stdin + resolveDir：源码字符串在内存里编译，模块解析仍以 SRC 为基准，
+// 因此 `import './i18n'`、`./App.jsx` 这些相对解析照常工作，磁盘上不产生任何文件。
+const ESBUILD_BASE = {
+  bundle: true,
+  // react / react-dom 保持外部：必须与测试里用的 React 是同一实例，
+  // 否则 hooks dispatcher 不共享 → "Invalid hook call"
+  external: ['react', 'react-dom', 'react-dom/server', 'react/jsx-runtime'],
+  define: { 'process.env.NODE_ENV': '"development"' }, // 保留 React 开发态告警
+  format: 'cjs',
+  // 关键：必须 browser 平台。node/neutral 平台 esbuild 会生成 __toESM(mod, 1)，
+  // 其 node 模式语义强制把 default 指向整个模块对象（再跳过真实 default 的拷贝），
+  // 于是 `import Sidebar from './Sidebar'` 拿到的是 namespace 对象而非组件函数，
+  // 渲染时报「Element type is invalid ... got: object」——纯属加载器伪影。
+  // browser 平台生成 __toESM(mod)，命中 __esModule 分支后正确拷贝真实 default。
+  platform: 'browser',
+  jsx: 'automatic',
+  // 静态资源：logo.png 等以 dataurl 内联（组件里当 img src 用），
+  // 样式文件以 empty 忽略（渲染冒烟不关心样式，只要 import 不炸）
+  loader: { '.jsx': 'jsx', '.tsx': 'tsx', '.js': 'jsx', '.mjs': 'jsx', '.png': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
+  // themes.json 等走 esbuild 默认 json loader
+  write: false,
+  logLevel: 'silent',
+};
+
 function compile(rel) {
   const abs = path.join(SRC, rel);
   const result = esbuild.buildSync({
+    ...ESBUILD_BASE,
     entryPoints: [abs],
-    bundle: true,
-    // react / react-dom 保持外部：必须与测试里用的 React 是同一实例，
-    // 否则 hooks dispatcher 不共享 → "Invalid hook call"
-    external: ['react', 'react-dom', 'react-dom/server', 'react/jsx-runtime'],
-    define: { 'process.env.NODE_ENV': '"development"' }, // 保留 React 开发态告警
-    format: 'cjs',
-    // 关键：必须 browser 平台。node/neutral 平台 esbuild 会生成 __toESM(mod, 1)，
-    // 其 node 模式语义强制把 default 指向整个模块对象（再跳过真实 default 的拷贝），
-    // 于是 `import Sidebar from './Sidebar'` 拿到的是 namespace 对象而非组件函数，
-    // 渲染时报「Element type is invalid ... got: object」——纯属加载器伪影。
-    // browser 平台生成 __toESM(mod)，命中 __esModule 分支后正确拷贝真实 default。
-    platform: 'browser',
-    jsx: 'automatic',
-    // 静态资源：logo.png 等以 dataurl 内联（组件里当 img src 用），
-    // 样式文件以 empty 忽略（渲染冒烟不关心样式，只要 import 不炸）
-    loader: { '.jsx': 'jsx', '.tsx': 'tsx', '.js': 'jsx', '.mjs': 'jsx', '.png': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
-    // themes.json 等走 esbuild 默认 json loader
-    write: false,
-    logLevel: 'silent',
+  });
+  return result.outputFiles[0].text;
+}
+
+/**
+ * 内存版编译：源码字符串直接在内存里 bundle，磁盘零落盘（S5 的核心改动）。
+ * `resolveDir` 决定相对 import 的解析基准——必须是 SRC，否则 `./i18n`、`./App.jsx` 解析不到。
+ * `sourcefile` 只用于报错信息里的文件名（不写盘）。
+ */
+function compileInline(code, sourcefile) {
+  const result = esbuild.buildSync({
+    ...ESBUILD_BASE,
+    stdin: { contents: code, resolveDir: SRC, sourcefile, loader: 'jsx' },
   });
   return result.outputFiles[0].text;
 }
@@ -114,22 +138,27 @@ function compile(rel) {
 // 打包后 esbuild 明确知道依赖是 ESM，interop 才是正确的。
 const loaded = new Map();
 
-function loadModule(rel) {
-  if (loaded.has(rel)) return loaded.get(rel);
-  const src = compile(rel);
+function evalBundle(bundleCode, rel) {
   const moduleObj = { exports: {} };
   // eslint-disable-next-line no-new-func
-  const fn = new Function('require', 'module', 'exports', '__filename', '__dirname', src);
+  const fn = new Function('require', 'module', 'exports', '__filename', '__dirname', bundleCode);
   fn(rendererRequire, moduleObj, moduleObj.exports, path.join(SRC, rel), path.join(SRC, path.dirname(rel)));
-  loaded.set(rel, moduleObj.exports);
   return moduleObj.exports;
 }
 
-function loadDefault(rel) {
-  const mod = loadModule(rel);
-  const C = mod && mod.default;
-  assert.equal(typeof C, 'function', `${rel} 未导出可用的默认组件（拿到 ${typeof C}）`);
-  return C;
+function loadModule(rel) {
+  if (loaded.has(rel)) return loaded.get(rel);
+  const mod = evalBundle(compile(rel), rel);
+  loaded.set(rel, mod);
+  return mod;
+}
+
+/** 加载内存里编译的探针（S5）：磁盘零落盘，`rel` 仅作缓存键与报错文件名。 */
+function loadInline(code, rel) {
+  if (loaded.has(rel)) return loaded.get(rel);
+  const mod = evalBundle(compileInline(code, rel), rel);
+  loaded.set(rel, mod);
+  return mod;
 }
 
 const React = rendererRequire('react');
@@ -161,21 +190,20 @@ globalThis.__MJ_I18N_PACKS__ = loadPacksFromDisk();
 let probeSeq = 0;
 function renderWithI18n(compRel, props) {
   const tmpRel = `__i18n_probe_${++probeSeq}.jsx`;
-  const tmp = path.join(SRC, tmpRel);
   const importPath = './' + compRel.replace(/\\/g, '/');
-  fs.writeFileSync(tmp, [
+  const code = [
     "import { LanguageProvider } from './i18n';",
     `import Comp from '${importPath}';`,
     'export default function Root(props) {',
     '  return <LanguageProvider><Comp {...props} /></LanguageProvider>;',
     '}',
-  ].join('\n'));
+  ].join('\n');
   try {
-    const Root = loadDefault(tmpRel);
-    return renderToStaticMarkup(React.createElement(Root, props));
+    const mod = loadInline(code, tmpRel);
+    assert.equal(typeof mod.default, 'function', `${compRel} 的 i18n wrapper 未导出默认组件`);
+    return renderToStaticMarkup(React.createElement(mod.default, props));
   } finally {
-    fs.unlinkSync(tmp);
-    loaded.delete(tmpRel);
+    loaded.delete(tmpRel); // 只是清编译缓存，磁盘上从来没有这个文件
   }
 }
 
@@ -246,13 +274,11 @@ check('门禁自检：能复现 TDZ 白屏（依赖数组引用后置声明）',
       return <div>{a}</div>;
     }
   `;
-  const tmp = path.join(SRC, '__tdz_probe.jsx');
-  fs.writeFileSync(tmp, bad);
+  const Bad = loadInline(bad, '__tdz_probe.jsx').default;
   try {
-    const Bad = loadDefault('__tdz_probe.jsx');
     assert.throws(() => renderToStaticMarkup(React.createElement(Bad)), /later/,
       'TDZ 事故未被渲染冒烟抓出');
-  } finally { fs.unlinkSync(tmp); loaded.delete('__tdz_probe.jsx'); }
+  } finally { loaded.delete('__tdz_probe.jsx'); }
 });
 
 check('门禁自检：能复现跨作用域白屏（子组件引用父组件局部变量）', () => {
@@ -266,13 +292,11 @@ check('门禁自检：能复现跨作用域白屏（子组件引用父组件局�
       return <div>{decomposing ? 'y' : 'n'}</div>;
     }
   `;
-  const tmp = path.join(SRC, '__scope_probe.jsx');
-  fs.writeFileSync(tmp, bad);
+  const P = loadInline(bad, '__scope_probe.jsx').default;
   try {
-    const P = loadDefault('__scope_probe.jsx');
     assert.throws(() => renderToStaticMarkup(React.createElement(P)), /decomposing/,
       '跨作用域事故未被渲染冒烟抓出');
-  } finally { fs.unlinkSync(tmp); loaded.delete('__scope_probe.jsx'); }
+  } finally { loaded.delete('__scope_probe.jsx'); }
 });
 
 // C1（2026-10-17）：MessageStream 的「输出文件卡片」必须能渲染。
