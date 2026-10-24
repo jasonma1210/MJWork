@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>MJWork · 一个人的软件公司</title>
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/base.css">
+  <link rel="stylesheet" href="styles/layout.css">
+  <link rel="stylesheet" href="styles/components.css">
+  <link rel="stylesheet" href="styles/animations.css">
+  <link rel="stylesheet" href="styles/views/desk.css">
+  <link rel="stylesheet" href="styles/views/chat.css">
+  <link rel="stylesheet" href="styles/views/studio.css">
+  <link rel="stylesheet" href="styles/views/ledger.css">
+  <link rel="stylesheet" href="styles/views/ecosystem.css">
+  <link rel="stylesheet" href="styles/views/schedule.css">
+  <link rel="stylesheet" href="styles/views/settings.css">
+  <link rel="stylesheet" href="styles/views/onboarding.css">
+  <link rel="stylesheet" href="styles/responsive.css">
+</head>
+<body>
+
+  <svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="i-desk" viewBox="0 0 24 24"><path d="M3 13h5l1.5 2.5h5L16 13h5"/><path d="M5.5 5h13l2.5 8v4.5A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5V13z"/></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5.5h16v10.5a2 2 0 0 1-2 2H9l-5 3z"/><path d="M8 10h8M8 13.5h5"/></symbol>
+      <symbol id="i-studio" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7"/><rect x="13.5" y="3.5" width="7" height="7"/><rect x="3.5" y="13.5" width="7" height="7"/><rect x="13.5" y="13.5" width="7" height="7"/></symbol>
+      <symbol id="i-ledger" viewBox="0 0 24 24"><path d="M5 4h13a1.5 1.5 0 0 1 1.5 1.5V20H5.5A1.5 1.5 0 0 1 4 18.5v-13A1.5 1.5 0 0 1 5.5 4z"/><path d="M8 8h8M8 12h8M8 16h5"/><path d="M18 20a2 2 0 0 0 0-4"/></symbol>
+      <symbol id="i-eco" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.4 3.8 5.4 3.8 8.5S14.6 18.1 12 20.5C9.4 18.1 8.2 15.1 8.2 12S9.4 5.9 12 3.5z"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></symbol>
+      <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 19a2 2 0 0 0 4 0"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+      <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+      <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m9 12.5 5.8-5.8a3.2 3.2 0 0 1 4.5 4.5l-8 8a5 5 0 0 1-7-7l7.2-7.2"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5 18.5 12 8 18.5z"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5.5v13M15 5.5v13"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v10M8 10.5l4 4 4-4"/><path d="M5 18.5h14"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2.5h9v9a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 18z"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r=".9"/><circle cx="12" cy="12" r=".9"/><circle cx="18" cy="12" r=".9"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"/></symbol>
+      <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 6.5A2.5 2.5 0 1 0 6.5 9H9zm0 0h6m-6 0v6m6-6A2.5 2.5 0 1 1 17.5 9H15zm0 0v6m0 0h2.5A2.5 2.5 0 1 1 15 17.5zm-6 0H6.5A2.5 2.5 0 1 0 9 17.5zm0 0v-6"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16 6.2a3 3 0 0 1 0 5.6M17.5 14.4c1.8.6 2.8 2.1 3 4.1"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3.5h8l4 4V20H6z"/><path d="M14 3.5V8h4M9 12h6M9 15.5h6"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 21 20H3z"/><path d="M12 9.5v5M12 17.2v.3"/></symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M4.5 12h15M13.5 6l6 6-6 6"/></symbol>
+      <symbol id="i-arrow-up-right" viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 7"/><path d="M20 4.5V11h-6"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="1.5"/><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"/></symbol>
+      <symbol id="i-grip" viewBox="0 0 24 24"><path d="M9 7.5h.1M15 7.5h.1M9 12h.1M15 12h.1M9 16.5h.1M15 16.5h.1"/></symbol>
+      <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M9.5 4.5v15"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6.5h12M8 12h12M8 17.5h12M4 6.5h.1M4 12h.1M4 17.5h.1"/></symbol>
+      <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5"/><rect x="13.5" y="4" width="6.5" height="6.5"/><rect x="4" y="13.5" width="6.5" height="6.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7-.2l2.6-2.6a4 4 0 0 0-5.7-5.7L11 7.1"/><path d="M14 10a4 4 0 0 0-5.7.2l-2.6 2.6a4 4 0 0 0 5.7 5.7l1.6-1.6"/></symbol>
+      <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3.5 13.5 6 5.5h12l2.5 8V18h-17z"/><path d="M3.5 13.5h5l1 2h5l1-2h5"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="15" rx="1.5"/><path d="M4 10h16M8 3.5v4M16 3.5v4"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5 19 6v6c0 4.2-2.8 7.4-7 8.5-4.2-1.1-7-4.3-7-8.5V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+    </defs>
+  </svg>
+
+  <div class="app" id="app">
+    <aside class="sidebar" id="sidebar" aria-label="主导航">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M3 8h18M3 8v10h18V8M8 8V5h8v3"/><path d="M12 12v6"/></svg>
+        </span>
+        <div class="brand-text">
+          <b>MJWork</b>
+          <span>一个人的软件公司</span>
+        </div>
+        <button class="side-collapse" id="collapseBtn" type="button" title="折叠侧栏" aria-label="折叠侧栏">
+          <svg class="ico" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+        </button>
+      </div>
+
+      <button class="company-switch" id="companyBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+        <span class="company-avatar">北</span>
+        <span class="company-meta">
+          <b id="companyName">北极星工作室</b>
+          <small id="companySub">5 名数字员工 · 交付中</small>
+        </span>
+        <svg class="ico company-caret" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
+      </button>
+
+      <nav class="nav">
+        <div class="nav-group">
+          <p class="nav-label">经营</p>
+          <div class="nav-list" id="navList">
+            <span class="nav-ind" id="navInd" aria-hidden="true"></span>
+            <a href="#/desk" class="nav-item" data-nav="desk" title="接单台">
+              <svg class="ico" aria-hidden="true"><use href="#i-inbox"></use></svg>
+              <span class="nav-text">接单台</span>
+              <span class="nav-dot" aria-hidden="true"></span>
+            </a>
+            <a href="#/chat" class="nav-item" data-nav="chat" title="对话（⌘1）">
+              <svg class="ico" aria-hidden="true"><use href="#i-chat"></use></svg>
+              <span class="nav-text">对话</span>
+              <kbd class="nav-kbd">⌘1</kbd>
+            </a>
+            <a href="#/studio?tab=space" class="nav-item" data-nav="studio" title="团队工作室（⌘2）">
+              <svg class="ico" aria-hidden="true"><use href="#i-studio"></use></svg>
+              <span class="nav-text">团队工作室</span>
+              <kbd class="nav-kbd">⌘2</kbd>
+            </a>
+            <a href="#/ledger" class="nav-item" data-nav="ledger" title="账本（⌘3）">
+              <svg class="ico" aria-hidden="true"><use href="#i-ledger"></use></svg>
+              <span class="nav-text">账本</span>
+              <kbd class="nav-kbd">⌘3</kbd>
+            </a>
+          </div>
+        </div>
+        <div class="nav-group">
+          <p class="nav-label">资源</p>
+          <div class="nav-list" id="navListSub">
+            <span class="nav-ind" id="navIndSub" aria-hidden="true"></span>
+            <a href="#/ecosystem" class="nav-item" data-nav="ecosystem" title="生态中心">
+              <svg class="ico" aria-hidden="true"><use href="#i-eco"></use></svg>
+              <span class="nav-text">生态中心</span>
+              <span class="nav-count">66</span>
+            </a>
+            <a href="#/schedule" class="nav-item" data-nav="schedule" title="定时任务">
+              <svg class="ico" aria-hidden="true"><use href="#i-clock"></use></svg>
+              <span class="nav-text">定时任务</span>
+              <span class="nav-count">3</span>
+            </a>
+            <a href="#/settings" class="nav-item" data-nav="settings" title="设置（⌘,）">
+              <svg class="ico" aria-hidden="true"><use href="#i-settings"></use></svg>
+              <span class="nav-text">设置</span>
+              <kbd class="nav-kbd">⌘,</kbd>
+            </a>
+          </div>
+        </div>
+      </nav>
+
+      <div class="side-bottom">
+        <div class="side-budget">
+          <div class="sb-row"><span>本月已用</span><b>¥12,480</b></div>
+          <div class="sb-bar" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="本月预算使用"><i style="width:62%"></i></div>
+          <div class="sb-sub">预算 ¥20,000 · 剩余 ¥7,520</div>
+        </div>
+        <div class="side-foot">
+          <button class="foot-btn" id="themeToggle" type="button" title="切换主题">
+            <svg class="ico theme-ico-light" aria-hidden="true"><use href="#i-moon"></use></svg>
+            <svg class="ico theme-ico-dark" aria-hidden="true"><use href="#i-sun"></use></svg>
+            <span class="nav-text" id="themeLabel">深色模式</span>
+          </button>
+          <button class="foot-btn owner" id="ownerBtn" type="button" title="老板账户">
+            <span class="avatar av-sm">老</span>
+            <span class="nav-text">老板账户</span>
+          </button>
+        </div>
+        <button class="replay-btn" id="replayOnboarding" type="button">
+          <svg class="ico" aria-hidden="true"><use href="#i-refresh"></use></svg>
+          <span class="nav-text">重看首启</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div class="tb-left">
+          <div class="tb-title">
+            <h1 id="viewTitle">接单台</h1>
+            <p id="crumb">北极星工作室 · 2026 年 10 月 23 日</p>
+          </div>
+        </div>
+        <div class="tb-right">
+          <button class="tb-search" id="searchBtn" type="button" aria-label="打开命令面板">
+            <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+            <span>搜索</span>
+            <kbd>⌘K</kbd>
+          </button>
+          <button class="icon-btn" id="notifyBtn" type="button" aria-label="通知" aria-haspopup="menu" aria-expanded="false">
+            <svg class="ico" aria-hidden="true"><use href="#i-bell"></use></svg>
+            <span class="notify-dot" id="notifyDot"></span>
+          </button>
+          <div class="tb-primary" id="primaryAction"></div>
+        </div>
+      </header>
+
+      <main class="viewwrap" id="viewwrap">
+        <div class="view" id="view"></div>
+      </main>
+    </div>
+  </div>
+
+  <div id="layers"></div>
+  <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+  <!-- 数据层：先铺数据，再建会话状态 -->
+  <script src="data/company.js"></script>
+  <script src="data/work.js"></script>
+  <script src="data/board.js"></script>
+  <script src="data/ledger.js"></script>
+  <script src="data/ecosystem.js"></script>
+  <script src="data/schedule.js"></script>
+  <script src="data/settings.js"></script>
+  <script src="data/employees-1.js"></script>
+  <script src="data/employees-2.js"></script>
+  <script src="data/employees-3.js"></script>
+  <script src="data/employees-4.js"></script>
+  <script src="data/employees-5.js"></script>
+  <script src="data/employees-6.js"></script>
+  <script src="data/skills-1.js"></script>
+  <script src="data/skills-2.js"></script>
+  <script src="data/skills-3.js"></script>
+  <script src="data/skills-4.js"></script>
+
+  <!-- 状态与片段 -->
+  <script src="js/store.js"></script>
+  <script src="js/ui.js"></script>
+
+  <!-- 视图：公共片段 → 各页面 -->
+  <script src="js/views/namespace.js"></script>
+  <script src="js/views/common.js"></script>
+  <script src="js/views/desk.js"></script>
+  <script src="js/views/chat.js"></script>
+  <script src="js/views/studio-space.js"></script>
+  <script src="js/views/studio-roster.js"></script>
+  <script src="js/views/studio-board.js"></script>
+  <script src="js/views/studio-artifacts.js"></script>
+  <script src="js/views/studio.js"></script>
+  <script src="js/views/ledger.js"></script>
+  <script src="js/views/ecosystem-tabs.js"></script>
+  <script src="js/views/ecosystem.js"></script>
+  <script src="js/views/schedule.js"></script>
+  <!-- 设置页：壳层 → 各分页（每个文件只承载一个分组，避免长文件） -->
+  <script src="js/views/settings.js"></script>
+  <script src="js/views/settings-general.js"></script>
+  <script src="js/views/settings-appearance.js"></script>
+  <script src="js/views/settings-models.js"></script>
+  <script src="js/views/settings-eco.js"></script>
+  <script src="js/views/settings-network.js"></script>
+  <script src="js/views/settings-git.js"></script>
+  <script src="js/views/settings-memory.js"></script>
+  <script src="js/views/settings-team.js"></script>
+  <script src="js/views/onboarding.js"></script>
+  <script src="js/views/skeleton.js"></script>
+
+  <!-- 运行时 -->
+  <script src="js/router.js"></script>
+  <script src="js/settings-runtime.js"></script>
+  <script src="js/settings-runtime-extra.js"></script>
+  <script src="js/interactions.js"></script>
+  <script src="js/board-drag.js"></script>
+  <script src="js/modals.js"></script>
+  <script src="js/palette.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

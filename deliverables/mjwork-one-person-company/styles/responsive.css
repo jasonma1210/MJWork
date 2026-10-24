@@ -1,0 +1,49 @@
+/* MJWork · 响应式：<1180 收侧栏与留白；<900 自动图标栏 + 单列内容 + 搜索仅图标
+   必须最后加载（index.html 已保证），以便覆盖壳层默认值。 */
+
+@media (max-width: 1180px) {
+  .app { grid-template-columns: 200px 1fr; }
+  .view { padding: 20px 20px 56px; }
+  .topbar { padding: 0 20px; }
+  .tb-search { min-width: 150px; }
+  .card { padding: 18px; }
+}
+
+@media (max-width: 900px) {
+  /* 侧栏自动折叠为 64px 图标栏（与 .is-collapsed 视觉一致） */
+  .app { grid-template-columns: 64px 1fr; }
+  .sidebar { padding: 12px 8px 10px; }
+  .sidebar :is(.brand-text, .company-meta, .company-caret, .nav-text, .nav-kbd, .nav-count, .nav-label, .nav-dot, .side-budget) { display: none; }
+  .sidebar .brand { gap: 3px; justify-content: center; }
+  .sidebar .brand-mark { width: 22px; height: 22px; }
+  .sidebar .side-collapse { width: 20px; height: 20px; margin-left: 0; }
+  .sidebar .side-collapse .ico { width: 12px; height: 12px; transform: rotate(180deg); }
+  .sidebar .company-switch { justify-content: center; padding: 6px 0; }
+  .sidebar .company-avatar { width: 26px; height: 26px; }
+  .sidebar .nav-item { justify-content: center; gap: 0; padding: 0; }
+  .sidebar .side-foot { grid-template-columns: 1fr; }
+  .sidebar .foot-btn { justify-content: center; padding: 0; }
+  .sidebar .replay-btn { border: 0; }
+
+  /* 顶栏与内容留白收紧 */
+  .topbar { height: 52px; gap: 8px; padding: 0 14px; }
+  .tb-title p { display: none; }
+  .view { padding: 16px 16px 48px; }
+
+  /* 搜索只留图标 */
+  .tb-search { min-width: 0; width: 30px; justify-content: center; padding: 0; }
+  .tb-search span, .tb-search kbd { display: none; }
+
+  /* 卡片栅格统一单列（页面 CSS 中任何 *-grid 都会被兜底；页面可再覆盖） */
+  .view [class*="-grid"] { grid-template-columns: 1fr; }
+  .skel-grid, .skel-grid.two { grid-template-columns: 1fr; }
+
+  /* 浮层适配窄屏：尺寸上限收窄，但不改变 sm/md/lg 的相对宽度 */
+  .overlay { padding: 16px; }
+  .sheet { max-width: calc(100vw - 24px); max-height: 88vh; }
+  .sheet-sm { max-width: min(420px, calc(100vw - 24px)); }
+  .sheet-md { max-width: min(560px, calc(100vw - 24px)); }
+  .sheet-lg { max-width: min(760px, calc(100vw - 24px)); }
+  .palette { top: 8vh; }
+  .toast-root { bottom: 20px; }
+}

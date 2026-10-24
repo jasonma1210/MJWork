@@ -1,0 +1,140 @@
+/* MJWork · 页面级样式 · 定时任务 schedule
+   仅处理 schedule 视图内部结构；壳层样式由另一位协作者维护。 */
+
+:where(:root) {
+  --mj-surface: #FFFFFF;
+  --mj-surface-2: #FAFAF7;
+  --mj-ink-2: #4A4A44;
+  --mj-muted: #7C7C74;
+  --mj-hair: rgba(20, 20, 18, .08);
+  --mj-moss-soft: rgba(46, 75, 60, .09);
+  --mj-amber-soft: rgba(169, 118, 31, .12);
+  --font-serif: 'Songti SC', 'STSong', serif;
+  --font-mono: 'SF Mono', ui-monospace, Menlo, monospace;
+}
+
+[data-theme="dark"] {
+  --mj-surface: #1D1D21;
+  --mj-surface-2: #222227;
+  --mj-ink-2: #BDBDB6;
+  --mj-muted: #8C8C84;
+  --mj-hair: rgba(232, 232, 227, .10);
+  --mj-moss-soft: rgba(110, 152, 126, .16);
+  --mj-amber-soft: rgba(200, 155, 80, .18);
+}
+
+/* ---------- 页头 ---------- */
+.schedule-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line, rgba(20, 20, 18, .12));
+}
+.schedule-head .eyebrow { margin: 0 0 8px; font-size: 11.5px; letter-spacing: .05em; color: var(--mj-muted); }
+.schedule-head .display {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: clamp(24px, 2.7vw, 31px);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink, #141412);
+}
+.schedule-head .lede { margin: 9px 0 0; font-size: 12.5px; line-height: 1.7; color: var(--mj-muted); }
+
+/* ---------- 列表 ---------- */
+.schedule-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.schedule-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 16px 18px;
+  transition: border-color .18s var(--ease-out, ease), background .18s, opacity .18s;
+}
+.schedule-row:hover { border-color: rgba(46, 75, 60, .28); }
+.schedule-row.is-off { background: var(--mj-surface-2); opacity: .66; }
+.sch-time {
+  display: grid;
+  gap: 3px;
+  padding-right: 16px;
+  border-right: 1px solid var(--mj-hair);
+}
+.sch-time b {
+  font-family: var(--font-mono);
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -.02em;
+  color: var(--ink, #141412);
+}
+.sch-time span { font-size: 10.5px; color: var(--mj-muted); }
+.sch-main { display: grid; gap: 5px; min-width: 0; }
+.sch-title { display: flex; align-items: center; gap: 10px; }
+.sch-title h3 { margin: 0; font-size: 14.5px; font-weight: 600; color: var(--ink, #141412); }
+.sch-main > p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--mj-muted);
+}
+.sch-meta { display: flex; flex-wrap: wrap; gap: 5px 14px; margin-top: 2px; }
+.sch-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--mj-muted);
+  white-space: nowrap;
+}
+.sch-meta .ico { width: 11px; height: 11px; opacity: .8; }
+.sch-side {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+.owner-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px 0 3px;
+  border: 1px solid var(--line, rgba(20, 20, 18, .12));
+  border-radius: 999px;
+  background: var(--mj-surface-2);
+  font-size: 11px;
+  color: var(--mj-ink-2);
+  white-space: nowrap;
+}
+.sch-side .btn { justify-self: end; }
+
+/* ---------- 底部说明 ---------- */
+.schedule-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 14px;
+  margin-top: 14px;
+  padding: 14px 16px;
+}
+.schedule-note .note-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--mj-moss-soft);
+  color: var(--moss, #2E4B3C);
+}
+.schedule-note .note-icon .ico { width: 15px; height: 15px; }
+.schedule-note > div:nth-child(2) { flex: 1; min-width: 220px; }
+.schedule-note h4 { margin: 0 0 3px; font-size: 12.5px; font-weight: 600; color: var(--ink, #141412); }
+.schedule-note p { margin: 0; font-size: 11.5px; line-height: 1.7; color: var(--mj-muted); }
+
+[data-theme="dark"] .schedule-row.is-off { background: var(--mj-surface-2); }

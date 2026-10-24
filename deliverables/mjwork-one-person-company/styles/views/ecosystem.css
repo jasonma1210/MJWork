@@ -1,0 +1,285 @@
+/* MJWork · 页面级样式 · 生态中心 ecosystem（员工 / 连接器 / 技能）
+   仅处理 ecosystem 视图内部结构；壳层样式由另一位协作者维护。 */
+
+:where(:root) {
+  --mj-surface: #FFFFFF;
+  --mj-surface-2: #FAFAF7;
+  --mj-surface-3: #EFEFE9;
+  --mj-ink-2: #4A4A44;
+  --mj-muted: #7C7C74;
+  --mj-hair: rgba(20, 20, 18, .08);
+  --mj-moss-soft: rgba(46, 75, 60, .09);
+  --mj-amber-soft: rgba(169, 118, 31, .12);
+  --font-serif: 'Songti SC', 'STSong', serif;
+  --font-mono: 'SF Mono', ui-monospace, Menlo, monospace;
+}
+
+[data-theme="dark"] {
+  --mj-surface: #1D1D21;
+  --mj-surface-2: #222227;
+  --mj-surface-3: #29292E;
+  --mj-ink-2: #BDBDB6;
+  --mj-muted: #8C8C84;
+  --mj-hair: rgba(232, 232, 227, .10);
+  --mj-moss-soft: rgba(110, 152, 126, .16);
+  --mj-amber-soft: rgba(200, 155, 80, .18);
+}
+
+/* ---------- 页头 ---------- */
+.eco-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px 28px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line, rgba(20, 20, 18, .12));
+}
+.eco-head .eyebrow { margin: 0 0 8px; font-size: 11.5px; letter-spacing: .05em; color: var(--mj-muted); }
+.eco-head .display {
+  margin: 0;
+  max-width: 26ch;
+  font-family: var(--font-serif);
+  font-size: clamp(24px, 2.7vw, 31px);
+  font-weight: 600;
+  line-height: 1.42;
+  color: var(--ink, #141412);
+}
+.eco-head .lede { margin: 10px 0 0; max-width: 56ch; font-size: 12.5px; line-height: 1.75; color: var(--mj-muted); }
+.eco-stats {
+  display: flex;
+  align-items: flex-end;
+  gap: 22px;
+  padding-bottom: 4px;
+}
+.eco-stats span { display: grid; gap: 2px; font-size: 10.5px; color: var(--mj-muted); }
+.eco-stats b {
+  font-family: var(--font-mono);
+  font-size: 25px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -.02em;
+  color: var(--ink, #141412);
+}
+.eco-tabs { margin-top: 14px; }
+.eco-body { padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+/* ---------- 工具条 ---------- */
+.eco-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 18px;
+}
+.toolbar-note { margin: 0; font-size: 11px; color: var(--mj-muted); }
+.result-line { margin: 0; font-size: 11.5px; color: var(--mj-muted); }
+.result-line b { font-family: var(--font-mono); font-weight: 600; color: var(--ink, #141412); }
+.eco-note {
+  margin: 2px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--mj-hair);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--mj-muted);
+}
+
+/* ---------- 数字员工 ---------- */
+.emp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(256px, 1fr)); gap: 14px; }
+.emp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 15px 16px 13px;
+  border: 1px solid var(--line, rgba(20, 20, 18, .12));
+  border-radius: 14px;
+  background: var(--mj-surface);
+  transition: transform .2s var(--ease-out, ease), box-shadow .2s var(--ease-out, ease), border-color .2s;
+}
+.emp-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(46, 75, 60, .3);
+  box-shadow: 0 14px 28px -24px rgba(20, 20, 18, .6);
+}
+.emp-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.letter-badge {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line, rgba(20, 20, 18, .12));
+  border-radius: 10px;
+  background: var(--mj-surface-2);
+  font-family: var(--font-serif);
+  font-size: 17px;
+  color: var(--moss, #2E4B3C);
+}
+.emp-id { display: grid; gap: 2px; min-width: 0; }
+.emp-id h4 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink, #141412);
+}
+.emp-id p { margin: 0; font-size: 10.5px; color: var(--mj-muted); }
+.emp-mission {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--mj-ink-2);
+}
+.emp-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.emp-tags span {
+  padding: 1px 6px;
+  border: 1px solid var(--mj-hair);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--mj-muted);
+  white-space: nowrap;
+}
+.emp-skills { display: flex; flex-wrap: wrap; gap: 4px; }
+.emp-skills span {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--mj-moss-soft);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--moss, #2E4B3C);
+  white-space: nowrap;
+}
+.emp-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--mj-hair);
+}
+
+/* ---------- 连接器 ---------- */
+.conn-card { padding: 4px 16px; overflow: hidden; }
+.conn-table { width: 100%; }
+.conn-table th,
+.conn-table td { padding: 10px 10px; text-align: left; font-size: 11.5px; vertical-align: middle; }
+.conn-table th {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .04em;
+  color: var(--mj-muted);
+  border-bottom: 1px solid var(--mj-hair);
+  white-space: nowrap;
+}
+.conn-table td { border-bottom: 1px solid var(--mj-hair); color: var(--mj-ink-2); }
+.conn-table tr:last-child td { border-bottom: 0; }
+.conn-table tbody tr { transition: background .16s; }
+.conn-table tbody tr:hover { background: var(--mj-surface-2); }
+.conn-name { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+.conn-name > div:last-child { display: grid; gap: 1px; }
+.conn-name small { font-size: 10px; color: var(--mj-muted); }
+.conn-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border: 1px solid var(--line, rgba(20, 20, 18, .12));
+  border-radius: 7px;
+  background: var(--mj-surface-2);
+  font-family: var(--font-serif);
+  font-size: 13px;
+  color: var(--mj-ink-2);
+}
+.conn-table .mono { font-family: var(--font-mono); font-size: 10.5px; }
+.conn-table .cell-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--mj-muted);
+}
+.row-action { text-align: right; white-space: nowrap; }
+.row-action .mini-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--moss, #2E4B3C);
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+  transition: border-color .16s;
+}
+.row-action .mini-link:hover { border-bottom-color: currentColor; }
+.connector-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 14px;
+  padding: 14px 16px;
+}
+.note-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--mj-amber-soft);
+  color: var(--amber, #A9761F);
+}
+.note-icon .ico { width: 15px; height: 15px; }
+.connector-note > div:nth-child(2) { flex: 1; min-width: 220px; }
+.connector-note h4 { margin: 0 0 3px; font-size: 12.5px; font-weight: 600; color: var(--ink, #141412); }
+.connector-note p { margin: 0; font-size: 11.5px; line-height: 1.65; color: var(--mj-muted); }
+
+/* ---------- 技能 ---------- */
+.skill-card { padding: 2px 16px; }
+.skill-list { display: flex; flex-direction: column; }
+.skill-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) 52px 58px auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 0;
+  font-size: 11.5px;
+}
+.skill-row + .skill-row { border-top: 1px solid var(--mj-hair); }
+.skill-name { font-size: 12px; font-weight: 500; color: var(--ink, #141412); }
+.skill-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--mj-muted);
+}
+.skill-src {
+  justify-self: start;
+  padding: 1px 6px;
+  border: 1px solid var(--mj-hair);
+  border-radius: 4px;
+  font-size: 9.5px;
+  color: var(--mj-muted);
+  white-space: nowrap;
+}
+.skill-src.is-bundled {
+  border-color: rgba(46, 75, 60, .24);
+  background: var(--mj-moss-soft);
+  color: var(--moss, #2E4B3C);
+}
+.skill-uses { font-family: var(--font-mono); font-size: 10px; text-align: right; color: var(--mj-muted); }
+
+[data-theme="dark"] .emp-card:hover { box-shadow: 0 14px 28px -20px rgba(0, 0, 0, .9); }
+[data-theme="dark"] .emp-skills span { color: #9FC0AC; }
+[data-theme="dark"] .skill-src.is-bundled { color: #9FC0AC; }
+
+@media (prefers-reduced-motion: reduce) {
+  .emp-card { transition: none; }
+}

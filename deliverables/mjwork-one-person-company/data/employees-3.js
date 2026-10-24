@@ -1,0 +1,18 @@
+/* MJWork 原型 · 数据模块 · 自动生成，请改源数据而非手改本文件 */
+(function () {
+  'use strict';
+  var MJ = window.MJ = window.MJ || {};
+  MJ.employees = (MJ.employees || []).concat([
+    {"id":"de-technical-support","name":"technical-support","title":"技术支持工程师","cat":"客户服务","industry":["通用","互联网"],"mission":"定位并解决用户在真实环境中的技术与配置问题。","tier":"advanced","skills":["日志分析","环境排查","复现验证","配置修复","根因定位"],"tools":["read","write","edit","bash","grep","glob"],"approval":"on-request","sandbox":"read-only"},
+    {"id":"de-customer-success-manager","name":"customer-success-manager","title":"客户成功经理","cat":"客户服务","industry":["通用","互联网","制造"],"mission":"推动客户真正用起来并获得业务价值，从而实现续约与增购。","tier":"advanced","skills":["使用引导","健康度评估","价值复盘","续约谈判","客户分层运营"],"tools":["read","write","edit","browser","bash","grep"],"approval":"always","sandbox":"read-only"},
+    {"id":"de-ticket-triage","name":"ticket-triage","title":"工单分诊专员","cat":"客户服务","industry":["通用","互联网"],"mission":"把进来的每一条请求准确分类、排序并派给对的人，减少无效流转。","tier":"standard","skills":["意图识别","优先级判定","路由规则","重复合并","SLA 监控"],"tools":["read","write","edit","bash","grep"],"approval":"on-request","sandbox":"read-only"},
+    {"id":"de-recruiter","name":"recruiter","title":"招聘专员","cat":"人力与招聘","industry":["通用","互联网","制造"],"mission":"在合规前提下找到合适的候选人，并让双方的信息都真实对称。","tier":"standard","skills":["简历筛选","职位描述撰写","面试协调","人才库维护","雇主品牌"],"tools":["read","write","edit","browser","bash","grep"],"approval":"always","sandbox":"read-only"},
+    {"id":"de-talent-sourcer","name":"talent-sourcer","title":"人才寻访顾问","cat":"人力与招聘","industry":["通用","互联网","制造"],"mission":"主动找到那些还没在看机会的关键人才，并建立长期关系。","tier":"advanced","skills":["人才地图","被动候选人挖掘","关系经营","薪酬行情","雇主吸引力包装"],"tools":["read","write","edit","browser","grep"],"approval":"always","sandbox":"read-only"},
+    {"id":"de-hr-generalist","name":"hr-generalist","title":"人力资源事务专员","cat":"人力与招聘","industry":["通用","零售","制造"],"mission":"把员工全生命周期的事务性工作做准确做扎实，让 HRBP 能专注真正的人的问题。","tier":"standard","skills":["入离职流程","合同与档案管理","薪酬核算配合","政策问答","合规留痕"],"tools":["read","write","edit","bash","grep","glob"],"approval":"on-request","sandbox":"workspace-write"},
+    {"id":"de-learning-designer","name":"learning-designer","title":"培训课程设计师","cat":"人力与招聘","industry":["通用","互联网","制造"],"mission":"把岗位能力差距转化为可完成、可评估的课程与学习路径。","tier":"advanced","skills":["能力模型","课程设计","教学评估","内容组织","学习效果度量"],"tools":["read","write","edit","bash","browser"],"approval":"on-request","sandbox":"workspace-write"},
+    {"id":"de-performance-coach","name":"performance-coach","title":"绩效与人才发展顾问","cat":"人力与招聘","industry":["通用","互联网"],"mission":"帮助员工与管理者把绩效反馈转化为具体的发展计划与业务贡献。","tier":"advanced","skills":["绩效评价","反馈沟通","发展计划","目标设定","绩效数据校准"],"tools":["read","write","edit","bash","grep","glob"],"approval":"always","sandbox":"read-only"},
+    {"id":"de-accounting-analyst","name":"accounting-analyst","title":"财务分析专员","cat":"财务与法务","industry":["通用","零售","制造"],"mission":"把账务数据转成经营判断，帮管理层看懂钱从哪里来、往哪去。","tier":"advanced","skills":["三表分析","预算对比","成本归集","差异分析","财务建模"],"tools":["read","write","edit","bash","grep","glob"],"approval":"on-request","sandbox":"read-only"},
+    {"id":"de-tax-specialist","name":"tax-specialist","title":"税务专员","cat":"财务与法务","industry":["通用","金融","制造"],"mission":"在合法范围内准确处理纳税义务，把合规风险控制在申报之前。","tier":"advanced","skills":["纳税申报","税务筹划","政策跟踪","进项管理","税务风险自查"],"tools":["read","write","edit","bash","browser","grep"],"approval":"always","sandbox":"read-only"},
+    {"id":"de-legal-counsel","name":"legal-counsel","title":"法务顾问","cat":"财务与法务","industry":["通用","金融","互联网"],"mission":"在业务推进过程中识别法律风险，并给出能落地的合规路径。","tier":"advanced","skills":["合同审查","合规评估","风险识别","条款谈判","法律检索"],"tools":["read","write","edit","grep","glob","browser"],"approval":"always","sandbox":"read-only"}
+  ]);
+})();
