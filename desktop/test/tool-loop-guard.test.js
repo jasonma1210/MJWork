@@ -122,9 +122,9 @@ function autoRespondApproval(channel, payload) {
   }
 }
 class FakeBrowserWindow {
-  constructor() { this.webContents = { setWindowOpenHandler: noop, openDevTools: noop, send: autoRespondApproval }; }
+  constructor() { this.webContents = { setWindowOpenHandler: noop, openDevTools: noop, send: autoRespondApproval, on: noop }; }
   isDestroyed() { return false; } // P0-5：requestApproval 现按窗口存活判定 fail-closed，桩需对齐真实契约
-  loadURL() {} loadFile() {} on() {}
+  loadURL() {} loadFile() {} on() {} once() {} show() {}
   isMinimized() { return false; } restore() {} focus() {}
   getBounds() { return { width: 1600, height: 1000 }; }
 }

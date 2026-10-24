@@ -25,8 +25,8 @@ function autoRespondApproval(channel, payload) {
   }
 }
 class FakeBrowserWindow {
-  constructor() { this.webContents = { setWindowOpenHandler: noop, openDevTools: noop, send: autoRespondApproval }; }
-  loadURL() {} loadFile() {} on() {}
+  constructor() { this.webContents = { setWindowOpenHandler: noop, openDevTools: noop, send: autoRespondApproval, on: noop }; }
+  loadURL() {} loadFile() {} on() {} once() {} show() {}
   isMinimized() { return false; } restore() {} focus() {}
   getBounds() { return { width: 1600, height: 1000 }; }
 }

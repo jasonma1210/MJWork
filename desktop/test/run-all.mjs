@@ -21,6 +21,10 @@ import { summarize } from './helpers/summary.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const TEST_DIR = path.join(ROOT, 'test');
+// S6-③：每个套件都注入 preload —— 把「被 process.exit(0) 吞掉的 unhandled rejection」变成失败。
+// 为什么必须在这里统一注入：产品侧 main.js:476/486 有 uncaughtException/unhandledRejection 兜底，
+// 套件级或 `--unhandled-rejections=strict` 都拦不住（实测），只有先于一切的 preload 能判死。
+const PRELOAD = path.join(TEST_DIR, 'helpers/unhandled-preload.cjs');
 
 // 套件发现：*.test.js / *.test.mjs（目录自动发现，防漏注册）+ 明确登记的 smoke 套件
 // （smoke-*.mjs 不叫 *.test.*，故单独列出；它们是加载冒烟，同样必须进基线）。
@@ -104,7 +108,7 @@ for (const [i, suite] of suites.entries()) {
   const label = `[${String(i + 1).padStart(2)}/${suites.length}] ${suite}`;
   const started = Date.now();
   // 单套件超时 180s：卡死套件不应拖死整条基线（超时记失败并继续）
-  const r = spawnSync(process.execPath, [path.join(ROOT, suite)], {
+  const r = spawnSync(process.execPath, ['--require', PRELOAD, path.join(ROOT, suite)], {
     cwd: ROOT,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
