@@ -409,6 +409,52 @@ cd desktop && node test/onboarding-local-models.test.mjs
 2. **接线写法改成「解析到才 set」**：让「不调用」这一性质可断言（详见 D2 说明），`App.jsx` 行数不变。
 3. 新增套件使套件数 290→291，设计文档 3 处数字再次同步（`doc-fact-check` 现算绿）。
 
+## RB-1b（收到复验判据清单后的加固，2026-10-24）
+
+验证方给了「复验时会怎么打」的 4 条判据，逐条对齐后补了两处：
+
+### 补齐 D2 的三个覆盖点
+1. **对象引用**（原缺）：`pickOnboardingModel` 命中时必须返回列表里的**同一引用**（不是副本），
+   已加 `assert.equal(r.provider, PROVIDERS[0])` / `assert.equal(r.model, PROVIDERS[0].models[1])`。
+   理由：副本会让「选中态」与列表项脱钩，`rememberModel` 的记忆键也对不上。
+2. **`Onboarding.finish()` 出口**（原缺，属真空白）：新增 2 条——抽出 `finish()` 源码求值（注入
+   `pickedSkills/pickedConnectors/employees/selectedLocal/onFinish/...` 全部绑定），断言
+   `onFinish` 收到的 `extras.model === {providerId, modelId}`；未选模型时 `=== null`（不回写半截值）。
+3. **App 接线**：形态说明——为了能断言「解析不到 ⇒ **完全不调用** setter」这一更强性质，接线写成
+   同一行两条语句：`const pickedModel = pickOnboardingModel(userProviders, extras?.model); if (pickedModel) setSelectedModel(pickedModel);`
+   。按字面 grep `setSelectedModel(pickOnboardingModel(` 搜不到（这是有意的，不是漏）。判据按「删掉/改成不调用必红」验：
+   - 删整行 → `8/10`，exit=1
+   - 保留 pick、去掉 setter 调用 → `8/10`，exit=1
+   - 删掉 `finish()` 的 `model` 字段 → `8/10`，exit=1
+   - 还原 → `10/10`，exit=0（App.jsx numstat 恒 2/1，Onboarding 恒 102/18）
+
+### 顺手修掉的一处测试自身假绿（重要）
+本套件的 `check()` 原本是**同步**函数，async 用例的 reject 会漏成 unhandled rejection：
+实测「删掉 finish 的 model 字段」时，先打印 `10/10 通过`、之后进程才崩（汇总已假绿）。
+已改为 `async function check()` + 全部 `await check(...)`。现在任何 async 断言失败都当场 `[FAIL]` 且 exit=1。
+
+## RB-1b 复验命令与读数（可直接复跑）
+
+```bash
+cd desktop && npx eslint main/main.js \
+  --rule '{"max-lines":["error",{"max":1,"skipBlankLines":true,"skipComments":true}]}'
+# → File has too many lines (1500)   ← 与本批 HEAD 一致（HEAD 版实测同为 1500），本轮净增代码行 = 0
+```
+```bash
+cd /Users/jianma/Desktop/MJCode && git diff --numstat -- desktop/main/main.js
+# → 6	3	desktop/main/main.js   （= FIX-P04 三处：3 行注释 + 2 处替换，代码行净 0）
+```
+
+## RB-1b 观察到的一次环境性假红（非代码问题）
+
+13:41 的全量跑里 `harness-r7:check` 判红，但：
+- 手动单跑 `node docs/harness-r7/04-test/check.mjs <repo>` → `PASS=76 FAIL=0`，**exit=0**（与 run-all 同 cwd / 同参数复现）；
+- 紧接着 13:45 全量重跑 → `总 296 · 过 293 · 败 0 · 跳 3`；
+- 该轮跑前/跑后对 5 个关键文件做 `shasum -c` 全部 `OK`（跑期间未被外部改动）。
+
+最可能的原因：**并行会话在同一工作区做变异**，gate 扫描到瞬时被改的源码。建议：全量跑与变异实验不要同时进行
+（否则任何 gate 都可能随机红，读数不可信）。
+
 ## RB-1 后仍存在的风险
 
 1. `scheduled-team-tools` 的抽取器依赖 `main.js` 里 `toolHooks.wrap(sguard.wrap({...}))` 的书写形态：
