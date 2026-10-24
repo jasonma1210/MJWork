@@ -100,5 +100,5 @@ const ok = (name) => { n += 1; console.log(`  ✓ ${name}`); };
   ok('IPC：未就绪队列保留 domain/scope（补写不丢作用域）');
 
   console.log(`\nM1 /mem 作用域分流门禁：${n} 项全部通过`);
-  process.exit(0);
+  process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);
 })().catch((e) => { console.error(e); process.exit(1); });

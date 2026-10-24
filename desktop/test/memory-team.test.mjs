@@ -150,7 +150,7 @@ const ok = (name) => { n += 1; console.log(`  ✓ ${name}`); };
   }
 
   console.log(`\nmemory-team: ${n}/${n} 通过`);
-  process.exit(0);
+  process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);
 })().catch((e) => {
   console.error('\nmemory-team 失败:', e.message);
   process.exit(1);

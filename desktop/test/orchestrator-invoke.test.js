@@ -152,5 +152,5 @@ const ticks = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 
   console.log(`\ninvoke waitGroupSettled P0 修复：${n} 项全部通过`);
-  process.exit(0);
+  process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);
 })().catch((e) => { console.error(e); process.exit(1); });

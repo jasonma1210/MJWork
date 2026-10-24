@@ -119,5 +119,5 @@ const ok = (name) => { n += 1; console.log(`  ✓ ${name}`); };
   ok('decayJob：L3/L2 差异化衰减（90 / 30 天）端到端');
 
   console.log(`\n三层记忆 M4 强化门禁：${n} 组全部通过`);
-  process.exit(0);
+  process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);
 })().catch((e) => { console.error(e); process.exit(1); });

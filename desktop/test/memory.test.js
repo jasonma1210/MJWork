@@ -273,5 +273,5 @@ function ok(name) { n += 1; console.log(`  ✓ ${name}`); }
   ok('P1-16：双轨修复（内存队列 + 就绪补写）与记忆管理 IPC');
 
   console.log(`\nP2 记忆体系：${n} 项全部通过`);
-  process.exit(0);
+  process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);
 })().catch((e) => { console.error(e); process.exit(1); });

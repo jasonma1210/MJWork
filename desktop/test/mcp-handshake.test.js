@@ -96,5 +96,5 @@ const mockServer = path.join(__dirname, 'mock-mcp-server.js');
   console.log('[6] 断开后列表为空');
 
   console.log('PASS: MCP 三步握手 / 工具调用 / 缓存 / 错误路径 / 列表 / 断开 全部通过');
-  process.exit(0);
+  process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);
 })().catch((e) => { console.error('FAIL:', e); process.exit(1); });

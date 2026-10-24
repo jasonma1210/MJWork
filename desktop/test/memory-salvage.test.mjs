@@ -174,5 +174,5 @@ const ok = (name) => { n += 1; console.log(`  ✓ ${name}`); };
   db2.close();
 
   console.log(`\n三层记忆 M2 晋升链门禁：${n} 组全部通过`);
-  process.exit(0);
+  process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -208,5 +208,5 @@ function makeDeps({ chatOnce, events = [], runGroup }) {
   ok('T5-9：批次/快照钩子异常 fail-open（按无分批调度）');
 
   console.log(`\norchestrator 自动编排：${n} 项全部通过`);
-  process.exit(0);
+  process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);
 })().catch((e) => { console.error(e); process.exit(1); });

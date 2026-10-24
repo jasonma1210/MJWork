@@ -200,5 +200,5 @@ fs.writeFileSync(path.join(REPO, 'new.txt'), 'hello\n');
   // 清理
   fs.rmSync(REPO, { recursive: true, force: true });
   console.log('PASS: cwd 贯通 / 注入回归 / applyPatch / git 全套 / 项目探测 全部通过');
-  process.exit(0);
+  process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);
 })().catch((e) => { console.error('FAIL:', e); process.exit(1); });

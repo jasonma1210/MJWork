@@ -178,5 +178,5 @@ const ok = (name) => { n += 1; console.log(`  ✓ ${name}`); };
   ok('resetScope：global 层清空');
 
   console.log(`\n三层记忆 M0：${n} 项全部通过`);
-  process.exit(0);
+  process.exitCode = process.exitCode || 0; setTimeout(() => process.exit(process.exitCode || 0), 0);
 })().catch((e) => { console.error(e); process.exit(1); });
