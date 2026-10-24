@@ -145,7 +145,27 @@ function extractScheduledToolHandlersLiteral() {
   assert.ok(objStart > 0, 'toolHandlers 装配不是对象字面量形态');
   const objEnd = matchBracket(body, objStart);
   assert.ok(objEnd > objStart, 'toolHandlers 对象字面量括号未配对');
+  // ── 窗口边界的形态不变量：必须由两条**互相独立**的路径算出来并一致（与 stop-thread-work 同款）──
+  // A = 括号配对（跳字符串/模板串/注释）；B = 缩进层级（不跳任何东西，只看行首）。
+  // A 漏跳字符串或注释 ⇒ 深度溢出 ⇒ 配对点滑到后面某个 `}` ⇒ 窗口外扩吃到相邻键/相邻代码。
+  // 注意：外扩后 `new Function` 会**不会**炸取决于片段凑巧语法合不合法 —— OVR-3 实测是炸了
+  // （`Unexpected token ')'`）才红的。**那是被求值崩溃拦住的（第 2 类），不是被断言拦住的**；
+  // 换个布局让外扩片段语法仍合法就全绿。故必须补这条形态不变量。
+  const objLineStart = body.lastIndexOf('\n', objStart) + 1;
+  const objIndent = /^\s*/.exec(body.slice(objLineStart))[0];
+  const objCloseAt = body.indexOf(`\n${objIndent}}`, objStart);
+  assert.ok(objCloseAt > objStart, `找不到缩进层 ${JSON.stringify(objIndent)} 的闭合花括号（toolHandlers 的缩进层级变了？）`);
+  const objEndByIndent = objCloseAt + 1 + objIndent.length;
+  assert.equal(objEnd, objEndByIndent,
+    `toolHandlers 字面量的两条路径不一致：括号配对算到 ${objEnd}，缩进层级算到 ${objEndByIndent}`
+    + `（多半是配对漏跳了字符串/注释导致窗口外扩，抽到的已经不是这个对象字面量本身）`);
   const literal = body.slice(objStart, objEnd + 1);
+  // 直接表达「窗口没吃到相邻键 / 相邻顶层声明」：字面量内部（去掉两端花括号）不得出现
+  // 与外层**同一缩进层**的 `key:` 行 —— 本字面量的属性在下一层，出现同层键说明吃进外层去了。
+  const inner = literal.slice(1, -1);
+  const siblingKeyRe = new RegExp(`^${objIndent}[A-Za-z_$][\\w$]*\\s*:`, 'm');
+  assert.ok(!siblingKeyRe.test(inner),
+    `抽到的 toolHandlers 字面量里混进了外层同缩进层的键（窗口吃到相邻键了）：${inner.slice(0, 160)}`);
   assert.ok(literal.includes('scheduledToolHandlers('), `抽到的装配里没有 scheduledToolHandlers：${literal.slice(0, 120)}`);
   return literal;
 }
