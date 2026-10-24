@@ -139,6 +139,21 @@ function extractFinishSource() {
   const open = ONB_SRC.indexOf('{', at);
   const end = matchBrace(ONB_SRC, open);
   assert.ok(end > open, 'finish() 函数体括号未配对');
+  // ── 窗口边界的形态不变量：必须由两条**互相独立**的路径算出来并一致（与 stop-thread-work 同款）──
+  // A = 括号配对（跳字符串/模板串/注释）；B = 缩进层级（不跳任何东西，只看行首）。
+  // A 一旦漏跳字符串或注释 ⇒ 深度溢出 ⇒ 配对点滑到后面某个 `}` ⇒ 窗口**外扩**吞掉后面的函数体。
+  // 这时下面两条内容断言（src 含 onFinish?. / model:）照样全中，
+  // 而求值能不能炸取决于外扩片段凑巧语法合不合法 —— OVR-2 实测过：外扩后 `new Function`
+  // 抛 SyntaxError 才让它红了。**那是被求值崩溃拦住的（第 2 类），不是被断言拦住的**，
+  // 换个代码布局让外扩片段语法仍合法，它就全绿。故必须补这条形态不变量。
+  const lineStart = ONB_SRC.lastIndexOf('\n', at) + 1;
+  const indent = ONB_SRC.slice(lineStart, at); // `async function finish(` 所在行的缩进
+  const closeAt = ONB_SRC.indexOf(`\n${indent}}`, at);
+  assert.ok(closeAt > at, `找不到缩进层 ${JSON.stringify(indent)} 的闭合花括号（finish() 的缩进层级变了？）`);
+  const endByIndent = closeAt + 1 + indent.length;
+  assert.equal(end, endByIndent,
+    `finish() 抽取窗口的两条路径不一致：括号配对算到 ${end}，缩进层级算到 ${endByIndent}`
+    + `（多半是配对漏跳了字符串/注释导致窗口外扩，抽到的已经不是 finish() 自己的函数体）`);
   const src = ONB_SRC.slice(at, end + 1);
   assert.ok(src.includes('onFinish?.'), `finish() 里没有 onFinish 调用：${src.slice(0, 120)}`);
   assert.ok(src.includes('model:'), `finish() 的 extras 里没有 model（向导选定的模型不会回写）：${src.slice(0, 200)}`);
