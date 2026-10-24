@@ -30,7 +30,7 @@ import { loadAgentsMd } from './lib/agentsMd';
 import ipc from './lib/ipc';
 import FeedbackHost, { confirm, toast } from './components/feedback';
 import { projectDisplayName } from './lib/projectName';
-import { getDefaultProject, loadJSON, applyThemeToDocument, rememberModel, pickInitialModel } from './lib/appState';
+import { getDefaultProject, loadJSON, applyThemeToDocument, rememberModel, pickInitialModel, pickOnboardingModel } from './lib/appState';
 import usePendingExpert from './hooks/usePendingExpert';
 import { useWindowEventBus } from './hooks/useWindowEventBus';
 import { createAppWindowHandlers } from './lib/appWindowEvents';
@@ -399,6 +399,7 @@ export default function App() {
           localStorage.setItem('mj_onboarded', '1');
           setOnboarded(true);
           if (prompt) setInitialPrompt(prompt);
+          const pickedModel = pickOnboardingModel(userProviders, extras?.model); if (pickedModel) setSelectedModel(pickedModel); // FIX-P07：向导选定的模型 = 首聊当前模型
           // 引导里选的技能：合并进启用列表（setEnabledSkillsSafe 只接受值，不接受 updater）
           if (extras && Array.isArray(extras.skillIds) && extras.skillIds.length > 0) {
             setEnabledSkillsSafe([...new Set([...enabledSkills, ...extras.skillIds])]);

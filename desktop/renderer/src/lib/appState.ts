@@ -78,3 +78,22 @@ export function pickInitialModel(providers: AnyProvider[] | null | undefined): {
   const first = list.find((x) => Array.isArray(x?.models) && x.models.length > 0);
   return first ? { provider: first, model: first.models![0] } : null;
 }
+
+/**
+ * FIX-P07：把首启向导里选定的模型（`{ providerId, modelId }`）解析成 `selectedModel` 形状。
+ *
+ * 为什么需要它：`selectedModel` 在 App 挂载时就由 pickInitialModel 定了默认值，
+ * 向导里的选择若不回灌，用户「点了某个模型」只是界面高亮 —— 又一处装饰性交互。
+ * 解析不到（provider 已被删除 / id 不匹配）返回 null，调用方保持原选择，绝不构造半截模型。
+ */
+export function pickOnboardingModel(
+  providers: AnyProvider[] | null | undefined,
+  picked: { providerId?: string; modelId?: string } | null | undefined,
+): { provider: AnyProvider; model: Record<string, unknown> } | null {
+  if (!picked || !picked.providerId || !picked.modelId) return null;
+  const p = (Array.isArray(providers) ? providers : []).find((x) => x?.id === picked.providerId);
+  // models 必须是数组：本机库 / models.json 双来源，坏形状（字符串、null）不能让首启流程崩
+  const models = Array.isArray(p?.models) ? p!.models! : [];
+  const m = models.find((x) => (x?.model_id || (x as { modelId?: string })?.modelId) === picked.modelId);
+  return p && m ? { provider: p, model: m } : null;
+}

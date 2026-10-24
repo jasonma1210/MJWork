@@ -250,11 +250,16 @@ function prepareScheduledRun(deps = {}) {
     prompt, teamBrief, threadMessages: threadCtx ? threadCtx.messages : [],
   });
   const memories = (threadCtx && threadCtx.memories) || [];
+  // FIX-P04：团队上下文是**引擎侧通告 team_* 的唯一开关**（agent-core/index.js 只在
+  // runAgent({ teamContext }) 非空时追加 TEAM_TOOLS 与协同提示词段）。此前这里只把 context
+  // 交给工具工厂、没回传给 runAgent ⇒ 即使 handler 齐备，模型也看不到这些 schema。
+  // runId/taskId 沿用同一命名空间（scheduled:<taskId>），与消息总线的幂等键一致。
+  const teamContext = resolved
+    ? { teamId, runId: `scheduled:${taskId}`, taskId: `scheduled:${taskId}`, memberId: '' }
+    : null;
   const teamTools = resolved && typeof createTeamToolHandlers === 'function'
     ? createTeamToolHandlers({
-      teamContext: {
-        teamId, runId: `scheduled:${taskId}`, taskId: `scheduled:${taskId}`, memberId: '',
-      },
+      teamContext,
       getTeamStore,
       getTaskStore: () => taskStore,
       postMessage: postTeamMessage,
@@ -274,8 +279,9 @@ function prepareScheduledRun(deps = {}) {
     if (!wb.ok) console.warn('[scheduled] 产出回写会话失败:', wb.error);
   };
   return {
-    // runAgent 的两个参数打包返回：宿主侧一行 `...schedCtx.runParams` 即可（main.js 已到 1500 行 code 硬档）
-    runParams: { messages, memories },
+    // runAgent 的三个参数打包返回：宿主侧一行 `...schedCtx.runParams` 即可（main.js 已到 1500 行 code 硬档）
+    // teamContext 非空 ⇒ 引擎追加 team_* 工具与协同提示词段；为空 ⇒ 工具面与字节完全不变（非团队任务零影响）
+    runParams: { messages, memories, teamContext },
     teamTools, teamHandler, onFinished,
   };
 }

@@ -36,9 +36,12 @@ check('定时通道暴露 orchestrate_task（对话有、定时也要有）', ()
   // 放宽窗口不改变断言语义（仍要求「同一个工具表里既有基础 spread、又有 orchestrateTask 覆盖」），
   // 但去掉了「插入注释即红」这个与意图无关的脆弱点。若哪天有人把 orchestrateTask 搬到别处，
   // 只要它仍落在这段装配内，本断言该绿；搬出装配范围就会红（窗口比整段装配短）。
+  // FIX-P04（2026-10-24）：定时通道的实参新增 teamTools: schedCtx.teamTools，原先「恰好两键
+  // + 立即闭括号」的形状代理会假红。这里同样只放宽括号位置，窗口与语义不变：
+  // 仍要求「同一段装配里既有基础 spread、又有 orchestrateTask 覆盖」。
   assert.match(
     mainSrc,
-    /scheduledToolHandlers\(\{ unattended: true, contextCwd: schedModel\.cwd \}\)[\s\S]{0,600}orchestrateTask:/,
+    /scheduledToolHandlers\(\{[^}]*unattended: true, contextCwd: schedModel\.cwd[^}]*\}\)[\s\S]{0,600}orchestrateTask:/,
     'runScheduledAgentTask 的工具表里没有 orchestrateTask —— 模型看不到这个工具就只能串行',
   );
 });

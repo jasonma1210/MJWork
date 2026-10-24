@@ -1241,13 +1241,16 @@ async function runScheduledAgentTask({ prompt, model: schedModel, signal, taskId
     agentsMd: require('./agentsMd').readAgentsMd(rc.dir),
     // 编排工具补齐：定时通道原先没有 orchestrate_task（对话有），这就是"同一句话对话能 4 Agent 并行、定时只能串行"的差别；cwd 强制产出目录，子 Agent 写入才落在用户找得到的地方。
     toolHandlers: toolHooks.wrap(sguard.wrap({
-      ...scheduledToolHandlers({ unattended: true, contextCwd: schedModel.cwd }),
+      // FIX-P04：团队协同工具必须作为**入参**交给工厂（它据此展开成 teamListMembers 等 5 个键）。
+      // 此前写成映射里的一级键 `{ teamTools: ... }`——那只是个没人认识的键，
+      // team_* 一个都不存在，模型即便知道也调不到。传 null 时工厂整体不展开（非团队任务零影响）。
+      ...scheduledToolHandlers({ unattended: true, contextCwd: schedModel.cwd, teamTools: schedCtx.teamTools }),
       // D-805（2026-10-21）：**定时任务这条道同样要接取消信号**。此前只 spread 了基础表，
       // 表里的 `chat: scheduledAgentChat` 是裸的单参版本 ⇒ 用户停掉定时任务时，在途模型请求
       // 要等内部守卫到点才停。这里与 Worker 工厂同款覆盖一次。
       chat: (payload) => scheduledAgentChat(payload, { signal }),
-      // P1-6：绑定了军团时，末两个 spread 把派活通道覆盖成**团队语义**（roster 快照 / defaultMode / budget）
-      orchestrateTask: (a) => toolOrchestrateTask({ ...a, cwd: rc.dir }, { signal, conversationId: `scheduled:${taskId}`, projectPath: rc.dir }), ...(schedCtx.teamTools ? { teamTools: schedCtx.teamTools } : {}), ...(schedCtx.teamHandler ? { orchestrateTask: schedCtx.teamHandler } : {}),
+      // P1-6：绑定了军团时，末个 spread 把派活通道覆盖成**团队语义**（roster 快照 / defaultMode / budget）
+      orchestrateTask: (a) => toolOrchestrateTask({ ...a, cwd: rc.dir }, { signal, conversationId: `scheduled:${taskId}`, projectPath: rc.dir }), ...(schedCtx.teamHandler ? { orchestrateTask: schedCtx.teamHandler } : {}),
     }), { cwd: rc.dir, conversationId: `scheduled:${taskId}` }),
     // V 层旁路：台账（父 run 才有）+ 最近一次测试输出（J3 输入）
     // trace 落盘用 runId（不是 taskId）：否则同一任务的多次运行互相覆盖，事后无法还原这一次发生了什么

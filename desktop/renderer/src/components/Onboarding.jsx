@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { api, humanizeError } from '../lib/api';
+import { rememberModel } from '../lib/appState';
 import CreateProjectForm from './CreateProjectForm';
 import InlineAlert from './InlineAlert';
 import { IconCheck, IconCpu, IconGlobe, IconShield, IconZap } from './icons';
 import { useI18n } from '../i18n';
 import { loadEnabledFromLocal, setConnectorEnabledLocal, saveEnabledToLocal } from '../lib/ecosystemEnabled';
 import Bar from './ui/Bar';
+import Button from './ui/Button';
 
 // 顶层常量只存 i18n key，渲染时经 t() 求值（避免模块加载冻结译文）
 // B5（2026-10-16）：新增「安全默认档」步骤——新用户面对「审批档 × 沙箱档」组合
@@ -48,6 +50,12 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
   // 模型步骤状态（本地优先：默认填自己的 Key，凭证存本机）
   const [mode, setMode] = useState('custom'); // global | custom
   const [selectedGlobal, setSelectedGlobal] = useState(null);
+  // FIX-P07：本机已配置的 provider/model 才是本地模式的可选项来源。
+  // 此前 userProviders 由 App 传入却从未被消费（组件里只出现在解构里），而本地模式
+  // api.globalProviders() 恒返回 []（lib/api.js:203）⇒ 首聊只剩 Name/BaseURL/Key/ModelID
+  // 四个手填字段，本机早已配好的服务一个都选不到。
+  const [selectedLocal, setSelectedLocal] = useState(null); // { providerId, modelId, ... }
+  const [showNewForm, setShowNewForm] = useState(false);    // 手填表单默认收起（已有可选模型时）
   const [form, setForm] = useState({ name: '', base_url: '', api_key: '', model_id: '' });
   const [testing, setTesting] = useState(false);
   // 连接测试结果：{ ok, text }（ok 决定告警类型，避免用译文前缀做状态判断）
@@ -96,6 +104,23 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
   useEffect(() => {
     if (!sharedModelsAvailable && mode === 'global') { setMode('custom'); setTestResult(null); }
   }, [sharedModelsAvailable, mode]);
+
+  // FIX-P07：把「本机已配置的 provider/model」拍平成可直接点选的选项（不新增任何网络请求，
+  // 数据全部来自 App 已加载的 userProviders = api.providers() → 本机数据库 / models.json）。
+  // 兼容双轨字段：本机库回读是 model_id，models.json 来源可能带 modelId。
+  const localChoices = (Array.isArray(userProviders) ? userProviders : []).flatMap((p) => {
+    const models = Array.isArray(p?.models) ? p.models : [];
+    return models
+      .map((m) => ({
+        providerId: p.id,
+        providerName: p.name,
+        baseUrl: p.base_url,
+        modelId: m?.model_id || m?.modelId,
+        displayName: m?.display_name || m?.displayName || m?.model_id || m?.modelId,
+      }))
+      .filter((c) => !!c.modelId);
+  });
+  const hasLocalChoices = localChoices.length > 0;
 
   function next() { setError(''); setStep((s) => Math.min(s + 1, STEPS.length - 1)); }
   function back() { setError(''); setStep((s) => Math.max(s - 1, 0)); }
@@ -148,6 +173,9 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
       await onProviderAdded?.(); // 触发 App 刷新本机 providers
       const ok = await testConnection({ providerId: provider.id, isGlobal: false, baseUrl: form.base_url, modelId: form.model_id });
       if (!ok) { setError(t('onboarding.savedButTestFailed')); return; }
+      // 新配的模型同样要成为首聊的当前模型（与「选用已有模型」一致）
+      rememberModel({ provider: { id: provider.id }, model: { model_id: form.model_id } });
+      setSelectedLocal({ providerId: provider.id, modelId: form.model_id });
       next();
     } catch (err) {
       setError(t('onboarding.saveFailed', { msg: humanizeError(err) }));
@@ -161,6 +189,19 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
       baseUrl: selectedGlobal.baseUrl, modelId: selectedGlobal.modelId,
     });
     if (!ok) { setError(t('onboarding.testFailedSwitch')); return; }
+    next();
+  }
+
+  // FIX-P07：直接选用本机已配置的模型——不重复落库，只做连通性验证 + 记住选择，
+  // 让「首聊可用的模型」就是用户刚点的那个（而非启动时按列表顺序猜的默认值）。
+  async function confirmLocal() {
+    if (!selectedLocal) { setError(t('onboarding.pickLocalModel')); return; }
+    const ok = await testConnection({
+      providerId: selectedLocal.providerId, isGlobal: false,
+      baseUrl: selectedLocal.baseUrl, modelId: selectedLocal.modelId,
+    });
+    if (!ok) { setError(t('onboarding.localModelTestFailed')); return; }
+    rememberModel({ provider: { id: selectedLocal.providerId }, model: { model_id: selectedLocal.modelId } });
     next();
   }
 
@@ -218,6 +259,8 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
         expert: emp ? { id: emp.id, name: emp.name, title_cn: emp.title_cn, mission: emp.mission } : null,
         skillIds: installed,
         connectorIds: pickedConnectors,
+        // FIX-P07：把向导里选中的本机模型带回 App，作为首聊的当前模型
+        model: selectedLocal ? { providerId: selectedLocal.providerId, modelId: selectedLocal.modelId } : null,
       });
     } finally {
       setFinishing(false);
@@ -305,24 +348,65 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
                 )
               ) : (
                 <div className="space-y-2">
-                  <input placeholder={t('onboarding.namePlaceholder')} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
-                  <input placeholder={t('onboarding.urlPlaceholder')} value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })}
-                    className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
-                  <input placeholder="API Key" type="password" value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-                    className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
-                  <input placeholder={t('onboarding.modelIdPlaceholder')} value={form.model_id} onChange={(e) => setForm({ ...form, model_id: e.target.value })}
-                    className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
-                  {testResult && <InlineAlert type={testResult.ok ? 'info' : 'error'}>{testResult.text}</InlineAlert>}
-                  <div className="flex justify-between pt-2">
-                    <button onClick={back} className="text-text2 text-sm hover:text-text">{t('onboarding.back')}</button>
-                    {/* O1：无 Key 的用户不允许被卡死在模型步骤——先跳过，进入后可随时在设置中补配 */}
-                    <div className="flex items-center gap-3">
-                      <button onClick={next} className="text-text2 text-sm hover:text-text">{t('onboarding.skipConfigureLater')}</button>
-                      <button onClick={submitCustomProvider} disabled={testing}
-                        className="bg-accent-solid text-on-accent px-5 py-2 rounded-lg text-sm disabled:opacity-50">{testing ? t('onboarding.testing') : t('onboarding.saveAndTest')}</button>
-                    </div>
-                  </div>
+                  {/* FIX-P07：本机已配置的模型 → 一键选用（本地模式的主要入口）。
+                      用单选组而非按钮列表：单选语义由 input[type=radio] 承载，键盘与读屏可直接用；
+                      也不会把「一个可选集合」伪装成一排互不相干的操作按钮。 */}
+                  {hasLocalChoices && (
+                    <>
+                      <p className="text-xs text-text2">{t('onboarding.localModelHint')}</p>
+                      <div role="radiogroup" aria-label={t('onboarding.localModel')} className="space-y-2 max-h-[228px] overflow-y-auto pr-1">
+                        {localChoices.map((c) => {
+                          const on = selectedLocal?.providerId === c.providerId && selectedLocal?.modelId === c.modelId;
+                          return (
+                            <label key={`${c.providerId}-${c.modelId}`}
+                              className={`flex items-center justify-between gap-2 border rounded-xl px-4 py-3 cursor-pointer ${on ? 'border-accent bg-accent-bg' : 'border-border hover:bg-hover'}`}>
+                              <input type="radio" name="onboarding-local-model" className="sr-only"
+                                checked={on}
+                                onChange={() => { setSelectedLocal(c); setTestResult(null); }} />
+                              <span className="text-sm truncate">{c.providerName} / {c.displayName}</span>
+                              {on && <IconCheck size={16} className="text-accent shrink-0" />}
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {!showNewForm && testResult && <InlineAlert type={testResult.ok ? 'info' : 'error'}>{testResult.text}</InlineAlert>}
+                      {!showNewForm && (
+                        <div className="flex justify-between items-center pt-2">
+                          <Button variant="ghost" size="md" onClick={back}>{t('onboarding.back')}</Button>
+                          <div className="flex items-center gap-2">
+                            <Button variant="ghost" size="md" onClick={() => setShowNewForm(true)}>{t('onboarding.useNewProvider')}</Button>
+                            <Button variant="ghost" size="md" onClick={next}>{t('onboarding.skipConfigureLater')}</Button>
+                            <Button variant="primary" size="md" onClick={confirmLocal} disabled={!selectedLocal} loading={testing}>{testing ? t('onboarding.testing') : t('onboarding.testAndContinue')}</Button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {/* 手填新 provider：无本机模型时是主路径；有本机模型时由「改用新的 API Key」展开 */}
+                  {(!hasLocalChoices || showNewForm) && (
+                    <>
+                      {hasLocalChoices && <p className="text-xs text-text2 pt-1">{t('onboarding.newProviderHint')}</p>}
+                      <input placeholder={t('onboarding.namePlaceholder')} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
+                      <input placeholder={t('onboarding.urlPlaceholder')} value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })}
+                        className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
+                      <input placeholder="API Key" type="password" value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                        className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
+                      <input placeholder={t('onboarding.modelIdPlaceholder')} value={form.model_id} onChange={(e) => setForm({ ...form, model_id: e.target.value })}
+                        className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
+                      {testResult && <InlineAlert type={testResult.ok ? 'info' : 'error'}>{testResult.text}</InlineAlert>}
+                      <div className="flex justify-between items-center pt-2">
+                        {hasLocalChoices
+                          ? <Button variant="ghost" size="md" onClick={() => { setShowNewForm(false); setTestResult(null); }}>{t('onboarding.useExistingModel')}</Button>
+                          : <Button variant="ghost" size="md" onClick={back}>{t('onboarding.back')}</Button>}
+                        {/* O1：无 Key 的用户不允许被卡死在模型步骤——先跳过，进入后可随时在设置中补配 */}
+                        <div className="flex items-center gap-2">
+                          <Button variant="ghost" size="md" onClick={next}>{t('onboarding.skipConfigureLater')}</Button>
+                          <Button variant="primary" size="md" onClick={submitCustomProvider} loading={testing}>{testing ? t('onboarding.testing') : t('onboarding.saveAndTest')}</Button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
