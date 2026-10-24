@@ -176,6 +176,16 @@ function ensureIpc() {
   ipcMain.handle('entry:policy', async () => ({ ok: true, policy: router.loadPolicy() }));
 }
 
+// 注册时机（2026-10-24 真机修复）：
+//   此前只在首次 `agent:run` 里惰性调用 ensureIpc()，而渲染层的 EntryRouteNotice
+//   **一挂载**就调 `entry:policy` ⇒ 启动瞬间必然
+//   「No handler registered for 'entry:policy'」（真机日志实测，StrictMode 下报两次）。
+//   现在在**模块被 require 时**立即注册：electron 主进程里 ipcMain 在模块加载阶段就可用，
+//   不需要等 app ready；main.js 顶层已 require 本模块，故启动即注册。
+//   为什么不留惰性注册：惰性注册的触发者是「第一次运行」，而调用方是「一渲染」——
+//   两者的先后关系由 UI 结构决定，不是由这里能保证的。
+try { ensureIpc(); } catch (e) { console.warn('[entryRuntime] IPC 预注册失败：', e && e.message); }
+
 /**
  * `agent:run` 的**单行接线**：判定（fire-and-forget，绝不阻塞主链路）+ 启动本次运行。
  * 为什么合成一个函数：main.js 已顶 1500 行 code 硬档，接线必须只占一行。

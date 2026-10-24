@@ -38,7 +38,24 @@ function registerHandlers() {
     if (!artifactStore) return { ok: false, error: '工件子系统不可用（初始化失败）', code: 'UNAVAILABLE', artifacts: [] };
     try {
       const project = resolveProject(payload);
-      if (!project) return { ok: false, error: '项目不存在', code: 'NOT_FOUND', artifacts: [] };
+      if (!project) {
+        // 区分两种「拿不到项目」，因为处置完全不同（真机反馈：未绑定项目的会话里
+        // 面板/工具只看到「项目不存在」，用户以为是数据坏了、去查库）：
+        //   · 没传/没绑定  ⇒ 配置缺失，可引导（先在左侧选择或创建项目）
+        //   · 传了 id 却查不到 ⇒ 数据不一致，需要排查（项目被删/库回滚）
+        // 两者用不同 code，调用方与日志能分开统计。
+        const byId = String(payload.projectId || '').trim();
+        const byThread = String(payload.threadId || '').trim();
+        if (!byId && !byThread) {
+          return { ok: false, error: '当前会话未绑定项目（先在左侧选择或创建一个项目）', code: 'NO_PROJECT', artifacts: [] };
+        }
+        return {
+          ok: false,
+          error: byId ? '项目不存在（该 id 在项目库里查不到）' : '该会话尚未绑定项目',
+          code: 'NOT_FOUND',
+          artifacts: [],
+        };
+      }
       const artifacts = artifactStore.listArtifacts(project.projectId).map((a) => ({
         artifactId: a.artifactId,
         projectId: a.projectId,

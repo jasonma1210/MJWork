@@ -22,6 +22,7 @@
 //         传入 'continue' 会被显式降级为 'annotate' 并告警，绝不静默按未实现的行为运行。
 
 const { execFile } = require('node:child_process');
+const { shellEnv } = require('./tools/shellEnv');
 const runTrace = require('./runTrace');
 
 const VERIFY_DIFF_TIMEOUT_MS = 3000;
@@ -63,6 +64,7 @@ function execGit(args, cwd) {
     try {
       execFile('git', args, {
         cwd,
+        env: shellEnv(),
         timeout: VERIFY_DIFF_TIMEOUT_MS,
         maxBuffer: 4 * 1024 * 1024,
         windowsHide: true,

@@ -8,10 +8,14 @@ const { execFile } = require('child_process');
 
 const DEFAULT_LIMIT = 8;
 const BRANCH_PREFIX = 'mjcode/';
+// 打包版 GUI 进程继承的 PATH 极简（/usr/bin:/bin:/usr/sbin:/sbin）。
+// 与 main/tools/exec.js 同一口径注入完整 PATH：否则 Homebrew 装的 git（/opt/homebrew/bin）
+// 在打包版里 ENOENT ⇒ 所有 worktree 能力静默不可用（开发版因继承终端 PATH 复现不了）。
+const { shellEnv } = require('./tools/shellEnv');
 
 function git(cwd, args, timeout = 20000, input = null) {
   return new Promise((resolve) => {
-    const child = execFile('git', args, { cwd, timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+    const child = execFile('git', args, { cwd, timeout, maxBuffer: 20 * 1024 * 1024, env: shellEnv() }, (error, stdout, stderr) => {
       resolve({
         ok: !error,
         stdout: String(stdout || ''),

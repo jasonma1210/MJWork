@@ -8,6 +8,7 @@
 //   · 拒绝 = `git apply --reverse`：把这一块从工作区反向抹掉，索引不受影响。
 // 两个方向都必须带 `--unidiff-zero`：面板解析出的 hunk 是原样块，不保证带零上下文标记。
 const { spawn } = require('child_process');
+const { shellEnv } = require('../tools/shellEnv');
 const { needsApproval, approvalTarget } = require('../approval');
 const { denialText, approvalReasonOf } = require('../approvalChannel');
 const { audit } = require('../audit/auditLog');
@@ -80,7 +81,8 @@ async function guardDestructive(deps, toolKey, args, conversationId) {
 // git apply 从 stdin 读 patch；统一 15s 看门狗与错误形状（{stdout,stderr,exitCode,error}）。
 function gitApplyStdin(flags, cwd, patch) {
   return new Promise((resolve) => {
-    const child = spawn('git', ['apply', ...flags, '-'], { cwd });
+    // env: 打包版 PATH 极简 ⇒ Homebrew git 找不到（同 exec.js 的口径）
+    const child = spawn('git', ['apply', ...flags, '-'], { cwd, env: shellEnv() });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => { stdout += d.toString(); });
