@@ -13,9 +13,11 @@ const require = createRequire(import.meta.url);
 const DESKTOP = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 let pass = 0, total = 0;
-function check(name, fn) {
+// RB-2：helper 必须 async —— 同步 helper 收到 async 回调时 `fn()` 返回 Promise（truthy），
+// 断言失败变成 unhandled rejection：先打印 [PASS]、再被 process.exit(pass===total?0:1) 结算成 exit 0。
+async function check(name, fn) {
   total++;
-  try { fn(); console.log(`[PASS] ${name}`); pass++; }
+  try { await fn(); console.log(`[PASS] ${name}`); pass++; }
   catch (e) { console.error(`[FAIL] ${name} — ${e.message}`); process.exitCode = 1; }
 }
 
@@ -80,7 +82,7 @@ const {
   redactSecrets, redactModels, redactUserDataPath, previewDiagPackage,
 } = require(path.join(DESKTOP, 'main/diagExport.js'));
 
-check('zipStore：写读 round-trip 与 CRC 正确', () => {
+await check('zipStore：写读 round-trip 与 CRC 正确', () => {
   const entries = [
     { name: 'a.txt', data: 'hello 世界' },
     { name: 'dir/b.json', data: Buffer.from('{"k":1}') },
@@ -95,12 +97,12 @@ check('zipStore：写读 round-trip 与 CRC 正确', () => {
   assert.equal(crc32(Buffer.from('123456789')), 0xCBF43926); // 标准校验值
 });
 
-check('redact：递归剔除敏感字段', () => {
+await check('redact：递归剔除敏感字段', () => {
   const r = redact({ a: 1, api_key: 'x', nested: { keyEncrypted: 'y', env: { Z: 1 }, keep: 2 }, list: [{ Authorization: 'z', token: 't', ok: 1 }] });
   assert.deepEqual(r, { a: 1, nested: { keep: 2 }, list: [{ ok: 1 }] });
 });
 
-check('collectEntries：诊断域齐备 + 会话正文不进包', () => {
+await check('collectEntries：诊断域齐备 + 会话正文不进包', () => {
   const names = collectEntries(userData).map((e) => e.name).sort();
   for (const must of ['meta.json', 'audit/audit-log.jsonl', 'diagnostics/crash-2026-10-15.jsonl', 'traces/run-1.jsonl', 'logs/main-2026-10-15.log', 'config/local-data.json', 'config/models.json', 'config/mcp-servers.json']) {
     assert.ok(names.includes(must), `缺条目 ${must}：${names.join(', ')}`);
@@ -109,14 +111,14 @@ check('collectEntries：诊断域齐备 + 会话正文不进包', () => {
   assert.ok(!cfg.includes('用户会话标题') && !cfg.includes('用户消息正文'), '会话/消息正文泄漏进诊断包');
 });
 
-check('全包 grep：任何假密钥值都不出现（凭证剔除纪律）', () => {
+await check('全包 grep：任何假密钥值都不出现（凭证剔除纪律）', () => {
   const all = collectEntries(userData).map((e) => e.data.toString()).join('\n');
   for (const secret of [FAKE_KEY, FAKE_ENV_VALUE, FAKE_AUTH_HEADER, 'keyEncrypted', '"env"', 'enc:']) {
     assert.ok(!all.includes(secret), `诊断包含敏感值 ${secret}`);
   }
 });
 
-check('exportDiagnosticsZip：落盘可读 zip 且 meta 带版本', () => {
+await check('exportDiagnosticsZip：落盘可读 zip 且 meta 带版本', () => {
   const file = exportDiagnosticsZip();
   assert.ok(fs.existsSync(file), 'zip 未落盘');
   const meta = JSON.parse(readZip(fs.readFileSync(file)).find((e) => e.name === 'meta.json').data.toString());
@@ -124,14 +126,14 @@ check('exportDiagnosticsZip：落盘可读 zip 且 meta 带版本', () => {
   fs.rmSync(file);
 });
 
-check('IPC diag:export 注册且失败不抛', async () => {
+await check('IPC diag:export 注册且失败不抛', async () => {
   registerDiagExportIpc();
   assert.ok(electronStub._handlers.has('diag:export'), '未注册 diag:export');
 });
 
 // ── P0-7 新增断言 ──
 
-check('P0-7-a：redactSecrets 正则替换四类密钥形态', () => {
+await check('P0-7-a：redactSecrets 正则替换四类密钥形态', () => {
   const out = redactSecrets(`a ${EMBEDDED_SK} b ${EMBEDDED_BEARER} c ${EMBEDDED_GHP} d ${EMBEDDED_AKIA} e`);
   assert.ok(!out.includes(EMBEDDED_SK) && !out.includes(EMBEDDED_BEARER)
     && !out.includes(EMBEDDED_GHP) && !out.includes(EMBEDDED_AKIA), '密钥未被替换');
@@ -140,7 +142,7 @@ check('P0-7-a：redactSecrets 正则替换四类密钥形态', () => {
   assert.equal(redactSecrets('sk-short 与 BearerX 普通日志'), 'sk-short 与 BearerX 普通日志');
 });
 
-check('P0-7-a：审计/崩溃/trace/日志里的嵌入密钥全部被扫描剔除', () => {
+await check('P0-7-a：审计/崩溃/trace/日志里的嵌入密钥全部被扫描剔除', () => {
   const all = collectEntries(userData).map((e) => e.data.toString()).join('\n');
   for (const secret of [EMBEDDED_SK, EMBEDDED_BEARER, EMBEDDED_GHP, EMBEDDED_AKIA]) {
     assert.ok(!all.includes(secret), `非结构化内容泄漏密钥 ${secret}`);
@@ -148,7 +150,7 @@ check('P0-7-a：审计/崩溃/trace/日志里的嵌入密钥全部被扫描剔�
   assert.ok(all.includes('***REDACTED***'), '包内未见密钥替换痕迹');
 });
 
-check('P0-7-b：models.json 白名单——变体键名（accessKeyId/secretKey/apiKey）剔除，业务字段保留', () => {
+await check('P0-7-b：models.json 白名单——变体键名（accessKeyId/secretKey/apiKey）剔除，业务字段保留', () => {
   const raw = JSON.stringify({
     providers: [
       { name: 'g', base_url: 'https://g', apiKey: 'sk-leak-abcdefghijklmnop', accessKeyId: 'AKIA-LEAK', secretKey: 'topsecret', models: [{ model_id: 'm1' }] },
@@ -165,14 +167,14 @@ check('P0-7-b：models.json 白名单——变体键名（accessKeyId/secretKey/
   assert.ok(out.providers[1].channel === 'deepseek' && out.providers[1].url === 'https://g2', 'channel/url 应在白名单内');
 });
 
-check('P0-7-b：导出包的 config/models.json 只含白名单字段', () => {
+await check('P0-7-b：导出包的 config/models.json 只含白名单字段', () => {
   const models = collectEntries(userData).find((e) => e.name === 'config/models.json').data.toString();
   assert.ok(!models.includes(FAKE_KEY) && !models.includes(EMBEDDED_SK) && !models.includes('AKIA-LEAK-ID-123'), 'models.json 泄漏密钥');
   assert.ok(models.includes('"name": "g"') && models.includes('"base_url": "https://g"') && models.includes('m1'), '白名单字段缺失');
   assert.ok(models.includes('deepseek'), 'channel 字段应保留');
 });
 
-check('P0-7-c：meta.json userData 路径脱敏为 HOME 相对表达', () => {
+await check('P0-7-c：meta.json userData 路径脱敏为 HOME 相对表达', () => {
   assert.equal(redactUserDataPath(userData), `~${path.sep}Library${path.sep}Application Support${path.sep}MJCode`);
   const meta = JSON.parse(collectEntries(userData).find((e) => e.name === 'meta.json').data.toString());
   assert.ok(!meta.userData.includes(userData), 'meta.json 仍含绝对 userData 路径');
@@ -181,7 +183,7 @@ check('P0-7-c：meta.json userData 路径脱敏为 HOME 相对表达', () => {
   assert.equal(redactUserDataPath('/opt/other'), '/opt/other');
 });
 
-check('P0-7-c：diag:preview 返回将包含的内容清单', () => {
+await check('P0-7-c：diag:preview 返回将包含的内容清单', () => {
   const p = previewDiagPackage(userData);
   assert.ok(p.ok && Array.isArray(p.entries) && p.entries.length > 0, '清单为空');
   const names = p.entries.map((e) => e.name);
@@ -190,7 +192,7 @@ check('P0-7-c：diag:preview 返回将包含的内容清单', () => {
   assert.ok(p.totalBytes >= p.entries.reduce((n, e) => n + e.bytes, 0), '总体积不一致');
 });
 
-check('P0-7-c：diag:export 回带 contents 清单', () => {
+await check('P0-7-c：diag:export 回带 contents 清单', () => {
   registerDiagExportIpc();
   const h = electronStub._handlers.get('diag:export');
   return h({}).then((r) => {
