@@ -21,6 +21,30 @@ function check(name, fn) {
 }
 
 const ROOT = path.join(__dirname, '..');
+
+/**
+ * 从 `{` 起配对到它自己的 `}`（跳过字符串/模板串/注释里的括号）。
+ * 与 onboarding-model-apply 的 matchBrace 同口径。
+ * 定义在模块顶层而非下面的 async IIFE 体内：位置级 ratchet 以「语句归一化文本」为指纹，
+ * 塞进 IIFE 体内会让那条 IIFE 语句文本整条变样，被判成「新增 1 处裸 promise」。
+ */
+function matchBrace(src, startIdx) {
+  let depth = 0;
+  for (let i = startIdx; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const q = ch; i++;
+      while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === q) break; i++; }
+      continue;
+    }
+    if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); if (nl < 0) return -1; i = nl; continue; }
+    if (ch === '/' && src[i + 1] === '*') { const e = src.indexOf('*/', i + 2); if (e < 0) return -1; i = e + 1; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
 const built = esbuild.buildSync({
   entryPoints: [path.join(ROOT, 'renderer', 'src', 'lib', 'stopThreadWork.ts')],
   bundle: true, format: 'cjs', platform: 'node', write: false,
@@ -126,24 +150,6 @@ const G = (id, status, thread) => ({ group_id: id, status, thread_id: thread });
 
   // ── 源码形态：stop() 不能再有「静默空操作」 ──
   const hook = fs.readFileSync(path.join(ROOT, 'renderer', 'src', 'hooks', 'useAgentRun.ts'), 'utf8');
-
-  /** 从 `{` 起配对到它自己的 `}`（跳过字符串/模板串/注释里的括号）。与 onboarding-model-apply 的 matchBrace 同口径。 */
-  function matchBrace(src, startIdx) {
-    let depth = 0;
-    for (let i = startIdx; i < src.length; i++) {
-      const ch = src[i];
-      if (ch === '"' || ch === "'" || ch === '`') {
-        const q = ch; i++;
-        while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === q) break; i++; }
-        continue;
-      }
-      if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); if (nl < 0) return -1; i = nl; continue; }
-      if (ch === '/' && src[i + 1] === '*') { const e = src.indexOf('*/', i + 2); if (e < 0) return -1; i = e + 1; continue; }
-      if (ch === '{') depth++;
-      else if (ch === '}') { depth--; if (depth === 0) return i; }
-    }
-    return -1;
-  }
 
   check('stop() 注册表键统一 String()（写入侧就是 String(thread.id)）', () => {
     assert.match(hook, /runRegistry\.get\(String\(tid\)\)/);

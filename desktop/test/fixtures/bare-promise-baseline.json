@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "generatedAt": "2026-10-24T14:50:26.590Z",
+  "generatedAt": "2026-10-24T15:37:58.205Z",
   "note": "② ratchet 基线（位置级）：key = 文件#语句内容哈希；新增即红，消失请重跑 --write",
   "tiers": {
     "bareIife": 46,
@@ -368,9 +368,9 @@
       "line": 97,
       "text": "(async () => { const rejectResolvedPrivate = await new Promise((resolve) => { guard.guardedLookup('l"
     },
-    "test/stop-thread-work.test.js#4cd177c1bbe5": {
+    "test/stop-thread-work.test.js#eb0b02f82f7c": {
       "tier": "bareIife",
-      "line": 53,
+      "line": 77,
       "text": "(async () => { let aborted; const run = async (name, fn) => { total++; try { await fn(); console.log"
     },
     "test/subagent-events.test.mjs#40513540bdd2": {
