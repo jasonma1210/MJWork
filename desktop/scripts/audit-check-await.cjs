@@ -22,16 +22,23 @@
 //     已兜住(.catch) / 仅 .then / 真裸 —— 且 `.then(onFulfilled, onRejected)` **双参形态算已处理**
 //     （只找 `.catch` 会误伤，实测 `chrome-relay:61` 就是双参形态）。
 //
+// S12：--write 是这道闸唯一的后门，位置级指纹的代价是「改裸 async IIFE 内部也会红」⇒ 合法轮换会
+//   越来越频繁 ⇒ --write 会变成肌肉记忆 ⇒ 到那时一个**真实新增**的裸 promise 会被顺手吸收。
+//   故 --write 加理由门禁：按**文件**判定（不能用总数），某文件净增即必须给人工理由，否则拒绝写入。
+//
 // 用法：
 //   node scripts/audit-check-await.cjs               # 检查（① 硬红；② ratchet）
-//   node scripts/audit-check-await.cjs --write       # 现算并写入基线（清理存量后用它下调）
-//   node scripts/audit-check-await.cjs --self-test   # 反向用例 + 正向样本（见下）
+//   node scripts/audit-check-await.cjs --write [--reason="…"]   # 现算并写入基线（净增时理由必填）
+//   node scripts/audit-check-await.cjs --self-test   # 反向用例 + 正向样本 + --write 门禁用例（见下）
 //   node scripts/audit-check-await.cjs --verbose     # 打印 ② 的逐条明细
 //   未知参数 → exit 2（防「参数写错但 exit 0」的空过）
+//   --write 缺理由 → exit 3（基线保持原样，写一条 history 也不写）
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { spawnSync } = require('child_process');
 const espree = require('espree');
 
 const DESKTOP = path.resolve(__dirname, '..');
@@ -42,6 +49,11 @@ let TEST_DIR = DEFAULT_TEST_DIR;
 let BASELINE_PATH = DEFAULT_BASELINE;
 const HELPER_NAME_RE = /^check/i;
 const TIERS = ['bareIife', 'thenOnly'];
+// S12：净变化 ≤ 0 的 --write 自动记这条理由。真新增时**不许**照抄它（防止把真新增伪装成清理）。
+const CLEANUP_MARKER = '[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由';
+/** `文件#指纹` → 文件部分（指纹是 12 位 hex，文件名里不会出现 `#`） */
+const fileOf = (key) => key.slice(0, key.lastIndexOf('#'));
+const sha256Of = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
 const isFnNode = (n) => !!n && ['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(n.type);
 
@@ -314,19 +326,135 @@ function selfTest() {
     if (!pass) ok = false;
     console.log(`${pass ? '✔' : '✘'} [self-test] ${c.name}  → ①违规=${r1} 裸IIFE=${bare} 仅then=${thenOnly}`);
   }
+  console.log('   —— S12：--write 理由门禁（os.tmpdir() 隔离，不碰真实基线）——');
+  for (const c of selfTestWriteGate()) {
+    if (!c.pass) ok = false;
+    console.log(`${c.pass ? '✔' : '✘'} [self-test] ${c.name}  → ${c.detail}`);
+  }
   console.log(ok ? '[self-test] PASS' : '[self-test] FAIL：判据退化');
   return ok ? 0 : 1;
 }
 
+/**
+ * S12：--write 理由门禁的用例。全部在 os.tmpdir() 里跑（--root / --baseline 隔离开关），
+ * 绝不碰真实基线。反向用例（S5）尤其重要：证明加了后门之后「正门」没有被顺手锁死。
+ */
+function selfTestWriteGate() {
+  const results = [];
+  const push = (name, pass, detail) => results.push({ name, pass, detail });
+
+  // 夹具必须含一个 async-capable 的 check 调用点：否则「防空气化」守卫
+  // （asyncKw + promiseRet === 0 ⇒ 红）会把 exit 顶成 1，掩盖本用例真正要验的东西。
+  const FIXTURE = [
+    'async function check(name, fn) { await fn(); }',
+    "async function main() { await check('x', async () => {}); }",
+    'main();',
+    '(async () => { await Promise.resolve(1); })();',
+    '',
+  ].join('\n');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 's12-write-gate-'));
+  const fakePt = (file, id) => [`${file}#${id}`, { tier: 'bareIife', line: 1, text: '(async () => { … })();' }];
+
+  const mk = (label, baseline) => {
+    const dir = path.join(tmp, label);
+    fs.mkdirSync(path.join(dir, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'test', 'a.test.mjs'), FIXTURE);
+    const bp = path.join(dir, 'baseline.json');
+    fs.writeFileSync(bp, `${JSON.stringify(baseline, null, 2)}\n`);
+    return { dir, bp };
+  };
+  const run = (dir, bp, extra = []) => {
+    const r = spawnSync(process.execPath, [__filename, '--root', dir, '--baseline', bp, ...extra], { encoding: 'utf8' });
+    return { status: r.status, out: `${r.stdout || ''}${r.stderr || ''}` };
+  };
+  const readBase = (bp) => JSON.parse(fs.readFileSync(bp, 'utf8'));
+
+  try {
+    // S1：某文件净增、不带 --reason ⇒ exit=3，且基线字节未变（用 sha256 证明没被写坏）
+    {
+      const { dir, bp } = mk('s1', { version: 3, points: {} });
+      const before = sha256Of(fs.readFileSync(bp));
+      const r = run(dir, bp, ['--write']);
+      const after = sha256Of(fs.readFileSync(bp));
+      push('S1 --write 净增无理由 ⇒ exit=3 且基线字节未变',
+        r.status === 3 && before === after,
+        `status=${r.status}（期望 3）· sha256 前后${before === after ? '相等' : `不等 ${before.slice(0, 8)}→${after.slice(0, 8)}`}`);
+    }
+
+    // S2：同上但带 --reason ⇒ exit=0，history 里出现理由**原文**（逐字比对）
+    {
+      const reason = 'S12-S2 理由原文：这处是新增 fixture 用的，不是产品回归';
+      const { dir, bp } = mk('s2', { version: 3, points: {} });
+      const r = run(dir, bp, ['--write', `--reason=${reason}`]);
+      const b = readBase(bp);
+      const got = (b.history || [])[0];
+      push('S2 带 --reason ⇒ exit=0 且 history 存理由原文',
+        r.status === 0 && got && got.reason === reason,
+        `status=${r.status}（期望 0）· history[0].reason ${got && got.reason === reason ? '逐字一致' : `不符：${JSON.stringify(got && got.reason)}`}`);
+    }
+
+    // S3：净变化 ≤ 0（同文件 1 增 2 消）不带理由 ⇒ 放行，history 自动记清理标记
+    {
+      const { dir, bp } = mk('s3', { version: 3, points: Object.fromEntries([fakePt('test/a.test.mjs', 'old000000001'), fakePt('test/a.test.mjs', 'old000000002')]) });
+      const r = run(dir, bp, ['--write']);
+      const b = readBase(bp);
+      const got = (b.history || [])[0];
+      push('S3 净变化 ≤ 0 无理由 ⇒ 放行，history 记清理标记',
+        r.status === 0 && got && got.reason === CLEANUP_MARKER && got.net === -1,
+        `status=${r.status}（期望 0）· net=${got && got.net}（期望 -1）· reason ${got && got.reason === CLEANUP_MARKER ? '= 清理标记' : `不符：${JSON.stringify(got && got.reason)}`}`);
+    }
+
+    // S4：老基线没有 history 字段 ⇒ 读成空数组，不崩
+    {
+      const { dir, bp } = mk('s4', { points: Object.fromEntries([fakePt('test/a.test.mjs', 'old000000001')]) });
+      const r = run(dir, bp, ['--write']);
+      const b = readBase(bp);
+      push('S4 老基线缺 history 字段 ⇒ 读成空数组不崩',
+        r.status === 0 && Array.isArray(b.history) && b.history.length === 1,
+        `status=${r.status}（期望 0）· history ${Array.isArray(b.history) ? `数组 len=${b.history.length}` : '不是数组'}`);
+    }
+
+    // S5（最关键，反向验证）：造一个新增裸 promise 的 fixture，**不带 --write** 跑纯检查 ⇒ 仍 exit=1。
+    // 这条证明加的 --write 门禁没有削弱原判据 —— 后门加锁不能顺手把正门也锁死。
+    {
+      const { dir, bp } = mk('s5', { version: 3, points: {} });
+      const r = run(dir, bp, []);
+      const hit = /② ratchet 违规/.test(r.out);
+      push('S5 反向：新增裸 promise 不带 --write 纯检查 ⇒ 仍 exit=1（正门没被锁死）',
+        r.status === 1 && hit,
+        `status=${r.status}（期望 1）· 输出含「② ratchet 违规」=${hit}`);
+    }
+
+    // S6：总数净减但某文件净增（别处删 2 + 此处加 1）⇒ 仍要理由（总数口径会漏，按文件不会）
+    {
+      const { dir, bp } = mk('s6', { version: 3, points: Object.fromEntries([fakePt('test/b.test.mjs', 'old000000001'), fakePt('test/b.test.mjs', 'old000000002')]) });
+      const before = sha256Of(fs.readFileSync(bp));
+      const r1 = run(dir, bp, ['--write']);
+      const unchanged = before === sha256Of(fs.readFileSync(bp));
+      const r2 = run(dir, bp, ['--write', '--reason=S12-S6 别处删了 2 处，此处是真实新增']);
+      const b2 = readBase(bp);
+      const got = (b2.history || [])[0];
+      push('S6 总数净减但某文件净增 ⇒ 仍要理由（按文件判定，不看总数）',
+        r1.status === 3 && unchanged && r2.status === 0 && got && got.net === -1 && got.files.some((f) => f.delta > 0),
+        `无理由 status=${r1.status}（期望 3）· 基线未变=${unchanged} · 有理由 status=${r2.status}（期望 0）· net=${got && got.net} · 存在净增文件=${!!(got && got.files.some((f) => f.delta > 0))}`);
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  return results;
+}
+
 function parseArgs(argv) {
   const args = argv.slice(2);
-  const opts = { write: false, selfTest: false, verbose: false, root: null, baseline: null };
+  const opts = { write: false, selfTest: false, verbose: false, root: null, baseline: null, reason: null };
   const unknown = [];
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     if (a === '--write') opts.write = true;
     else if (a === '--self-test') opts.selfTest = true;
     else if (a === '--verbose') opts.verbose = true;
+    else if (a === '--reason') { opts.reason = args[++i] ?? ''; }
+    else if (a.startsWith('--reason=')) opts.reason = a.slice('--reason='.length);
     else if (a === '--root') { opts.root = args[++i]; }
     else if (a.startsWith('--root=')) opts.root = a.slice('--root='.length);
     else if (a === '--baseline') { opts.baseline = args[++i]; }
@@ -339,7 +467,7 @@ function parseArgs(argv) {
 function main(argv) {
   const { opts, unknown } = parseArgs(argv);
   if (unknown.length) {
-    console.error(`未知参数：${unknown.join(' ')}\n用法：node scripts/audit-check-await.cjs [--write|--self-test|--verbose] [--root=<dir>] [--baseline=<path>]`);
+    console.error(`未知参数：${unknown.join(' ')}\n用法：node scripts/audit-check-await.cjs [--write [--reason="…"]|--self-test|--verbose] [--root=<dir>] [--baseline=<path>]`);
     return 2;
   }
   // 反向用例必须能在 os.tmpdir() 里跑：--root / --baseline 覆盖扫描根与基线路径
@@ -406,6 +534,53 @@ function main(argv) {
   //   4. 文件消失（删除/改名）        ⇒ 提示 --write（不红，但必须打印，防改名绕过）
   const pointKey = (pt) => `${pt.file}#${pt.id}`;
   if (opts.write) {
+    const prev = loadBaseline();
+    const prevPoints = (prev && prev.points) || {};
+    const nowKeyList = points.map(pointKey);
+    const nowKeys = new Set(nowKeyList);
+    const addedKeys = nowKeyList.filter((k) => !(k in prevPoints));
+    const removedKeys = Object.keys(prevPoints).filter((k) => !nowKeys.has(k));
+
+    // ── S12：是否「真新增」必须按**文件**判定，不能用总数 ──
+    // 同文件 1 增 1 消 = 键轮换（内容改了，位置数没涨），是清理，不是新增；
+    // 而「别处删 2 处 + 此处新加 1 处」总数净减、但该文件确实净增，用总数会漏掉。
+    const addByFile = new Map();
+    const remByFile = new Map();
+    for (const k of addedKeys) addByFile.set(fileOf(k), (addByFile.get(fileOf(k)) || 0) + 1);
+    for (const k of removedKeys) remByFile.set(fileOf(k), (remByFile.get(fileOf(k)) || 0) + 1);
+    const deltaByFile = [...new Set([...addByFile.keys(), ...remByFile.keys()])].map((f) => {
+      const a = addByFile.get(f) || 0;
+      const r = remByFile.get(f) || 0;
+      return { file: f, added: a, removed: r, delta: a - r };
+    }).sort((x, y) => (y.delta - x.delta) || x.file.localeCompare(y.file));
+    const grew = deltaByFile.filter((d) => d.delta > 0);
+    const net = addedKeys.length - removedKeys.length;
+
+    let reason = CLEANUP_MARKER;
+    if (grew.length) {
+      const given = String(opts.reason ?? '').trim();
+      if (!given || given === CLEANUP_MARKER) {
+        console.error(`\n❌ --write 被拒绝：以下文件的裸 promise 位置**净增**，必须给出人工理由：`
+          + ` node scripts/audit-check-await.cjs --write --reason="为什么这里多了一处"`);
+        grew.forEach((d) => console.error(`  ${d.file}  新增 ${d.added} 处 / 消失 ${d.removed} 处 ⇒ 净 +${d.delta}`));
+        console.error('  理由不能为空，也不能照抄脚本的自动清理标记（那条只给「净变化 ≤ 0」用）。');
+        console.error(`  基线未改动：${path.relative(DESKTOP, BASELINE_PATH)}`);
+        return 3;
+      }
+      reason = given;
+    }
+
+    // history：老基线可能没有这个字段（读成空数组，不崩）
+    const history = Array.isArray(prev && prev.history) ? prev.history.slice() : [];
+    history.push({
+      at: new Date().toISOString(),
+      added: addedKeys.length,
+      removed: removedKeys.length,
+      net,
+      files: deltaByFile.filter((d) => d.delta !== 0),
+      reason,
+    });
+
     const snapshot = {
       version: 3,
       generatedAt: new Date().toISOString(),
@@ -413,10 +588,14 @@ function main(argv) {
       tiers: { bareIife: totals.bareIife, thenOnly: totals.thenOnly },
       files: perFile,
       points: Object.fromEntries(points.map((pt) => [pointKey(pt), { tier: pt.tier, line: pt.line, text: pt.text }])),
+      history,
     };
     fs.mkdirSync(path.dirname(BASELINE_PATH), { recursive: true });
     fs.writeFileSync(BASELINE_PATH, `${JSON.stringify(snapshot, null, 2)}\n`);
     console.log(`\n✅ 已写入基线 ${path.relative(DESKTOP, BASELINE_PATH)}（${Object.keys(perFile).length} 个文件 / ${points.length} 个位置）`);
+    console.log(`   新增 ${addedKeys.length} / 消失 ${removedKeys.length} / 净 ${net >= 0 ? `+${net}` : net}`
+      + `${grew.length ? ` · 净增文件 ${grew.length} 个（已要求理由）` : ' · 无文件净增（清理/轮换）'}`);
+    console.log(`   理由：${reason}`);
     return bad ? 1 : 0;
   }
 
