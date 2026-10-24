@@ -19,12 +19,13 @@ const CORE = path.join(DESKTOP, 'agent-core/index.js');
 
 let pass = 0;
 let total = 0;
+let fail = 0;
 // RB-2：helper 必须 async —— 同步 helper 收到 async 回调时 `fn()` 返回 Promise（truthy）并 `pass++`，
 // 断言失败退化成 unhandled rejection ⇒ 汇总先打印「PASS：N/N 项通过」，随后进程才崩（输出骗人）。
 async function check(name, fn) {
   total++;
   try { await fn(); console.log(`[PASS] ${name}`); pass++; }
-  catch (e) { console.error(`[FAIL] ${name} — ${e.message}`); process.exitCode = 1; }
+  catch (e) { fail++; console.error(`[FAIL] ${name} — ${e.message}`); process.exitCode = 1; }
 }
 
 const src = fs.readFileSync(CORE, 'utf8');
@@ -128,5 +129,5 @@ await check('行为验证：丢弃无 id 的 tool 消息', async () => {
   assert.equal(out.length, 0, '无 id 的 tool 消息应被丢弃');
 });
 
-console.log(`\nPASS：${pass}/${total} 项通过`);
+console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${total} 项通过`);
 })().catch((e) => { console.error(`[FAIL] 未捕获异常 — ${e && e.message}`); process.exitCode = 1; });
