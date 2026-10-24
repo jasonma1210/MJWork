@@ -363,80 +363,184 @@ function selfTestWriteGate() {
     fs.writeFileSync(bp, `${JSON.stringify(baseline, null, 2)}\n`);
     return { dir, bp };
   };
-  const run = (dir, bp, extra = []) => {
-    const r = spawnSync(process.execPath, [__filename, '--root', dir, '--baseline', bp, ...extra], { encoding: 'utf8' });
+  const run = (dir, bp, extra = [], script = __filename) => {
+    // NODE_PATH + cwd 必须带上：变异体会被复制到 tmpdir，而 `require('espree')` 是按脚本所在目录
+    // 解析的，不带这两项会 MODULE_NOT_FOUND 崩溃（exit 1）——那会让「对照实验」靠崩溃蒙混过关，
+    // 而不是真的证明目标逻辑被禁用后用例失守（实测踩过，差点当成结论报上去）。
+    const r = spawnSync(process.execPath, [script, '--root', dir, '--baseline', bp, ...extra], {
+      encoding: 'utf8',
+      cwd: DESKTOP,
+      env: { ...process.env, NODE_PATH: path.join(DESKTOP, 'node_modules') },
+    });
     return { status: r.status, out: `${r.stdout || ''}${r.stderr || ''}` };
   };
   const readBase = (bp) => JSON.parse(fs.readFileSync(bp, 'utf8'));
+  /** 变异体是否**真的跑起来了**（打印了常规横幅）——用来排除「靠崩溃蒙混过关」 */
+  const ranOk = (x) => /① helper 判据：/.test(x.out);
+
+  /** 跑一个场景。before/after 是基线文件的 sha256 —— 用来证明「到底写没写」。 */
+  const scenario = (label, baseline, extra = [], script = __filename) => {
+    const { dir, bp } = mk(label, baseline);
+    const before = sha256Of(fs.readFileSync(bp));
+    const r = run(dir, bp, extra, script);
+    return { ...r, bp, before, after: sha256Of(fs.readFileSync(bp)) };
+  };
+
+  /**
+   * 把本脚本复制到 tmpdir 并做**文本变异**，返回变异体路径。
+   * 用途：对照实验（见 M1-M4）—— 把被测逻辑的实现路径整条失效，
+   * 若对应的正向用例**仍然判通过**，说明它压根没打在这条路径上（被别的层兜住了），属漏判。
+   * 锚点必须**唯一**，否则变异可能改到别处而得出假结论。
+   */
+  const mutateScript = (label, pairs) => {
+    const whole = fs.readFileSync(__filename, 'utf8');
+    // 变异范围 = 全文件**去掉本自测函数的函数体**：
+    // 本函数的字面量里就含这些锚点，全文件替换会让唯一性检查误报 2 次（实测踩过），
+    // 也会把自测代码一起改坏。注意实现代码在 main() 里，位于本函数**之后**，所以两端都要变异。
+    // 用「前导换行 + 签名」定位：本函数自己的源码里也写着这两个签名字符串
+    // （在字符串字面量里，前面是引号不是换行），不带换行会定位到本函数内部（实测踩过）。
+    const cut = whole.indexOf('\nfunction selfTestWriteGate() {') + 1;
+    const parseIdx = whole.indexOf('\nfunction parseArgs(argv) {') + 1;
+    if (cut <= 0 || parseIdx <= cut) throw new Error('找不到自测函数区段，无法隔离变异范围');
+    let head = whole.slice(0, cut);
+    let tail = whole.slice(parseIdx); // main() 里的写分支/检查分支都在这段
+    const mid = whole.slice(cut, parseIdx); // 自测函数本体：原样保留
+    for (const [from, to] of pairs) {
+      const n = (head.split(from).length - 1) + (tail.split(from).length - 1);
+      if (n !== 1) throw new Error(`变异锚点在实现区段命中 ${n} 次（要求恰好 1 次）：${from}`);
+      head = head.replace(from, to);
+      tail = tail.replace(from, to);
+    }
+    const p = path.join(tmp, `mut-${label}.cjs`);
+    fs.writeFileSync(p, head + mid + tail);
+    return p;
+  };
+
+  const BASE_EMPTY = { version: 3, points: {} };
+  const BASE_A2 = { version: 3, points: Object.fromEntries([fakePt('test/a.test.mjs', 'old000000001'), fakePt('test/a.test.mjs', 'old000000002')]) };
+  const BASE_B2 = { version: 3, points: Object.fromEntries([fakePt('test/b.test.mjs', 'old000000001'), fakePt('test/b.test.mjs', 'old000000002')]) };
+  const BASE_A1_NO_HISTORY = { points: Object.fromEntries([fakePt('test/a.test.mjs', 'old000000001')]) };
+
+  // 判定函数：正向用例与「禁用实现后的对照实验」**共用同一条判定**，
+  // 保证两边打的是同一条路径（否则对照实验证明的东西跟正向用例不是一回事）。
+  const judgeRejected = (x) => x.status === 3 && x.before === x.after;
+  const judgeS5 = (x) => x.status === 1 && /② ratchet 违规/.test(x.out) && x.before === x.after;
+  const judgeS4 = (x) => {
+    if (x.status !== 0) return false;
+    const h = readBase(x.bp).history;
+    return Array.isArray(h) && h.length === 1;
+  };
 
   try {
     // S1：某文件净增、不带 --reason ⇒ exit=3，且基线字节未变（用 sha256 证明没被写坏）
     {
-      const { dir, bp } = mk('s1', { version: 3, points: {} });
-      const before = sha256Of(fs.readFileSync(bp));
-      const r = run(dir, bp, ['--write']);
-      const after = sha256Of(fs.readFileSync(bp));
+      const x = scenario('s1', BASE_EMPTY, ['--write']);
       push('S1 --write 净增无理由 ⇒ exit=3 且基线字节未变',
-        r.status === 3 && before === after,
-        `status=${r.status}（期望 3）· sha256 前后${before === after ? '相等' : `不等 ${before.slice(0, 8)}→${after.slice(0, 8)}`}`);
+        judgeRejected(x),
+        `status=${x.status}（期望 3）· sha256 前后${x.before === x.after ? '相等' : '不等（基线被写了！）'}`);
     }
 
     // S2：同上但带 --reason ⇒ exit=0，history 里出现理由**原文**（逐字比对）
     {
       const reason = 'S12-S2 理由原文：这处是新增 fixture 用的，不是产品回归';
-      const { dir, bp } = mk('s2', { version: 3, points: {} });
-      const r = run(dir, bp, ['--write', `--reason=${reason}`]);
-      const b = readBase(bp);
-      const got = (b.history || [])[0];
+      const x = scenario('s2', BASE_EMPTY, ['--write', `--reason=${reason}`]);
+      const got = (readBase(x.bp).history || [])[0];
       push('S2 带 --reason ⇒ exit=0 且 history 存理由原文',
-        r.status === 0 && got && got.reason === reason,
-        `status=${r.status}（期望 0）· history[0].reason ${got && got.reason === reason ? '逐字一致' : `不符：${JSON.stringify(got && got.reason)}`}`);
+        x.status === 0 && got && got.reason === reason,
+        `status=${x.status}（期望 0）· history[0].reason ${got && got.reason === reason ? '逐字一致' : `不符：${JSON.stringify(got && got.reason)}`}`);
     }
 
     // S3：净变化 ≤ 0（同文件 1 增 2 消）不带理由 ⇒ 放行，history 自动记清理标记
     {
-      const { dir, bp } = mk('s3', { version: 3, points: Object.fromEntries([fakePt('test/a.test.mjs', 'old000000001'), fakePt('test/a.test.mjs', 'old000000002')]) });
-      const r = run(dir, bp, ['--write']);
-      const b = readBase(bp);
-      const got = (b.history || [])[0];
+      const x = scenario('s3', BASE_A2, ['--write']);
+      const got = (readBase(x.bp).history || [])[0];
       push('S3 净变化 ≤ 0 无理由 ⇒ 放行，history 记清理标记',
-        r.status === 0 && got && got.reason === CLEANUP_MARKER && got.net === -1,
-        `status=${r.status}（期望 0）· net=${got && got.net}（期望 -1）· reason ${got && got.reason === CLEANUP_MARKER ? '= 清理标记' : `不符：${JSON.stringify(got && got.reason)}`}`);
+        x.status === 0 && got && got.reason === CLEANUP_MARKER && got.net === -1,
+        `status=${x.status}（期望 0）· net=${got && got.net}（期望 -1）· reason ${got && got.reason === CLEANUP_MARKER ? '= 清理标记' : `不符：${JSON.stringify(got && got.reason)}`}`);
     }
 
     // S4：老基线没有 history 字段 ⇒ 读成空数组，不崩
     {
-      const { dir, bp } = mk('s4', { points: Object.fromEntries([fakePt('test/a.test.mjs', 'old000000001')]) });
-      const r = run(dir, bp, ['--write']);
-      const b = readBase(bp);
+      const x = scenario('s4', BASE_A1_NO_HISTORY, ['--write']);
       push('S4 老基线缺 history 字段 ⇒ 读成空数组不崩',
-        r.status === 0 && Array.isArray(b.history) && b.history.length === 1,
-        `status=${r.status}（期望 0）· history ${Array.isArray(b.history) ? `数组 len=${b.history.length}` : '不是数组'}`);
+        judgeS4(x),
+        `status=${x.status}（期望 0）· history ${judgeS4(x) ? '数组 len=1' : `异常：${JSON.stringify(readBase(x.bp).history)}`}`);
     }
 
     // S5（最关键，反向验证）：造一个新增裸 promise 的 fixture，**不带 --write** 跑纯检查 ⇒ 仍 exit=1。
     // 这条证明加的 --write 门禁没有削弱原判据 —— 后门加锁不能顺手把正门也锁死。
+    // before/after 也纳入判定：确保它走的是**纯检查路径**，没有绕道触发写路径把基线改了。
     {
-      const { dir, bp } = mk('s5', { version: 3, points: {} });
-      const r = run(dir, bp, []);
-      const hit = /② ratchet 违规/.test(r.out);
-      push('S5 反向：新增裸 promise 不带 --write 纯检查 ⇒ 仍 exit=1（正门没被锁死）',
-        r.status === 1 && hit,
-        `status=${r.status}（期望 1）· 输出含「② ratchet 违规」=${hit}`);
+      const x = scenario('s5', BASE_EMPTY, []);
+      push('S5 反向：新增裸 promise 不带 --write 纯检查 ⇒ 仍 exit=1（正门没被锁死，且未落笔）',
+        judgeS5(x),
+        `status=${x.status}（期望 1）· 输出含「② ratchet 违规」=${/② ratchet 违规/.test(x.out)} · 基线字节未变=${x.before === x.after}`);
     }
 
     // S6：总数净减但某文件净增（别处删 2 + 此处加 1）⇒ 仍要理由（总数口径会漏，按文件不会）
     {
-      const { dir, bp } = mk('s6', { version: 3, points: Object.fromEntries([fakePt('test/b.test.mjs', 'old000000001'), fakePt('test/b.test.mjs', 'old000000002')]) });
-      const before = sha256Of(fs.readFileSync(bp));
-      const r1 = run(dir, bp, ['--write']);
-      const unchanged = before === sha256Of(fs.readFileSync(bp));
-      const r2 = run(dir, bp, ['--write', '--reason=S12-S6 别处删了 2 处，此处是真实新增']);
-      const b2 = readBase(bp);
+      const x1 = scenario('s6a', BASE_B2, ['--write']);
+      const x2 = scenario('s6b', BASE_B2, ['--write', '--reason=S12-S6 别处删了 2 处，此处是真实新增']);
+      const b2 = readBase(x2.bp);
       const got = (b2.history || [])[0];
       push('S6 总数净减但某文件净增 ⇒ 仍要理由（按文件判定，不看总数）',
-        r1.status === 3 && unchanged && r2.status === 0 && got && got.net === -1 && got.files.some((f) => f.delta > 0),
-        `无理由 status=${r1.status}（期望 3）· 基线未变=${unchanged} · 有理由 status=${r2.status}（期望 0）· net=${got && got.net} · 存在净增文件=${!!(got && got.files.some((f) => f.delta > 0))}`);
+        judgeRejected(x1) && x2.status === 0 && got && got.net === -1 && got.files.some((f) => f.delta > 0),
+        `无理由 status=${x1.status}（期望 3）· 基线未变=${x1.before === x1.after} · 有理由 status=${x2.status}（期望 0）`
+        + ` · net=${got && got.net} · 存在净增文件=${!!(got && got.files.some((f) => f.delta > 0))}`);
+    }
+
+    // ── 以下 M1-M4 是**对照实验**（gate-s8a 的 N3 教训：冗余防御会让单点反向验证失真）──
+    // 做法：把被测逻辑的实现路径整条失效，再看对应正向用例是否**失守**。
+    // 失守 = 该用例确实打在这条路径上；仍然通过 = 它被别的层兜住了，是漏判，必须报红。
+
+    // M1：把理由校验整条短路 ⇒ S1 必须失守（否则 S1 根本没验到理由校验）
+    {
+      const script = mutateScript('m1', [['if (!given || given === CLEANUP_MARKER) {', 'if (false) {']]);
+      const x = scenario('m1', BASE_EMPTY, ['--write'], script);
+      push('M1 对照：短路理由校验 ⇒ S1 必须失守（证明 S1 打在理由校验上）',
+        ranOk(x) && x.status === 0 && x.before !== x.after,
+        `变异体跑起来了=${ranOk(x)} · status=${x.status}（期望 0）· 基线被改动=${x.before !== x.after}（期望 true）`
+        + ` ⇒ 失败形态=${x.status === 0 && x.before !== x.after ? '**静默放行**（正是这道闸要防的：无理由也照写）' : '非预期形态'}`
+        + ` · S1 ${judgeRejected(x) ? '**仍判通过 = 漏判**' : '正确失守'}`);
+    }
+
+    // M2：把「按文件判定」换成「按总数判定」⇒ S6 必须失守。
+    // S6 正是「总数净减但某文件净增」的形态，这条对照证明 S6 打在按文件逻辑上，不是碰巧红。
+    {
+      // 注意：不能变异成 `net > 0 ? …` —— net 在 grew 之后声明，会 TDZ 崩溃，
+      // 那就变成「靠崩溃蒙混过关」而不是真的换成总数口径（实测踩过）。
+      const script = mutateScript('m2', [['const grew = deltaByFile.filter((d) => d.delta > 0);',
+        'const grew = addedKeys.length > removedKeys.length ? deltaByFile : [];']]);
+      const x = scenario('m2', BASE_B2, ['--write'], script);
+      push('M2 对照：按文件判定改成按总数 ⇒ S6 必须失守（证明 S6 打在按文件逻辑上）',
+        ranOk(x) && x.status === 0 && x.before !== x.after,
+        `变异体跑起来了=${ranOk(x)} · status=${x.status}（期望 0）· 基线被改动=${x.before !== x.after}（期望 true）`
+        + ` ⇒ 失败形态=${x.status === 0 && x.before !== x.after ? '**静默放行**（总数净减 ⇒ 漏掉 a 文件净增）' : '非预期形态'}`
+        + ` · S6 ${judgeRejected(x) ? '**仍判通过 = 漏判**' : '正确失守'}`);
+    }
+
+    // M3：把**检查路径**（写路径之外那条）的 added 整条置空 ⇒ S5 必须失守。
+    // added/removed 在脚本里有两条实现路径（写基线时算一次、纯检查时算一次，见 541/609），
+    // 只验一条就宣称「新增即红」成立是不行的 —— 这条证明检查路径那一条也被 S5 验到了。
+    {
+      const script = mutateScript('m3', [['const added = [...nowKeys.keys()].filter((k) => !(k in basePoints));', 'const added = [];']]);
+      const x = scenario('m3', BASE_EMPTY, [], script);
+      push('M3 对照：置空检查路径的 added ⇒ S5 必须失守（两条 added 路径都要验到）',
+        ranOk(x) && x.status === 0 && !/② ratchet 违规/.test(x.out),
+        `变异体跑起来了=${ranOk(x)} · status=${x.status}（期望 0）· 含「② ratchet 违规」=${/② ratchet 违规/.test(x.out)}（期望 false）`
+        + ` ⇒ 失败形态=${x.status === 0 ? '**静默变绿**（正门被锁死，新增也不报）' : '非预期形态'}`
+        + ` · S5 ${judgeS5(x) ? '**仍判通过 = 漏判**' : '正确失守'}`);
+    }
+
+    // M4：去掉「老基线缺 history」的容错 ⇒ S4 必须失守（崩掉），证明 S4 打在这条容错上
+    {
+      const script = mutateScript('m4', [['Array.isArray(prev && prev.history) ? prev.history.slice() : []', 'prev.history.slice()']]);
+      const x = scenario('m4', BASE_A1_NO_HISTORY, ['--write'], script);
+      push('M4 对照：去掉 history 缺失容错 ⇒ S4 必须失守（证明 S4 打在这条容错上）',
+        ranOk(x) && x.status !== 0,
+        `变异体跑起来了=${ranOk(x)}（横幅已打印 ⇒ 崩在容错那一步，不是加载失败）· status=${x.status}（期望非 0）`
+        + ` ⇒ 失败形态=${x.status !== 0 ? '**明确崩溃**（老基线缺 history 就直接炸）' : '非预期形态'}`
+        + ` · S4 ${judgeS4(x) ? '**仍判通过 = 漏判**' : '正确失守'}`);
     }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
