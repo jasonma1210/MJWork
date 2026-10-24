@@ -247,6 +247,19 @@ function extractObjectEntries(relPath, anchorRe, label) {
   return { ...ctx, ok: true, entries, file: relPath };
 }
 
+// 抽出除字符串字面量以外的内容（用于检测注释残留）
+function stripStrings(s) {
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '"' || c === "'" || c === '`') { i = skipString(s, i); continue; }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
 // 抽取对象里某个数字属性的值：`artifactKind: { max: 16, ... }` 的 16
 function extractNumericProp(relPath, anchorRe, propName, label) {
   const ctx = extractObjectEntries(relPath, anchorRe, label);
@@ -306,6 +319,34 @@ check('A3 从 artifactProduct.js 抽出 KIND_PRODUCTS 的键集（非空）',
 check('A9 三个副本的锚点各自唯一（文件内不存在同名第二个声明）',
   storeKinds.ok && modalKinds.ok && productKinds.ok && initDefaults.ok,
   `store=${storeKinds.count} modal=${modalKinds.count} kindProducts=${productKinds.count} defaults=${initDefaults.count}（均须为 1）`);
+
+// ── A10：抽取窗口不得错位（中间结果不变量）────────────────────────────────
+// 为什么必须有这一条（2026-10-24，与 agent-harness-coder 的对照结论）：
+//   本抽取器有**两层**各自跳过注释——`matchBrace` 的配对层、`splitTopLevel` 的切元素层。
+//   这两层互为冗余：只让配对层的注释处理失效时，切元素层会把提前闭合产生的脏片段
+//   再清洗一遍，**最终断言照样全绿**。也就是说「最终结论正确」并不能证明「配对没错位」，
+//   而错位意味着抽取窗口覆盖了本不该覆盖的范围——今天碰巧被下游洗干净，明天换个注释
+//   位置就可能抽到相邻代码。
+//   因此对**中间结果**直接下判：配对得到的原始片段里，字符串之外不得残留任何注释标记。
+//   残留 = 窗口已经吃到注释里 = 立即红，不等下游掩盖。
+//   这是「形态断言」：不看最终结论对不对，而是看到达结论的路径形状对不对。
+for (const [label, ex] of [
+  ['artifactStore.ARTIFACT_KINDS', storeKinds],
+  ['ProjectCreateModal.ARTIFACT_KINDS', modalKinds],
+  ['artifactProduct.KIND_PRODUCTS', productKinds],
+  ['projectSpaceInit.DEFAULT_ARTIFACT_KIND', initDefaults],
+]) {
+  if (!ex.ok) {
+    check(`A10 ${label} 的抽取窗口未错位（原始片段无注释残留）`, false, `❗上游抽取未命中：${ex.error}`);
+    continue;
+  }
+  const residue = stripStrings(ex.body).match(/\/\/|\/\*/);
+  check(`A10 ${label} 的抽取窗口未错位（原始片段无注释残留）`,
+    residue === null,
+    residue === null
+      ? `片段 ${JSON.stringify(ex.body.slice(0, 60))}${ex.body.length > 60 ? '…' : ''} 内无注释标记`
+      : `片段里残留「${residue[0]}」⇒ 配对窗口已错位吃到注释里：${JSON.stringify(ex.body.slice(0, 120))}`);
+}
 
 // ── A4：三集合严格相等 ────────────────────────────────────────────────────
 function setDiff(a, b) {
