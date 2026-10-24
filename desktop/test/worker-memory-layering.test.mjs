@@ -11,11 +11,15 @@
 //     ③ **别的会话的 session 记忆会漏进 Worker**（同 space 下的所有 scope 混在一起返回）。
 //   第 ③ 条是这条缺陷最严重的形态：会话级工作现场本该会话隔离，却在派发时被带进无人值守任务。
 //
-// 本套件锁三件事：
+// 本套件锁四件事：
 //   ① 行为：传 scopes + conversationId 后，**别的会话的 session 记忆不再出现**（而旧路径会漏）；
 //   ② 行为：session 层只在有会话归属时才收；团队层只在有 teamId 时才收（不注入无法归属的记忆）；
 //   ③ 接线：`buildTaskPrompt` 真的把 `scopes` 与 `conversationId: group.thread_id` 传下去了
 //      （装配是闭包，只能源码形态断言；但配合 ①② 的行为断言，语义是完整的）。
+//   ④ 行为（T-05 本轮补）：**每层配额真封顶**。
+//      头部一直写着要锁「每层配额不生效」，但此前 10 条断言里没有一条检查「每层取几条」——
+//      变异验证 M4 把 LAYER_QUOTA 全放大到 50，本套件仍 10/10 全绿（同变异下 memory-scope /
+//      memory-team 都红了）。「库房里有一条自称锁配额的门禁」是最坏的一种安全感，故补行为断言。
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -24,7 +28,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { openDbAsync } = require(path.resolve(import.meta.dirname, '../main/db/index.js'));
-const { MemoryManager } = require(path.resolve(import.meta.dirname, '../main/memory/index.js'));
+const { MemoryManager, LAYER_QUOTA } = require(path.resolve(import.meta.dirname, '../main/memory/index.js'));
 
 let pass = 0;
 let fail = 0;
@@ -97,6 +101,42 @@ const check = (name, ok, detail = '') => {
       /conversationId:\s*groupThreadId/.test(seg) && /groupThreadId\s*=\s*group\.thread_id/.test(seg));
     check('③ 有会话才收 session 层，无会话时 scopes 不含 session',
       /groupThreadId\s*\?\s*\['session',\s*'project',\s*'global'\]\s*:\s*\['project',\s*'global'\]/.test(seg));
+  }
+
+  // ── ④ 每层配额真封顶（T-05：此前无一条断言检查配额）──
+  // 判据靠「写入量 > 配额」制造封顶条件，**刻意不用 topK 断言配额**：
+  // topK 给到硬上限（50）让配额成为唯一约束；若用 topK 断言，两个口径会混在一起
+  // （T-01 修好后 topK 也生效了，用小的 topK 断言配额会误判为「配额生效」）。
+  {
+    const qSpace = '/proj/quota-probe';
+    const qPut = (extra) => mem.remember({
+      spaceId: qSpace, domain: 'global_knowledge', importance: 0.9, source: 'user_input', ...extra,
+    });
+    for (let i = 0; i < 5; i += 1) qPut({ scope: 'project', content: `配额探针-项目 ${i}` });
+    for (let i = 0; i < 3; i += 1) qPut({ scope: 'global', content: `配额探针-全局 ${i}` });
+    const capped = mem.recallContents({ spaceId: qSpace, scopes: ['project', 'global'], topK: 50 });
+    const byScope = (s) => capped.filter((m) => m.scope === s).length;
+    const sumQuota = LAYER_QUOTA.project + LAYER_QUOTA.global;
+    check('④ project 层库存 5 条但只召回配额条数（配额失效则返回 5）',
+      byScope('project') === LAYER_QUOTA.project,
+      `实取 ${byScope('project')} / 配额 ${LAYER_QUOTA.project} / 库存 5`);
+    check('④ global 层库存 3 条但只召回配额条数（配额失效则返回 3）',
+      byScope('global') === LAYER_QUOTA.global,
+      `实取 ${byScope('global')} / 配额 ${LAYER_QUOTA.global} / 库存 3`);
+    check('④ 分层召回总数恰为配额和，且不超过 Σ LAYER_QUOTA',
+      capped.length === sumQuota && capped.length <= sumQuota,
+      `实取 ${capped.length} / 配额和 ${sumQuota}`);
+
+    // ── ④-b 小 topK 也必须生效（T-01 回归保护）──
+    // 独立验证查出的盲区：上面三条都用 topK=50，**只能证明配额封顶，证明不了 topK 生效**。
+    // 原缺陷是「分层模式完全丢弃 topK」，而 topK ≥ 配额和 时丢弃与否结果完全相同 ⇒ 抓不到。
+    // 这里必须用**小于配额和**的 topK（1 / 2），否则断言在缺陷复现时同样是绿的。
+    const t1 = mem.recallContents({ spaceId: qSpace, scopes: ['project', 'global'], topK: 1 });
+    check('④-b 分层模式 topK=1 只返回 1 条（原缺陷：被丢弃 ⇒ 返回配额和条）',
+      t1.length === 1, `实取 ${t1.length} 条`);
+    const t2 = mem.recallContents({ spaceId: qSpace, scopes: ['project', 'global'], topK: 2 });
+    check('④-b 分层模式 topK=2 只返回 2 条',
+      t2.length === 2, `实取 ${t2.length} 条`);
   }
 
   console.log(`\nworker-memory-layering: ${pass}/${pass + fail} 通过`);

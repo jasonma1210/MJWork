@@ -1,0 +1,113 @@
+{
+  "$comment": "双入口策略配置（设计文档 §10）。所有阈值与开关都在这里，代码里不写死——默认值可调而不改代码，与 desktop/shared/rolePolicyData.json 同型。改动需同步 desktop/test/entry-router.test.mjs 的默认值断言。",
+  "version": 1,
+  "new": {
+    "autoDag": {
+      "enabled": true,
+      "ruleOnly": false,
+      "rule": {
+        "$comment": "L0 规则层：判据是**任务结构**（可并行 / 顺序依赖 / 工具种类 / 需中心化验证），不是长度或难度。对标 arXiv:2512.08296（可分解 +80.8% / 顺序规划 -70.0%）。",
+        "toolKindThreshold": 16,
+        "parallelizablePatterns": ["互不依赖", "相互独立", "各自", "分别", "并行", "同时", "各个", "互不影响"],
+        "sequentialPatterns": ["先.*再", "然后", "接着", "之后", "依次", "逐步", "第一步", "第二步", "第三步"],
+        "centralizedVerifyPatterns": ["汇总", "交叉核对", "对比", "评审", "复核", "整合", "统一结论", "交叉验证"],
+        "scheduledPatterns": ["每天", "每周", "每月", "定时", "定期", "每隔", "每天早上", "每天晚上", "例行"],
+        "manualTeamPatterns": ["组建.{0,8}(团队|小组|工作组|队伍)", "拉.{0,6}(团队|小组|队伍)", "组.{0,4}(团队|小组|队伍)"],
+        "toolKindPatterns": [
+          { "kind": "read_file", "patterns": ["读文件", "阅读文件", "看代码", "读代码", "读取源码", "阅读文档"] },
+          { "kind": "list_dir", "patterns": ["列目录", "目录结构", "看看有哪些文件", "文件清单"] },
+          { "kind": "grep", "patterns": ["搜索内容", "grep", "查找代码", "全局搜索"] },
+          { "kind": "glob", "patterns": ["查找文件", "glob", "按文件名找"] },
+          { "kind": "write_file", "patterns": ["写文件", "生成文件", "新建文件", "写一份", "写个文档"] },
+          { "kind": "edit_file", "patterns": ["改代码", "修改文件", "编辑文件", "重构代码"] },
+          { "kind": "shell", "patterns": ["执行命令", "跑命令", "运行脚本", "命令行", "shell", "跑测试", "构建项目"] },
+          { "kind": "git", "patterns": ["提交代码", "拉分支", "git", "合并分支", "查看差异"] },
+          { "kind": "web_search", "patterns": ["联网搜索", "搜索引擎", "网上搜", "查资料", "搜索结果"] },
+          { "kind": "web_fetch", "patterns": ["抓取网页", "抓取正文", "下载页面", "读取网页"] },
+          { "kind": "browser", "patterns": ["浏览器", "打开网页操作", "点按钮", "填表单", "截图网页"] },
+          { "kind": "doc_gen", "patterns": ["word", "excel", "ppt", "pptx", "docx", "xlsx", "幻灯片", "表格文件", "pdf"] },
+          { "kind": "latex", "patterns": ["latex", "排版"] },
+          { "kind": "code_exec", "patterns": ["运行代码", "执行脚本", "沙箱里跑"] },
+          { "kind": "http_request", "patterns": ["发请求", "调用接口", "http 请求", "post 到"] },
+          { "kind": "sqlite", "patterns": ["查数据库", "sqlite", "本地数据库"] },
+          { "kind": "artifact", "patterns": ["工件", "artifact", "章节文档", "长文档"] },
+          { "kind": "notify", "patterns": ["发通知", "桌面通知", "提醒我"] },
+          { "kind": "clipboard", "patterns": ["剪贴板"] },
+          { "kind": "mcp", "patterns": ["mcp", "连接器", "第三方服务"] },
+          { "kind": "skill", "patterns": ["技能", "skill"] },
+          { "kind": "todo", "patterns": ["任务清单", "待办", "todo"] }
+        ]
+      },
+      "modelLayer": {
+        "$comment": "L1 模型层：仅在规则层判 unknown 时调用；输出**离散路由类别**（不打难度分，对标 n4n triage + OpenAI 指南）。失败/超时/输出非法一律降级 simple_chat（误启多 agent 比漏启更伤）。",
+        "routeClasses": ["simple_chat", "multi_step_single", "parallel_team", "manual_team", "scheduled"],
+        "maxInTokens": 1500,
+        "maxOutTokens": 200,
+        "timeoutMs": 15000,
+        "temperature": 0,
+        "minConfidence": 0.6,
+        "failOpenTo": "simple_chat"
+      },
+      "maxTeamSize": 5,
+      "costNotice": true,
+      "showUpgradeNotice": true,
+      "autoUpgrade": false
+    },
+    "confirm": {
+      "$comment": "确认点三档（设计文档 §7.3）。C0 静默执行 / C1 确认卡（默认档）/ C2 阻断+引导。",
+      "c0MinConfidence": 0.75,
+      "c1MinConfidence": 0.5,
+      "toolKindsC0Max": 8,
+      "toolKindsC1Max": 16,
+      "teamSizeC0Max": 3,
+      "teamSizeC1Max": 5,
+      "autoUpgradeEnabled": false,
+      "preSplitBeforeConfirm": true,
+      "maxPreSplitTasks": 8,
+      "tokenMultiplePerMember": 1,
+      "wallClockPerMemberMs": 60000
+    },
+    "candidateTeamMode": "advisory",
+    "memory": {
+      "scopes": ["session", "team", "project", "global"],
+      "topK": 7,
+      "passQuery": true
+    }
+  },
+  "assistant": {
+    "aiTeamDraft": {
+      "enabled": true,
+      "defaultSize": 3,
+      "maxSize": 8,
+      "preferCatalog": true,
+      "requireConfirm": true,
+      "catalogMatchMinScore": 0.5,
+      "coverageCheck": true,
+      "minScoreForCatalogPick": 0.25,
+      "capabilityToolAliases": {
+        "read": ["read"],
+        "write": ["write", "edit"],
+        "execute": ["bash"],
+        "search": ["grep", "glob"],
+        "web": ["web"],
+        "browser": ["browser"]
+      },
+      "capabilityLabels": {
+        "read": "读文件",
+        "write": "写文件",
+        "execute": "执行命令",
+        "search": "搜索代码",
+        "web": "联网查证",
+        "browser": "浏览器操作",
+        "plan": "拆解与跟踪"
+      },
+      "planCoveredByLead": true
+    },
+    "scheduled": {
+      "allowTeamBinding": true,
+      "allowTeamMemoryInjection": true,
+      "allowThreadBinding": true,
+      "memoryTopK": 7
+    }
+  }
+}

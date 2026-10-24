@@ -36,7 +36,7 @@ const { normalizeMemberInput, normalizeBudget, SYSTEM_RUN_ID, dispatchGate, MAX_
 // M5 / T5-12：批次编排（§13.4）——闸门取值仍取 teamWaves 这一份；计划装配本身
 // 已抽到 main/teamDispatchPlan.js（第八轮 B-05/B-08），运行期由 workerPool 消费 dag_json.waves。
 const { MAX_ACTIVE_MEMBERS, MAX_PER_TYPE_IN_RUN } = require('../teamWaves');
-const { buildDispatchPlan, isChatOnlyGoal, buildChatTasks } = require('../teamDispatchPlan');
+const { buildDispatchPlan, isChatOnlyGoal, resolveDispatchPresetTasks } = require('../teamDispatchPlan');
 const { toChatRequest, resolveModelRef, decodeModelRef } = require('../modelShape');
 // M5 / T5-6：会话团队事件流的纯装配内核（与渲染层投影共用同一份 shared 模块）。
 //
@@ -125,19 +125,9 @@ function extractJson(content) {
   try { return JSON.parse(s.slice(start, end + 1)); } catch { return null; }
 }
 
-/** 能力摘要（给人审看的「能做什么」）：返回布尔位，文案由渲染层 i18n 承担 */
-function capabilitiesOf(toolNames) {
-  const s = new Set(Array.isArray(toolNames) ? toolNames : []);
-  return {
-    read: s.has('read_file') || s.has('list_dir'),
-    write: s.has('write_file') || s.has('edit_file'),
-    execute: s.has('shell'),
-    search: s.has('grep') || s.has('glob'),
-    web: s.has('web_search') || s.has('web_fetch'),
-    browser: [...s].some((t) => String(t).startsWith('browser_')),
-    tools: [...s],
-  };
-}
+/** 能力摘要（给人审看的「能做什么」）：返回布尔位，文案由渲染层 i18n 承担。
+ *  2026-10-24 抽出到 main/teamCapabilities.js（本文件顶 800 行软档，该口径被三处消费）。 */
+const { capabilitiesOf } = require('../teamCapabilities');
 
 function audit(action, target, detail) {
   try { deps?.audit?.(action, target, detail); } catch { /* 审计失败不阻断主流程 */ }
@@ -264,6 +254,8 @@ function buildTeamContext(team, { mode, budget, memberIds } = {}) {
 const { snapshotRoster } = require('../teamRoster');
 // B-06：控制面（重置成员会话 / 中断）已抽至独立模块
 const { registerTeamControl } = require('./teamControl');
+// AI 建团草案（一次 N 个成员）的实现体：外置以守住 800 行软档
+const teamsDraft = require('./teamsDraft');
 // 2026-10-21 团队调试日志：IPC 统一埋点已抽到 ../teamIpcTrace（本文件守住 800 行软档）
 const { installTeamsIpcTracing } = require('../teamIpcTrace');
 
@@ -412,6 +404,8 @@ function registerHandlers() {
     }
   });
 
+  // ── AI 建团草案：处理器与注册都在 ./teamsDraft.js（本文件贴 800 行软档）──
+  teamsDraft.register(ipcMain, deps);
   // ── 数字员工草稿（2026-10-20 需求①）：AI 自动创建生态中心数字员工，**只出草稿不落盘** ──
   // 落盘仍走既有 `ecosystem:employeeCreate`（写通道单一事实来源，rbac/校验/原子写全在那边）——
   // 本处理器只做「描述 → 结构化草稿」，返回给渲染层表单预填，人审后由其保存。
@@ -594,7 +588,8 @@ function registerHandlers() {
       // 2026-10-21 对话型目标旁路：如「每人报数」——不调模型拆解、不产出文件，
       // 直接按名册每人一个「只输出一行」的任务（此前会被拆成「实现命令行报数程序」）。
       const chatOnly = isChatOnlyGoal(goal);
-      const presetTasks = chatOnly ? buildChatTasks({ roster }) : null;
+      // 预设清单的唯一决策点（纯函数，可单测）：对话型 > 确认卡回传（归一后）> null 回落 LLM 拆解。
+      const presetTasks = resolveDispatchPresetTasks({ chatOnly, roster, incoming: payload.presetTasks });
       // 调试日志：派活入口的完整输入（谁派的、选了多少人、什么模式/预算）。
       teamDebug.log('dispatch', 'start', {
         teamId: payload.teamId,
@@ -615,7 +610,9 @@ function registerHandlers() {
         projectPath,
         contextBlock,
         threadId: payload.threadId,
-        // 对话型目标：任务清单由宿主确定，编排器跳过 LLM 拆解。
+        // 预设任务清单（对话型 或 确认卡回传）由宿主确定，编排器跳过 LLM 拆解。
+        // 只走归一后的 presetTasks 这一条路：早期另有一条「原样透传 payload.presetTasks」的分支，
+        // 会绕过归一（超长/坏依赖/非法 id 全部进编排器）并把它顶掉——已删，不要加回来。
         ...(presetTasks ? { presetTasks } : {}),
         // T5-9：批次计划与**编制快照**同批产出；快照随 dag_json 落库，运行期不再读实时名册。
         planWaves: ({ tasks }) => {

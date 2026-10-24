@@ -614,7 +614,7 @@ export default function useAgentRun(d) {
         rolePreset: sessionExtras?.expert?.runtime || undefined,
         planMode,
         runId: runSeqLocal,
-        conversationId: threadKey,
+        conversationId: threadKey, candidateTeamId: sessionExtras?.candidateRoster?.teamId ? String(sessionExtras.candidateRoster.teamId) : undefined, // 双入口：候选编制透传（只传 id；临时编制不传）
         // Phase 3-1：断点摘要注入（仅「继续」且有已保存断点时非空）
         resumeContext,
         onMessage: async (msg) => {

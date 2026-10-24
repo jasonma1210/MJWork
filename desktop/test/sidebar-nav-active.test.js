@@ -1,12 +1,19 @@
-// 侧栏一级导航选中态门禁（2026-10-18）
+// 侧栏一级导航选中态门禁（2026-10-18 建立 / 2026-10-24 双入口重组后重写）
 //
-// 用户实测反馈：「我选中的左侧菜单，虽然跳转的页面是对的，但是左侧的菜单没有被选中」。
-// 真因两条，缺一都会复现：
-//   ① 判据不互斥也不穷尽：此前只有「新建会话」传了 active，且写成 `!activeThread`。
+// 用户实测反馈（建立动因）：「我选中的左侧菜单，虽然跳转的页面是对的，但是左侧的菜单
+// 没有被选中」。真因两条，缺一都会复现：
+//   ① 判据不互斥也不穷尽：此前只有「新建会话」传 active，且写成 `!activeThread`。
 //      定时任务页没有打开会话 → 该亮不亮；反之一旦有会话又可能两个一起亮。
 //   ② 选中样式是 `bg-hover`，与 hover 同色 → 即使 active 传对了，视觉上仍等于没选中。
 //
-// 覆盖方式：① 用**行为**测（直接 import lib/navState.ts，穷举 16 种组合）；
+// 2026-10-24 双入口重组（设计文档 §9 P0-1）：一级导航从 4 项收敛为 2 项
+// （新建任务 / 助理），`scheduled` 与 `teams` 降级为「助理」的子 Tab。
+// **这是破坏性变更**，本门禁随之改写为**新语义**的行为断言：
+//   · 返回值域收敛为 ['new','assistant','ecosystem','']（永不再返回 'scheduled'/'teams'）；
+//   · showScheduled / showTeams 作为**兼容输入**时，仍统一返回 'assistant'；
+//   · 互斥且穷尽（同一时刻只有一个一级入口为选中态）。
+//
+// 覆盖方式：① 用**行为**测（直接 import lib/navState.ts，穷举 64 种组合）；
 //          ② 用**源码契约**测（select-bg/select-fg + aria-current 是 DOM 部分，见渲染层验收）。
 // 视觉最终由 Playwright 验（选中项 backgroundColor 非透明 + 与普通项不同色）。
 const assert = require('node:assert/strict');
@@ -37,70 +44,93 @@ const sidebar = blankComments(SIDEBAR);
 (async () => {
   const { activeNavOf } = await import('../renderer/src/lib/navState.ts');
 
-  // ── 行为：穷举 32 种组合（4 个视图标志 × 2）──
+  // ── 行为：穷举 64 种组合（5 个视图标志 + 1 个会话标志）──
   const combos = [];
-  for (const showScheduled of [false, true])
-    for (const showDashboard of [false, true])
-      for (const showEcosystem of [false, true])
-        for (const showTeams of [false, true])
-          for (const hasActiveThread of [false, true])
-            combos.push({ showScheduled, showDashboard, showEcosystem, showTeams, hasActiveThread });
+  for (const showAssistant of [false, true])
+    for (const showScheduled of [false, true]) // 兼容输入（助理子态）
+      for (const showDashboard of [false, true])
+        for (const showEcosystem of [false, true])
+          for (const showTeams of [false, true]) // 兼容输入（助理子态）
+            for (const hasActiveThread of [false, true])
+              combos.push({ showAssistant, showScheduled, showDashboard, showEcosystem, showTeams, hasActiveThread });
 
-  await check('穷举 32 种视图组合：返回值只可能是五个已定义字面量', () => {
-    const allowed = new Set(['new', 'scheduled', 'ecosystem', 'teams', '']);
+  await check('穷举 64 种视图组合：返回值只可能是四个已定义字面量', () => {
+    const allowed = new Set(['new', 'assistant', 'ecosystem', '']);
     for (const c of combos) {
       const got = activeNavOf(c);
       assert.ok(allowed.has(got), `${JSON.stringify(c)} → ${got}`);
     }
   });
 
-  await check('定时任务页永远选中「定时任务」（哪怕同时有打开的会话）', () => {
+  await check('兼容别名：showScheduled=true 时返回「助理」（不再是独立入口）', () => {
     for (const c of combos.filter((x) => x.showScheduled)) {
-      assert.equal(activeNavOf(c), 'scheduled', JSON.stringify(c));
+      assert.equal(activeNavOf(c), 'assistant', JSON.stringify(c));
     }
   });
 
-  await check('生态中心打开时选中「生态中心」（定时任务优先）', () => {
-    for (const c of combos.filter((x) => !x.showScheduled && x.showEcosystem)) {
+  await check('兼容别名：showTeams=true 时返回「助理」（不再是独立入口）', () => {
+    for (const c of combos.filter((x) => !x.showScheduled && x.showTeams)) {
+      assert.equal(activeNavOf(c), 'assistant', JSON.stringify(c));
+    }
+  });
+
+  await check('助理工作台在前台时选中「助理」（唯一二级入口）', () => {
+    for (const c of combos.filter((x) => x.showAssistant && !x.showScheduled && !x.showTeams)) {
+      assert.equal(activeNavOf(c), 'assistant', JSON.stringify(c));
+    }
+  });
+
+  await check('助理子态与主态等价：assistantTab 不影响一级选中态', () => {
+    const base = { showAssistant: true, showScheduled: false, showDashboard: false, showEcosystem: false, showTeams: false, hasActiveThread: false };
+    for (const tab of ['teams', 'aiTeam', 'scheduled', 'complex']) {
+      assert.equal(activeNavOf({ ...base, assistantTab: tab }), 'assistant', tab);
+    }
+  });
+
+  await check('生态中心弹层打开时选中「生态中心」（助理优先——弹层盖在助理之上）', () => {
+    for (const c of combos.filter((x) => !x.showAssistant && !x.showScheduled && !x.showTeams && x.showEcosystem)) {
       assert.equal(activeNavOf(c), 'ecosystem', JSON.stringify(c));
     }
   });
 
-  await check('MJ 军团页打开时选中「MJ 军团」（定时任务/生态中心优先）', () => {
-    for (const c of combos.filter((x) => !x.showScheduled && !x.showEcosystem && x.showTeams)) {
-      assert.equal(activeNavOf(c), 'teams', JSON.stringify(c));
-    }
+  await check('工作台与会话中：一级导航都不亮（避免与一级导航语义混淆）', () => {
+    const back = { showScheduled: false, showEcosystem: false, showTeams: false };
+    assert.equal(activeNavOf({ ...back, showAssistant: false, showDashboard: true, hasActiveThread: false }), '');
+    assert.equal(activeNavOf({ ...back, showAssistant: false, showDashboard: false, hasActiveThread: true }), '');
   });
 
-  await check('工作台与会话中：四项都不亮（避免与一级导航语义混淆）', () => {
-    assert.equal(activeNavOf({ showScheduled: false, showDashboard: true, showEcosystem: false, showTeams: false, hasActiveThread: false }), '');
-    assert.equal(activeNavOf({ showScheduled: false, showDashboard: false, showEcosystem: false, showTeams: false, hasActiveThread: true }), '');
-  });
-
-  await check('新会话页（什么都没有打开）才选中「新建会话」', () => {
-    assert.equal(activeNavOf({ showScheduled: false, showDashboard: false, showEcosystem: false, showTeams: false, hasActiveThread: false }), 'new');
+  await check('新建任务页（什么都没有打开）才选中「新建任务」', () => {
+    assert.equal(activeNavOf({ showAssistant: false, showDashboard: false, showEcosystem: false, hasActiveThread: false }), 'new');
   });
 
   await check('互斥：任一组合下被选中的一级入口不超过一个', () => {
     for (const c of combos) {
       const got = activeNavOf(c);
-      const lit = ['new', 'scheduled', 'ecosystem', 'teams'].filter((k) => k === got);
+      const lit = ['new', 'assistant', 'ecosystem'].filter((k) => k === got);
       assert.ok(lit.length <= 1, `${JSON.stringify(c)} → ${got}`);
     }
   });
 
   // ── 连线契约：组件必须真的用上这个判定 ──
-  await check('App 把四个视图标志作为 view 传给 Sidebar', () => {
-    assert.match(app, /view=\{\{\s*showScheduled,\s*showDashboard,\s*showEcosystem,\s*showTeams\s*\}\}/,
-      '缺少 view={{ showScheduled, showDashboard, showEcosystem, showTeams }}');
+  await check('App 把视图标志（含助理子页）作为 view 传给 Sidebar', () => {
+    assert.match(app, /view=\{\{\s*showAssistant,\s*assistantTab,\s*showDashboard,\s*showEcosystem\s*\}\}/,
+      '缺少 view={{ showAssistant, assistantTab, showDashboard, showEcosystem }}');
   });
 
-  await check('Sidebar 用 activeNavOf 计算，且四个入口各自绑定字面量', () => {
+  await check('Sidebar 用 activeNavOf 计算，且入口各自绑定字面量', () => {
     assert.match(sidebar, /activeNavOf\(\{/, 'Sidebar 未使用 activeNavOf');
     assert.match(sidebar, /hasActiveThread: !!activeThread/);
-    for (const key of ['new', 'scheduled', 'ecosystem', 'teams']) {
+    // 助理及其兼容子态都必须喂进判定（兼容字段丢失会让旧调用方静默不亮）
+    assert.match(sidebar, /showScheduled: !!view\?\.showScheduled/, '缺少兼容输入 showScheduled');
+    assert.match(sidebar, /showTeams: !!view\?\.showTeams/, '缺少兼容输入 showTeams');
+    for (const key of ['new', 'assistant', 'ecosystem']) {
       assert.match(sidebar, new RegExp(`active=\\{activeNav === '${key}'\\}`),
         `NavItem「${key}」缺少 active={activeNav === '${key}'}`);
+    }
+    // 一级导航里不得再出现 scheduled / teams 两项（它们已降级为助理的子 Tab）
+    for (const dead of ['scheduled', 'teams']) {
+      assert.ok(!new RegExp(`active=\\{activeNav === '${dead}'\\}`).test(sidebar),
+        `一级导航仍绑定已降级的入口「${dead}」`);
     }
   });
 

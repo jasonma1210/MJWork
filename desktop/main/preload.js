@@ -316,6 +316,9 @@ contextBridge.exposeInMainWorld('mjcode', {
   teamsArchive: (teamId, archived = true) => ipcRenderer.invoke('teams:archive', { teamId, archived }),
   teamsRecruit: (payload) => ipcRenderer.invoke('teams:recruit', payload),
   teamsDraftMember: (payload) => ipcRenderer.invoke('teams:draftMember', payload),
+  // 双入口 P1-5：AI 建团草案（一次 N 个成员 · 目录优先 · 带覆盖度报告）。
+  // 与 teamsDraftMember 同语义：**只出草稿不落库**，落库仍走既有 addCustomMember / recruit。
+  teamsDraftTeam: (payload) => ipcRenderer.invoke('teams:draftTeam', payload || {}),
   // 2026-10-20 需求①：数字员工列表右上角「新建员工」→ 模型自动出员工草稿（不落盘，
   // 由渲染层表单预填，保存仍走 ecosystem:employeeCreate）
   teamsDraftEmployee: (payload) => ipcRenderer.invoke('teams:draftEmployee', payload || {}),
@@ -354,6 +357,24 @@ contextBridge.exposeInMainWorld('mjcode', {
   teamsDebugAppend: (entry) => ipcRenderer.invoke('teams:debugAppend', entry || {}),
   teamsDebugExport: () => ipcRenderer.invoke('teams:debugExport'),
   teamsDebugOpenDir: () => ipcRenderer.invoke('teams:debugOpenDir'),
+  // ── 双入口路由判定（P1-4/P1-7）──
+  // 判定结果只走 UI 事件（**不进 system 段**：system 是前缀稳定区，加内容会每轮重写前缀）。
+  // entry:route   —— 路由类别 + 升级/降级提示 + 成本倍数 + 确认档
+  // entry:confirm —— C1 确认卡（含已拆好的子任务清单）
+  onEntryRoute: (cb) => {
+    const handler = (_, d) => cb(d);
+    ipcRenderer.on('entry:route', handler);
+    return () => ipcRenderer.removeListener('entry:route', handler);
+  },
+  onEntryConfirm: (cb) => {
+    const handler = (_, d) => cb(d);
+    ipcRenderer.on('entry:confirm', handler);
+    return () => ipcRenderer.removeListener('entry:confirm', handler);
+  },
+  // 用户对确认卡的答复：'single' = 改成单 Agent（本轮不升级且不重复追问）；'confirm' = 按团队执行
+  entryChoice: (payload) => ipcRenderer.invoke('entry:choice', payload || {}),
+  // 当前入口策略配置（阈值/开关全在主进程，渲染层不复制一份）
+  entryPolicy: () => ipcRenderer.invoke('entry:policy'),
   // DS Bots / T6-2：项目空间（项目身份唯一事实来源）。
   // get 支持二选一定位：projectId 直取，threadId 反查（跨天回到同一会话时的入口）。
   projectsCreate: (payload) => ipcRenderer.invoke('projects:create', payload || {}),

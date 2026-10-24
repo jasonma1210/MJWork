@@ -448,7 +448,32 @@ function register() {
       }
     }
     if (n > 0) console.log(`[memory] 就绪后补写队列：${n} 条`);
+    if (memoryWriteQueue.length === 0) stopMemoryFlushProbe();
     return n;
+  }
+
+  // T-06：flush 触发点过窄的补强。
+  // 缺陷形态：flush 只在 local:memories/add 与 local:memories/list 里被调用 ⇒
+  //   「子系统未就绪时写入一条记忆、此后不再有任何记忆类 IPC」时该条**永远不落库**，
+  //   进程退出即丢（启动早期 DB 初始化慢于首次渲染时真实存在这个窗口）。
+  // 修法：本模块自带就绪探测定时器——队列非空期间定期检查 MemoryManager 是否就绪，
+  //   一旦就绪立即补写。放在这里而不是 main.js，是为了让「谁负责落库」与
+  //   「谁创建队列」同属一个模块（就绪判定与补写逻辑不再跨文件漂移）。
+  const MEMORY_FLUSH_PROBE_MS = 1000;
+  let memoryFlushProbe = null;
+  function stopMemoryFlushProbe() {
+    if (!memoryFlushProbe) return;
+    clearInterval(memoryFlushProbe);
+    memoryFlushProbe = null;
+  }
+  function startMemoryFlushProbe() {
+    if (memoryFlushProbe) return;
+    memoryFlushProbe = setInterval(() => {
+      if (memoryWriteQueue.length === 0) { stopMemoryFlushProbe(); return; }
+      flushMemoryQueue();
+    }, MEMORY_FLUSH_PROBE_MS);
+    // 不因探针吊住进程退出（应用退出时未落库队列随进程消失，与既有语义一致）
+    if (memoryFlushProbe.unref) memoryFlushProbe.unref();
   }
 
   // 三层记忆 M1：domain 白名单（与 memory/index.js 的 remember 校验同源，宿主侧先归一化，
@@ -483,17 +508,25 @@ function register() {
       return m ? { id: m.id, content: m.content } : { ok: false, error: '写入被拒绝：内容为空或来源不在白名单' };
     }
     memoryWriteQueue.push({ spaceId: projectPath || 'default', domain: dom, scope, content, source, conversationId: conv });
+    // T-06：队列非空即启动就绪探针——不依赖「用户再点一次记忆」才落库
+    startMemoryFlushProbe();
     return { queued: true };
   });
   ipcMain.handle('local:memories/list', async (_, { projectPath, limit, query, conversationId } = {}) => {
     // P2-6：分层召回路由（importance×recency×相关性 Top-K）+ P0-2c 域/可信度过滤
     // 三层记忆 M3：分层模式——会话层（按 conversationId 绑定）+ 项目层 + 全局层（跨项目），
     // 输出携带 scope；渲染层据此加层级前缀（`[个人]/[项目]/[本次会话]`）后注入 system prompt。
+    // T-09：query 是相关性因子（权重 0.40）的唯一输入——缺省即空串（跳过相关性因子，
+    //   退化为 importance×recency），与既有行为完全一致；渲染层是否传由渲染侧决定，
+    //   主侧只保证「能收、能原样透传」。
+    // T-01：limit 现在是**真正生效**的召回条数上限（分层路径此前完全丢弃 topK）。
+    //   最小值保底 1：limit 传 0/负数/非数字时不得把主对话召回打成空。
+    const topK = Math.max(1, Number(limit) || 7);
     const memoryManager = deps.getMemoryManager();
     if (memoryManager) {
       flushMemoryQueue();
       return memoryManager.recallContents({
-        spaceId: projectPath, query, topK: limit || 7,
+        spaceId: projectPath, query, topK,
         scopes: [...SCOPES], conversationId: conversationId || null,
       });
     }
@@ -516,7 +549,15 @@ function register() {
     }
   });
   // P2-8 数据源：记忆统计与后台任务列表（可视化 UI 后续接入）
-  ipcMain.handle('memory:stats', async () => (deps.getMemoryManager() ? { ok: true, stats: deps.getMemoryManager().stats() } : { ok: false }));
+  // T-06：统计是「记忆子系统已就绪」的天然观测点——在此顺带补写积压队列，
+  //   并把「未落库条数」一并回传：静默丢失窗口从此可被程序化观测，而不是只能靠猜。
+  //   （另一条触发路径是 startMemoryFlushProbe 的就绪探测，不依赖任何 IPC 被调用。）
+  ipcMain.handle('memory:stats', async () => {
+    const memoryManager = deps.getMemoryManager();
+    if (!memoryManager) return { ok: false, pending: memoryWriteQueue.length };
+    flushMemoryQueue();
+    return { ok: true, stats: memoryManager.stats(), pending: memoryWriteQueue.length };
+  });
   // N9：治理开关命中率只读出口（hook / 意图预热 / 技能按需加载）——纯内存计数，重启清零。
   // 让「开关到底有没有生效」可被程序化读取，而不是只躺在 console 日志里无人消费。
   ipcMain.handle('governance:stats', async () => ({ ok: true, stats: governanceStats.snapshot() }));

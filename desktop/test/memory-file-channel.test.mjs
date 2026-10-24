@@ -21,7 +21,7 @@ const require = createRequire(import.meta.url);
 const ROOT = path.resolve(import.meta.dirname, '..');
 
 const { openDbAsync } = require(path.join(ROOT, 'main/db'));
-const { MemoryManager } = require(path.join(ROOT, 'main/memory'));
+const { MemoryManager, LAYER_QUOTA } = require(path.join(ROOT, 'main/memory'));
 const mf = require(path.join(ROOT, 'main/memory/memoryFile.js'));
 const {
   MemoryFileSync, projectMemoryPath, globalMemoryPath, renderMarkdown, parseMarkdown,
@@ -223,13 +223,76 @@ const tmp = (pfx) => fs.mkdtempSync(path.join(os.tmpdir(), pfx));
 }
 
 // ══════════════════════════════════════════════════════════════
-// D. 源码接线断言
+// D. 接线断言（**行为优先**；源码形态仅作辅助，不能是唯一判据）
 // ══════════════════════════════════════════════════════════════
 {
   const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  // D1 起是「源码形态」判据（辅助）。**必须剥离注释**再匹配——否则把字面量挪进注释
+  // 仍然算通过，正是本项目反复踩的「读了文件但只做文本匹配」空过形态（独立验证 M3a 实证：
+  // 当时 D1 绿而行为组 D0 红）。剥离时保留换行，避免跨行结构被拼歪。
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:])\/\/[^\n]*/g, (m, p1) => p1 + ' '.repeat(m.length - p1.length));
+  const readCode = (rel) => stripComments(read(rel));
 
-  const localData = read('main/ipc/localData.js');
-  check('D1 local:memories/list 走分层模式（scopes + conversationId）',
+  // ── D0（T-03 本轮补）：`local:memories/list` 真的走分层模式 —— **行为断言** ──
+  // 缺陷回顾：旧版这里只有源码正则（`/scopes:\s*\[\.\.\.SCOPES\]/.test(localData)`）。
+  //   变异验证 M3 把那一行**整行挪进注释**（实际调用已断），本套件仍 52/52 全绿 ⇒ 空过假闸。
+  // 现在直接调用 IPC handler 看真实产出。分层模式一旦失效，行为上可判的形态是：
+  //   别的会话的 session 记忆会漏进当前对话（正是 B-11 在主对话路径上的形态），
+  //   且返回条数会从「配额和」涨到「该空间全部记忆」。
+  const ModuleMod = require('module');
+  const electronPath = require.resolve('electron');
+  const ipcHandlers = {};
+  const stubModule = new ModuleMod(electronPath, null);
+  stubModule.filename = electronPath;
+  stubModule.loaded = true;
+  stubModule.exports = { ipcMain: { handle: (n, f) => { ipcHandlers[n] = f; } }, shell: {} };
+  require.cache[electronPath] = stubModule;
+  const localDataModule = require(path.join(ROOT, 'main/ipc/localData.js'));
+
+  const ipcDb = await openDbAsync(tmp('mj-mf-db-ipc-'), { driver: 'sqljs' });
+  const ipcMem = new MemoryManager({ db: ipcDb });
+  localDataModule.initLocalDataIpc({
+    getLocalStore: () => null,
+    getCredentialCrypto: () => null,
+    localVault: new Map(),
+    serverBase: () => '',
+    MJ_SERVER_DEFAULT: '',
+    getMemoryManager: () => ipcMem,
+    getMemoryScheduler: () => null,
+  });
+
+  // 四条记忆：本会话 session / 别的会话 session / 项目 / 全局
+  const ipcSpace = '/proj-ipc-layered';
+  ipcMem.remember({ spaceId: ipcSpace, domain: 'session', scope: 'session', conversationId: 'conv-A', content: '【A 会话】本会话的工作现场', source: 'model_conclusion', importance: 0.9 });
+  ipcMem.remember({ spaceId: ipcSpace, domain: 'session', scope: 'session', conversationId: 'conv-B', content: '【B 会话】别的会话的工作现场', source: 'model_conclusion', importance: 0.9 });
+  ipcMem.remember({ spaceId: ipcSpace, domain: 'global_knowledge', scope: 'project', content: '【项目】仓库约定：提交前跑全量门禁', source: 'user_input', importance: 0.9 });
+  ipcMem.remember({ spaceId: ipcSpace, domain: 'private', scope: 'global', content: '【全局】用户偏好中文沟通', source: 'user_input', importance: 0.9 });
+
+  const listA = await ipcHandlers['local:memories/list'](null, { projectPath: ipcSpace, conversationId: 'conv-A', limit: 7 });
+  const listB = await ipcHandlers['local:memories/list'](null, { projectPath: ipcSpace, conversationId: 'conv-B', limit: 7 });
+  const sumQuota = LAYER_QUOTA.session + LAYER_QUOTA.project + LAYER_QUOTA.global;
+  const scopesOf = (rows) => rows.map((m) => m.scope).join(',');
+  const has = (rows, kw) => rows.some((m) => String(m.content || '').includes(kw));
+
+  check('D0 行为：local:memories/list 返回非空且条数 ≤ Σ 每层配额（单空间旧路径会返回该空间全部）',
+    Array.isArray(listA) && listA.length > 0 && listA.length <= sumQuota,
+    `${listA.length} 条 / 上限 ${sumQuota}`);
+  check('D0 行为：当前会话召回**不含别的会话**的 session 记忆（分层失效即泄漏）',
+    !has(listA, 'B 会话'), `命中 ${scopesOf(listA)}`);
+  check('D0 行为：返回项携带正确 scope 且三层齐备（渲染层据此加层级前缀）',
+    listA.every((m) => ['session', 'team', 'project', 'global'].includes(m.scope))
+    && listA.some((m) => m.scope === 'session')
+    && listA.some((m) => m.scope === 'project')
+    && listA.some((m) => m.scope === 'global'),
+    scopesOf(listA));
+  check('D0 行为：换一个 conversationId 只看到它自己的 session 记忆',
+    has(listB, 'B 会话') && !has(listB, 'A 会话'), scopesOf(listB));
+
+  // ── D1 起：源码形态（**辅助判据**，单独不足以证明行为未断）──
+  const localData = readCode('main/ipc/localData.js');
+  check('D1 源码形态（辅助）local:memories/list 的 scopes + conversationId 字面量仍在',
     /local:memories\/list/.test(localData) && /scopes:\s*\[\.\.\.SCOPES\]/.test(localData)
     && /conversationId:\s*conversationId \|\| null/.test(localData));
   check('D1 localData 引入 SCOPES 单一事实来源',
@@ -239,12 +302,12 @@ const tmp = (pfx) => fs.mkdtempSync(path.join(os.tmpdir(), pfx));
     // M5 / T5-5：resetScope 白名单纳入 'team'（团队层清空需携带 teamId，见 localData 守卫）
     && /assertEnum\(\{ scope \}, 'scope', \['session', 'team', 'project', 'global'\]\)/.test(localData));
 
-  const preload = read('main/preload.js');
+  const preload = readCode('main/preload.js');
   check('D2 preload 暴露 memorySyncFile / memoryResetScope',
     /memorySyncFile:\s*\(payload\) => ipcRenderer\.invoke\('local:memories\/syncFile'/.test(preload)
     && /memoryResetScope:\s*\(payload\) => ipcRenderer\.invoke\('memory:resetScope'/.test(preload));
 
-  const mainjs = read('main/main.js');
+  const mainjs = readCode('main/main.js');
   check('D3 main.js 装配 MemoryFileSync（lazy getManager + 团队共享偏好）',
     /new MemoryFileSync\(\{/.test(mainjs) && /getManager:\s*\(\) => memoryManager/.test(mainjs)
     && /getTeamSharing:[\s\S]{0,120}memory\.teamSharing/.test(mainjs));
@@ -262,8 +325,19 @@ const tmp = (pfx) => fs.mkdtempSync(path.join(os.tmpdir(), pfx));
     /chat\.memoryScopeSession/.test(chat) && /chat\.memoryScopeProject/.test(chat) && /chat\.memoryScopePersonal/.test(chat));
   check('D4 ChatArea 打开项目时先同步记忆文件（fail-open）',
     /memorySyncFile\(\{ projectPath: project\.path \}\)/.test(chat));
-  check('D4 ChatArea 依赖含 thread?.id（切会话重新召回）',
-    /\}, \[project\?\.path, thread\?\.id\]\)/.test(chat));
+  // 依赖数组：既要含「切项目/切会话」信号，也要含「本轮刷新」信号。
+  // T-08（渲染层由并行成员本轮实现）：依赖从 `[project?.path, thread?.id]` 扩为
+  // `[project?.path, thread?.id, recallQuery, recallTick]` —— 同会话内新写入的记忆
+  // （如 /mem）也要在后续轮次生效。本断言随之收紧为「两段都要有」，不放宽：
+  //   ① 切项目/切会话仍要重新召回（否则切了会话还看旧记忆）；
+  //   ② 还必须有轮次级信号（否则 T-08 那个缺陷会原地复活）。
+  const depsMatch = chat.match(/\}, \[project\?\.path, thread\?\.id([^\]]*)\]\);/);
+  const refreshDeps = (depsMatch ? depsMatch[1] : '').split(',').map((s) => s.trim()).filter(Boolean)
+    .filter((d) => /tick|query|round|version/i.test(d));
+  check('D4 ChatArea 记忆召回依赖含 project?.path + thread?.id（切项目/切会话重新召回）',
+    !!depsMatch, depsMatch ? depsMatch[0] : '未找到对应的 useEffect 依赖数组');
+  check('D4 ChatArea 记忆召回依赖含轮次/query 刷新信号（T-08：同会话内新记忆也要生效）',
+    refreshDeps.length > 0, refreshDeps.join(',') || '缺少轮次/query 类依赖，同会话新记忆不会生效');
 
   const ui = read('renderer/src/components/MemorySection.tsx');
   check('D5 MemorySection 作用域徽章 + 筛选档',

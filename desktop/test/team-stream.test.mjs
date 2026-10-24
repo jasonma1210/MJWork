@@ -345,14 +345,19 @@ check('UI：普通编排卡显示「任务编排」而非团队名',
 // 2026-10-20 真机事故回归：Composer 的发送按钮是 onSend() 无参调用，sendOrDispatch 若只读 text
 // 会在选了军团后 goal='' 静默 return；且新会话 thread 为 null 时建组 thread_id 为空，
 // 团队卡按会话反查永远查不到 → 用户看到「点了没反应 / 只有一句已派活」。
+// 2026-10-24 双入口重组（设计文档 §9 P0-6）：派活执行体从 ChatArea 抽到 lib/teamDispatchFlow.ts
+// （ChatArea 触 800 行黄线）。断言锚点随实现迁移，强度不降——并且新增「落库必须先于派活」的
+// 顺序断言（原先只查存在性，顺序被调换也发现不了）。
+const dispatchFlowSrc = read('renderer/src/lib/teamDispatchFlow.ts');
 check('派活：无参发送回落输入框，且派活前先落库会话与目标消息',
   /const goal = String\(text \|\| input \|\| ''\)\.trim\(\)/.test(chatAreaSrc)
-  && /let runThreadId = thread\?\.id != null/.test(chatAreaSrc)
-  && /api\.createThread\(\{/.test(chatAreaSrc)
-  && /api\.sendMessage\(runThreadId/.test(chatAreaSrc));
+  && /let runThreadId = input\.threadId/.test(dispatchFlowSrc)
+  && /ports\.createThread\(\{/.test(dispatchFlowSrc)
+  && /ports\.sendMessage\(runThreadId/.test(dispatchFlowSrc)
+  && dispatchFlowSrc.indexOf('ports.sendMessage(runThreadId') < dispatchFlowSrc.indexOf('ports.dispatch({'));
 check('派活：传给主进程的 threadId 必须是落库后的 runThreadId',
-  /threadId:\s*runThreadId/.test(chatAreaSrc)
-  && !/threadId:\s*thread\?\.id != null \? String\(thread\.id\) : null/.test(chatAreaSrc));
+  /threadId: runThreadId/.test(dispatchFlowSrc)
+  && !/threadId: input\.threadId/.test(dispatchFlowSrc));
 
 // 主进程禁止 require ESM（真机 Electron 33 / Node 20.18 会 ERR_REQUIRE_ESM）
 // 断言前先剥掉注释：本文件的说明注释里会引用这个反模式写法，扫原文会误判。

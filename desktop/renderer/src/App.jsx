@@ -5,8 +5,9 @@ import SettingsModal from './components/SettingsModal';
 import Dashboard from './components/Dashboard';
 import ApprovalCard from './components/ApprovalCard';
 import DiffReviewPanel from './components/DiffReviewPanel';
-import ScheduledTasks from './components/ScheduledTasks';
-import TeamsPage from './components/TeamsPage';
+import AssistantPage from './components/AssistantPage';
+// 判定点 UI（§7.3）：升级/降级提示条 + C1 确认卡 + C2 引导（消费 entry:route / entry:confirm）
+import EntryRouteNotice from './components/EntryRouteNotice';
 import ProjectPicker from './components/ProjectPicker';
 import ProjectCreateModal from './components/ProjectCreateModal';
 import Onboarding from './components/Onboarding';
@@ -37,6 +38,7 @@ import { useThreadModel } from './hooks/useThreadModel';
 import { useForkThread } from './hooks/useForkThread';
 import THEMES from './lib/themes.json';
 import { useI18n } from './i18n';
+import { DEFAULT_ASSISTANT_TAB } from './lib/assistantTabs';
 
 // 登录系统已移除：恒用本机数据层（local-first）。
 // 模块级置位，确保任何 api 请求发起前本地路由已生效。
@@ -58,9 +60,11 @@ export default function App() {
   });
   const [showSettings, setShowSettings] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
-  const [showScheduled, setShowScheduled] = useState(false);
-  const [showEcosystem, setShowEcosystem] = useState(false); // 生态中心（侧栏一级导航，对标 Codex Plugins）
-  const [showTeams, setShowTeams] = useState(false); // M5 / T5-1：MJ 军团（团队编制页，侧栏一级导航）
+  // 双入口重组（2026-10-24）：一级导航 2 项 ——「新建任务」+「助理」；
+  // assistantTab = 助理内部子页（子页清单见 lib/assistantTabs.ts）。
+  const [showAssistant, setShowAssistant] = useState(false);
+  const [assistantTab, setAssistantTab] = useState(DEFAULT_ASSISTANT_TAB);
+  const [showEcosystem, setShowEcosystem] = useState(false); // 生态中心（D8：降级为弹层，入口在侧栏底部次级区）
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   // T6-9：项目空间创建（+ 菜单入口派发 mjcode:new-project-space）
   const [showProjectSpace, setShowProjectSpace] = useState(false);
@@ -411,8 +415,7 @@ export default function App() {
 
   function resetView() {
     setShowDashboard(false);
-    setShowScheduled(false);
-    setShowTeams(false);
+    setShowAssistant(false);
   }
 
   // 选择/切换项目：写入最近项目列表（去重，最多保留 10 个）
@@ -488,9 +491,7 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-bg text-text">
       {splash}
-      {/* 统一顶栏（常驻全宽）：左「左栏开关 + 搜索」／中 标题／右「右栏开关 + 主题 + 数据」。
-          全宽、不随左右栏开合移动——两个侧边栏开关常驻可点（左栏/右栏收起后仍在，不会失去回路）。
-          pl-20：预留 macOS 交通灯（hiddenInset，窗口左上角）的位置，避免控件被系统按钮压住。 */}
+      {/* 统一顶栏（常驻全宽，不随左右栏开合移动）；pl-[var(--titlebar-inset)] 预留 macOS 交通灯位置 */}
       <header className="flex items-center gap-2 pl-[var(--titlebar-inset)] pr-3 h-11 shrink-0 border-b border-border">
         <button
           onClick={() => setSidebarOpen((v) => !v)}
@@ -541,7 +542,7 @@ export default function App() {
       <Sidebar
         threads={threads}
         activeThread={activeThread}
-        view={{ showScheduled, showDashboard, showEcosystem, showTeams }}
+        view={{ showAssistant, assistantTab, showDashboard, showEcosystem }}
         onSelect={selectThread}
         onNew={() => { setActiveThread(null); resetView(); }}
         onNewThread={newThreadInProject}
@@ -590,9 +591,8 @@ export default function App() {
           if (r?.ok) loadData();
         }}
         onOpenArchive={localMode ? () => setArchiveOpen(true) : undefined}
-        onOpenScheduled={() => { resetView(); setShowScheduled(true); }}
+        onOpenAssistant={() => { resetView(); setShowAssistant(true); }}
         onOpenEcosystem={() => setShowEcosystem(true)}
-        onOpenTeams={() => { resetView(); setShowTeams(true); }}
         onOpenProjectPicker={() => setShowProjectPicker(true)}
         onOpenSettings={() => setShowSettings(true)}
         projects={projects}
@@ -604,14 +604,13 @@ export default function App() {
       )}
       <div className="flex-1 min-w-0 flex flex-col">
         {showDashboard && <Dashboard />}
-        {showScheduled && <ScheduledTasks />}
-        {showTeams && <TeamsPage />}
+        <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => { resetView(); setShowAssistant(true); if (a === 'open_assistant_scheduled') setAssistantTab('scheduled'); }} />
+        {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}
+        {showAssistant && <AssistantPage tab={assistantTab} onTab={setAssistantTab} threadId={activeThreadId} projectPath={activeProject?.path} />}
         {/* 任务编排已并入对话流（orchestrate_task 工具 + AgentDock 胶囊），不再有独立面板入口 */}
-        {/* E4：ChatArea 常驻挂载（数据/定时任务视图下用 hidden 隐藏而非卸载）。
-            此前条件渲染会卸载 ChatArea，导致生态中心「在当前会话启用」的
-            mjcode:enable-expert/skill 事件静默丢失；同时避免重挂载带来的
-            消息重拉与 AGENTS.md 重复探测。contents 保持原 flex 布局不变。 */}
-        <div className={showDashboard || showScheduled || showTeams ? 'hidden' : 'contents'}>
+        {/* E4：ChatArea 常驻挂载（数据/助理视图下用 hidden 隐藏而非卸载）——
+            条件渲染会卸载 ChatArea，导致生态中心「在当前会话启用」事件静默丢失，也避免重挂载带来的消息重拉。 */}
+        <div className={showDashboard || showAssistant ? 'hidden' : 'contents'}>
           <ChatArea
             thread={activeThread}
             agentsMd={agentsMd}
@@ -770,7 +769,7 @@ export default function App() {
           { label: tr('app.cmdSummary'), run: () => { if (activeThread) { setPaneTab('subtasks'); setPaneOpen(true); } } },
           { label: tr('app.cmdTerminal'), run: () => { if (activeThread) { setPaneTab('terminal'); setPaneOpen(true); } } },
           { label: tr('app.cmdToggleSidebar'), hint: '⌘B', run: () => setSidebarOpen((v) => !v) },
-          { label: tr('app.cmdScheduled'), run: () => { resetView(); setShowScheduled(true); } },
+          { label: tr('app.cmdScheduled'), run: () => { resetView(); setShowAssistant(true); setAssistantTab('scheduled'); } },
           { label: tr('app.cmdTheme', { name: themeLabel() }), run: cycleTheme },
         ]}
       />

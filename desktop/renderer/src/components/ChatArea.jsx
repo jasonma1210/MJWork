@@ -33,6 +33,10 @@ import { IconArrowUp, IconBot, IconCopy, IconCpu, IconFile, IconFolder, IconGitB
 
 import { runRegistry, runIndex } from '../lib/runRegistry'; // T2-2：运行注册表（切页保活事实源）拆出 lib
 import useAgentRun from '../hooks/useAgentRun'; // T2-2：Agent 运行流程 hook 拆分
+// 候选编制（candidate roster）：跨组件单一事实源（对话区 + 「+ 菜单」军团面板共用一份）
+import { rosterFromTeam, setCandidateRoster, useCandidateRoster } from '../lib/candidateRoster';
+// 显式派活的执行体（纯流程编排，抽出以守住 ChatArea 的 800 行黄线）
+import { runTeamDispatch } from '../lib/teamDispatchFlow';
 
 export default function ChatArea({
   thread, selectedModel, project, onNewMessage, mcpTools = [], enabledSkills = [], onOpenProjectPicker, initialPrompt, onPromptConsumed, approvalSettings, agentsMd = null,
@@ -105,16 +109,23 @@ export default function ChatArea({
   const [runMode, setRunMode] = useState('local'); // local | worktree（对标 Codex 运行模式）
   const [worktree, setWorktree] = useState(null); // 隔离工作区 { path, branch }
   const [modeMsg, setModeMsg] = useState(''); // 模式切换提示
-  // A4：会话级扩展状态（数字员工 / 技能 / 连接器），随线程持久化、重开可恢复
-  const EMPTY_EXTRAS = { expert: null, skillIds: [], mcpServers: [] };
+  // A4：会话级扩展状态（数字员工 / 技能 / 连接器 / 候选编制），随线程持久化、重开可恢复
+  const EMPTY_EXTRAS = { expert: null, skillIds: [], mcpServers: [], candidateRoster: null };
   const [sessionExtras, setSessionExtras] = useState(EMPTY_EXTRAS);
   const [plusOpen, setPlusOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false); // A12：拖拽悬停提示
-  // 2026-10-20 需求⑤：军团选中态——`+` 菜单选定团队后显示团队名徽标，发送时自动派活给该团队。
-  // activeTeam 是列表项快照（id/name/description/leadMissing）；teamErr 是派活失败的**就地**反馈；teamBusy 是派活进行中。
-  const [activeTeam, setActiveTeam] = useState(null);
+  // 候选编制（candidate roster）—— 2026-10-24 双入口重组 / 设计文档 §7.2、§9 P0-6。
+  // 语义变更（此前是「模式开关」）：选中军团不再**强制**走派活，而是「编制偏好」——
+  //   · 徽标表示「本次任务可被该编制承接」，普通对话照常可发起；
+  //   · 派活变成**显式动作**（「+ → 军团」面板的「立即派活」/ 助理页「复杂问题」）；
+  //   · 「暂不派活 / 取消编制」= 清空编制（中间态，不影响普通对话）。
+  // 状态存在 lib/candidateRoster（跨组件单一事实源），会话切换时随会话恢复。
+  const roster = useCandidateRoster();
   const [teamErr, setTeamErr] = useState('');
   const [teamBusy, setTeamBusy] = useState(false);
+  // 记忆召回的本轮 query 与轮次信号（T-08/T-09）：见下方召回 effect 的依赖说明
+  const [recallQuery, setRecallQuery] = useState('');
+  const [recallTick, setRecallTick] = useState(0);
   // A5：语音录入状态机
   const voice = useVoice({ onText: (text) => setInput((prev) => (prev ? `${prev} ${text}` : text)) });
   // 实际执行目录：隔离工作区就绪时用 worktree 路径，否则用项目目录
@@ -189,6 +200,9 @@ export default function ChatArea({
         }
         const list = await window.mjcode.localListMemories({
           projectPath: project.path, limit: 7, conversationId: threadId,
+          // T-09：把本轮提问传给召回侧 —— query 是相关性因子（权重 0.40，最高）的唯一输入，
+          // 缺省即空串 ⇒ 该因子被跳过、召回退化成「最近 + 高 tier」，与用户当轮提问无关。
+          query: recallQuery || undefined,
         });
         if (cancelled) return;
         const prefixOf = (scope) => {
@@ -203,8 +217,12 @@ export default function ChatArea({
       }
     })();
     return () => { cancelled = true; };
-    // 依赖含 thread?.id：会话切换后会话层记忆归属变化，需重新召回
-  }, [project?.path, thread?.id]);
+    // 依赖含 thread?.id：会话切换后会话层记忆归属变化，需重新召回。
+    // T-08（2026-10-24 修）：此前依赖只有 [project?.path, thread?.id] ⇒ **同一会话内新写入的
+    // 记忆（如 /mem）在后续轮次不生效**。修法：把「本轮 query」与「轮次信号」纳入依赖 ——
+    // 每轮发送前 recallTick +1、recallQuery 更新为本轮用户输入 ⇒ 召回每轮刷新。
+    // T-09：query 一并透传给 localListMemories（相关性因子权重 0.40，缺省即被跳过）。
+  }, [project?.path, thread?.id, recallQuery, recallTick]);
 
   // ambient 建议 POC：基于项目真实状态生成欢迎页建议
   // 只对「本次主动选择」的项目生成：重启后残留的上次项目不生成——
@@ -327,15 +345,21 @@ export default function ChatArea({
   useEffect(() => {
     const prevId = prevExtrasThreadIdRef.current;
     prevExtrasThreadIdRef.current = thread?.id || null;
-    if (!thread?.id) { setSessionExtras({ expert: null, skillIds: [], mcpServers: [] }); return; }
+    // 无会话（新建任务页）：清空扩展状态，但**保留当前编制**——
+    // 编制是会话级偏好，新建会话时应当继承（设计文档 §7.4：编制偏好随会话持久化、可随时改）。
+    if (!thread?.id) { setSessionExtras({ ...EMPTY_EXTRAS, candidateRoster: roster }); return; }
     if (prevId === null && !localStorage.getItem(`mj_extras_${thread.id}`)) return;
     try {
       const saved = JSON.parse(localStorage.getItem(`mj_extras_${thread.id}`));
-      setSessionExtras(saved && typeof saved === 'object' ? { expert: null, skillIds: [], mcpServers: [], ...saved } : { expert: null, skillIds: [], mcpServers: [] });
+      const next = (saved && typeof saved === 'object') ? { ...EMPTY_EXTRAS, ...saved } : { ...EMPTY_EXTRAS };
+      setSessionExtras(next);
+      // 编制随会话恢复（切会话 ⇒ 编制也切回该会话的那一份）
+      setCandidateRoster(next.candidateRoster || null);
     } catch (e) {
       console.warn('[chat] session extras parse failed:', e);
-      setSessionExtras({ expert: null, skillIds: [], mcpServers: [] });
+      setSessionExtras({ ...EMPTY_EXTRAS });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread?.id]);
 
   useEffect(() => {
@@ -469,119 +493,71 @@ export default function ChatArea({
     setInput((prev) => (String(prev || '').trim() ? `${prev}\n${text}` : text));
   }
 
-  // 2026-10-20 需求⑤：选定军团后，发送 = 自动派活给该团队（目标就是用户输入的那句话）。
-  // 派活参数按缺省回落：模式取团队 defaultMode、预算取团队 budget、成员取全队（都由主进程承担单一事实来源）。
-  // 边界：① 未选团队 → 走普通 send；② 计划分步（opts.planStep 三参调用）→ 仍走普通 send（分步是既有编排，不走军团）。
-  // 缺统筹：本地预检先拦（activeTeam.leadMissing），主进程 LEAD_MISSING 是权威兜底判据。
-  // R-15/R-5（2026-10-22）：本函数是**全部发送路径的唯一分流点**——除输入框直接发送外，
-  // 「排队卡片立即执行」与「轮末自动接力」（useAgentRun 经 relayRef）也汇到这里，
-  // 选中军团时入队消息同样派活（此前这两条路直调 send，静默丢失派活语义）。
+  // 编制变更的统一入口：跨组件事实源（lib/candidateRoster）+ 会话级持久化
+  // （extras 随线程落 localStorage ⇒ 编制偏好随会话恢复，设计文档 §7.4）。
+  function applyRoster(next) {
+    setCandidateRoster(next);
+    setSessionExtras((prev) => (prev.candidateRoster === next ? prev : { ...prev, candidateRoster: next }));
+  }
+
+  // 2026-10-24 双入口重组 / 设计文档 §9 P0-6：发送分流的**唯一**入口。
+  // 旧实现是「选中军团 ⇒ 强制走派活、直接 return 不再走普通对话」——那是一个**入口分支在 gate 能力**
+  // （选了军团就不能再普通问一句），违反「入口分支只允许影响呈现层」这条架构不变量。
+  // 新语义：编制只是**偏好**（本次任务可被它承接），普通对话照常发起；
+  // 派活是**显式动作**（dispatchToTeam），由「+ → 军团」面板的「立即派活」或助理页「复杂问题」发起。
+  // R-15/R-5（2026-10-22）：本函数仍是**全部发送路径的唯一分流点**——除输入框直接发送外，
+  // 「排队卡片立即执行」与「轮末自动接力」（useAgentRun 经 relayRef）都汇到这里。
   async function sendOrDispatch(text, forcedThread, opts) {
     // Composer 的发送按钮是**无参**调用（onSend()），与 useAgentRun.send 不同、这里不会自动回落 input；
-    // 此前只读 text 导致选了军团后点按钮 goal='' 直接 return（输入框不清空、无任何反馈）。
     // 口径与 send 一致：显式入参优先，否则取输入框当前值。
     const goal = String(text || input || '').trim();
-    if (!activeTeam || opts) { send(text, forcedThread, opts); return; }
-    if (!goal) return;
-    if (activeTeam.leadMissing) { setTeamErr(t('teams.needLeadFirst')); return; }
+    // T-08/T-09：召回在**每轮发送前**刷新（轮次信号 + 本轮 query 进依赖），
+    // 并把本轮 query 透传给召回侧 —— 相关性因子（权重 0.40）否则会被整段跳过。
+    if (goal) { setRecallQuery(goal); setRecallTick((n) => n + 1); }
+    send(text, forcedThread, opts);
+  }
+
+  // 显式派活：用户主动要求「现在就由这支团队执行」（调用形态不变，仍是 teams:dispatch）。
+  // 执行体已抽到 lib/teamDispatchFlow.ts（纯流程编排、不依赖 React；抽出原因见该文件头注）。
+  // 缺统筹：本地预检先拦（team.leadMissing），主进程 LEAD_MISSING 是权威兜底判据。
+  async function dispatchToTeam(team, goalText) {
+    const goal = String(goalText || '').trim();
+    if (!team?.id) return;
+    if (!goal) { setTeamErr(t('teams.rosterGoalRequired')); return; }
+    if (team.leadMissing) { setTeamErr(t('teams.needLeadFirst')); return; }
     setTeamBusy(true);
     setTeamErr('');
     try {
-      // M5 / T5-8 真机修复：新会话直接派活时 thread 为 null，主进程建组写入的 thread_id 为空，
-      // 对话内团队卡按 thread_id 反查永远查不到 → 界面只剩一句「已派活」提示，其余全空白。
-      // 因此派活前先把会话落库（与 useAgentRun.send 同一口径），并把目标作为用户消息持久化，
-      // 这样对话里能同时看到「用户提问 + 团队协同卡」，刷新/切回也不会丢。
-      let runThreadId = thread?.id != null ? String(thread.id) : null;
-      // 2026-10-21 真机修复：团队派活此前直接复用 cwd/currentProject——新建会话时若用户
-      // 没有主动选目录（projectPicked=false），activeProject 是上次任务的残留，团队任务
-      // 会落进上一个工作区（用户反馈「新建任务默认绑定工作区 10-13」）。
-      // 与 useAgentRun.send 同一口径：新会话且未主动选目录 → 自动创建时间戳目录；
-      // 创建失败直接阻断派活（不回落旧目录），避免产物写错位置。
-      let dispatchCwd = cwd;
-      let dispatchProjectPath = project?.path || '';
-      if (runThreadId == null && !projectPicked) {
-        let dirError = '';
-        try {
-          const r = await window.mjcode?.createProject?.({ name: '' });
-          if (r?.ok && r.path) {
-            dispatchCwd = r.path;
-            dispatchProjectPath = r.path;
-            onAutoProject?.({
-              id: r.path,
-              name: r.name || String(r.path).split('/').filter(Boolean).pop() || r.path,
-              path: r.path,
-              branch: '',
-            });
-          } else {
-            dirError = String(r?.error || t('runtime.unknownError'));
-          }
-        } catch (err) {
-          dirError = String(err?.message || err);
-        }
-        if (dirError) {
-          console.error('[chat] auto task dir creation failed, dispatch blocked:', dirError);
-          setTeamErr(t('runtime.taskDirCreateFailed', { error: dirError }));
-          setTeamBusy(false);
-          return;
-        }
-      }
-      if (runThreadId == null) {
-        try {
-          const nt = await api.createThread({
-            provider_id: selectedModel?.provider?.id,
-            model_id: selectedModel?.model?.id,
-            provider_name: selectedModel?.provider?.name,
-            model_name: selectedModel?.model?.model_id,
-            cwd: dispatchCwd,
-            project_path: dispatchProjectPath,
-            title: goal.slice(0, 50),
-          });
-          if (!nt?.id) throw new Error('no thread id');
-          runThreadId = String(nt.id);
-          onNewMessage?.();
-          // 必须切到新会话：否则仍停在欢迎页，卡片不可见（与 send 同款真机事故）
-          onThreadCreated?.(nt);
-        } catch (err) {
-          setTeamErr(t('runtime.threadCreateFailed', { error: String(err?.message || err) }));
-          return;
-        }
-      }
-      // 团队 run 本身不产生 assistant 消息，用户提问必须显式落库，否则刷新后只剩卡片、没有提问
-      await api.sendMessage(runThreadId, { role: 'user', content: goal });
-      // 既有会话不会因 thread.id 变化触发消息重拉，就地补气泡；新建会话由切换后的拉取结果覆盖（同一条，不重复）
-      if (thread?.id != null) setMessages((m) => [...m, { role: 'user', content: goal }]);
-
-      // 2026-10-21 调试日志：用户点「派活」的渲染层事实（与主进程 ipc/dispatch 日志同一时间线）
-      window.mjcode?.teamsDebugAppend?.({
-        action: 'team_dispatch_click',
-        threadId: runThreadId,
-        detail: { teamId: activeTeam.id, goalLength: goal.length, projectPath: dispatchCwd || dispatchProjectPath || '' },
+      const out = await runTeamDispatch({
+        teamId: team.id, goal,
+        threadId: thread?.id != null ? String(thread.id) : null,
+        cwd, projectPath: project?.path || '', projectPicked, model: selectedModel, t,
+        ports: {
+          createProject: (a) => window.mjcode?.createProject?.(a),
+          createThread: (a) => api.createThread(a),
+          sendMessage: (id, msg) => api.sendMessage(id, msg),
+          dispatch: (a) => window.mjcode?.teamsDispatch?.(a),
+          debugAppend: (a) => window.mjcode?.teamsDebugAppend?.(a),
+        },
+        hooks: {
+          onAutoProject, onNewMessage, onThreadCreated,
+          // 既有会话不会因 thread.id 变化触发消息重拉 ⇒ 就地补一条用户气泡
+          onExistingThreadUserMessage: (content) => {
+            if (thread?.id != null) setMessages((m) => [...m, { role: 'user', content }]);
+          },
+        },
       });
-      const r = await window.mjcode?.teamsDispatch({
-        teamId: activeTeam.id,
-        goal,
-        threadId: runThreadId,
-        // 工作目录回落：全局团队不带 project_path，用本条任务实际解析出的工作目录兜底，
-        // worker 才有真实落点（新建任务已在上方解析为自建时间戳目录）。
-        projectPath: dispatchCwd || dispatchProjectPath || '',
-      });
-      window.mjcode?.teamsDebugAppend?.({
-        action: 'team_dispatch_result',
-        threadId: runThreadId,
-        detail: { ok: !!r?.ok, code: r?.code || null, tasks: r?.tasks || 0, runId: r?.runId || null, error: r?.error || null },
-      });
-      if (r?.ok) {
+      if (out.status === 'ok') {
         setInput('');
         setAttachments([]);
-        setModeMsg(t('teams.dispatched', { n: r.tasks || 0 }));
-      } else if (r?.code === 'LEAD_MISSING') {
-        setActiveTeam((p) => (p ? { ...p, leadMissing: true } : p));
+        setModeMsg(t('teams.dispatched', { n: out.tasks }));
+      } else if (out.status === 'lead_missing') {
+        // 缺统筹：回写编制快照（徽标上的「缺统筹」标签据此点亮）
+        applyRoster((prev) => (prev ? { ...prev, leadMissing: true } : prev));
         setTeamErr(t('teams.needLeadFirst'));
       } else {
-        setTeamErr(t('teams.dispatchFailed', { msg: r?.error || '' }));
+        setTeamErr(out.error);
       }
-    } catch (e) {
-      setTeamErr(e?.message || String(e));
     } finally {
       setTeamBusy(false);
     }
@@ -613,10 +589,19 @@ export default function ChatArea({
     // 改前按 `__` 裸切：服务名含 `__`/空格/中文时得到 `my` 或 `my%5F%5Fsvc` 这类**不存在的服务名**，
     // UI 上就显示成一个用户没配置过的服务。反解与拼名同源 → 显示名永远等于真实服务名。
     connectedServers: [...new Set((mcpTools || []).map((t) => decodeToolName(t?.function?.name)?.server).filter(Boolean))],
-    // 2026-10-20 需求⑤：军团选中态接线——徽标回显团队名、发送即自动派活、失败就地提示、可取消选中
-    activeTeam, onClearTeam: () => { setActiveTeam(null); setTeamErr(''); },
+    // 候选编制接线——徽标回显编制名（**编制偏好，不是模式开关**）、失败就地提示、可取消编制。
+    // onSelectTeam 的第二个参数承载三种意图（见 TeamDispatchPanel 的 TeamPickOptions）：
+    //   不传 → 设为编制偏好；{ dispatch, goal } → 立即派活；{ roster } → 一次性编制（临时组队）。
+    activeTeam: roster,
+    onClearTeam: () => { applyRoster(null); setTeamErr(''); },
     teamErr, onClearTeamErr: () => setTeamErr(''), teamBusy,
-    onSelectTeam: (team) => { setActiveTeam(team); setTeamErr(''); },
+    onSelectTeam: (team, opts) => {
+      setTeamErr('');
+      if (opts?.roster) { applyRoster(opts.roster); return; }
+      if (!team) return;
+      applyRoster(rosterFromTeam(team));
+      if (opts?.dispatch) dispatchToTeam(team, opts.goal);
+    },
   };
 
   // P1「撤回本轮」：把本轮改过的文件恢复到 run 开始前的状态。

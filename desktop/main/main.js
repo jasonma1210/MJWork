@@ -945,7 +945,7 @@ function resolveArtifactContext(threadId) {
 // P0-4：主进程 Agent 运行器——交互式会话工具循环迁移至主进程。
 // 渲染层只负责发起（agent:run）、订阅事件（agent:event）、中止（agent:abort）；
 // 循环本体与全部工具副作用都在主进程，刷新/关闭窗口不再杀死进行中任务。
-const agentRunner = require('./agentRunner');
+const agentRunner = require('./agentRunner'), entryRuntime = require('./entryRuntime'), scheduledTeam = require('./scheduledTeam');
 // T3-7：引擎子进程驻留——runAgent 迁入独立 utilityProcess 子进程（每 run 一个，用后即杀），
 // 工具实现/审批/凭证/流式推送全部留在主进程，由子进程经 RPC 回调（依赖方向反转）。
 // 崩溃半径从「整个应用」收缩到「单个任务」；utilityProcess 不可用（单测 stub 环境）时
@@ -1182,26 +1182,30 @@ agentRunner.initAgentRunner({
 });
 // DS Bots / T6-6：进引擎前注入工件上下文（引擎据此通告 artifact_* schema；handler 侧用同一
 // resolveArtifactContext 再做一致性校验）。解析失败不阻塞运行，只是本轮没有工件能力。
+// 双入口判定点装配（P1-4）：判定结果只做提示与预拆，**绝不建组**，也**不阻塞主链路**。
 ipcMain.handle('agent:run', (event, rawPayload) => {
   const payload = { ...(rawPayload || {}) };
   if (payload.artifactContext === undefined) {
     const ctx = resolveArtifactContext(payload.conversationId);
     if (ctx) payload.artifactContext = ctx;
   }
-  return agentRunner.startAgentRunWhenReady(payload, event.sender);
+  return entryRuntime.judgeAndStart(payload, event.sender, { chatOnce: scheduledAgentChat, resolveModel: () => scheduler.getModel() }, (p, s) => agentRunner.startAgentRunWhenReady(p, s));
 });
 ipcMain.handle('agent:abort', (_, { runId } = {}) => ({ ok: agentRunner.abortRun(runId) }));
 
 // 定时任务 Agent 入口：scheduler.runTask 到点调用
 // 审批策略 auto-safe：L2 写操作自动放行（本地审计已留痕），L1 危险命令/L3 MCP 仍弹审批卡
 // （2 分钟无响应按拒绝，与交互式一致）；沙箱：有 cwd → workspace-write（只约束 shell 子进程），无 → read-only。writeFile 走 Node fs、不经沙箱，能否落盘看 main/writeGuard.js 的白名单（只放行 cwd/userData/tmp）
-async function runScheduledAgentTask({ prompt, model: schedModel, signal, taskId = '', taskName = '', runId = '', externalPolicy = 'block' }) {
+async function runScheduledAgentTask({ prompt, model: schedModel, signal, taskId = '', taskName = '', runId = '', externalPolicy = 'block', teamId = null, threadId = null }) {
   if (!schedModel || !schedModel.model) {
     throw new Error('未配置执行模型：请在任意会话中选择模型（定时任务复用会话模型与凭证）');
   }
   // 扁平形 → 嵌套形：改用共享转换（此前是此处手抄，Worker 路径漏抄导致崩溃）
   const runModel = toAgentModel(schedModel);
   const rc = require('./scheduledOutput').scheduledRunContext({ app, taskName, contextCwd: schedModel.cwd }); // 产出目录 + 追加提示（cwd 一律用产出目录，会话 cwd 仅作可读参考）
+  // P1-6：军团绑定 / 会话绑定的**全部装配**都在 scheduledTeam.prepareScheduledRun 里（军团 fail-closed
+  // 解析 + 会话历史 + 记忆 + 军团工具 + 派活分支 + 产出回写）；放这里是为了守住 main.js 的 1500 行 code 硬档。
+  const schedCtx = scheduledTeam.prepareScheduledRun({ prompt, teamId, threadId, taskId, taskName, outputDir: rc.dir, signal, getTeamStore: () => teamStore, localStore, memoryManager, orchestrator, workerPool, taskStore, waitGroupSettled, humanizeGroupResult, createTeamToolHandlers, postTeamMessage });
   // V 层：L1 对账全量跑（零成本）+ L3 按风险门/抽样触发，且**无人值守 fail-closed**
   //（判不出来就不许宣告成功）。策略与成本口径见 main/scheduledVerify.js 的注释。
   const sv = createScheduledVerify({ taskId, cwd: rc.dir, ...scheduledL3Target() });
@@ -1211,7 +1215,8 @@ async function runScheduledAgentTask({ prompt, model: schedModel, signal, taskId
   let totalUsage = { prompt_tokens: 0, completion_tokens: 0 };
   const agentCore = await loadAgentCore();
   const finalText = await agentCore.runAgent({
-    messages: [{ role: 'user', content: String(prompt || '') }],
+    // P1-6：messages + memories 由 scheduledTeam 装配（会话历史 + 军团说明 + 带 teamId 的记忆召回）
+    ...schedCtx.runParams,
     model: runModel,
     cwd: rc.dir,
     signal,
@@ -1241,7 +1246,8 @@ async function runScheduledAgentTask({ prompt, model: schedModel, signal, taskId
       // 表里的 `chat: scheduledAgentChat` 是裸的单参版本 ⇒ 用户停掉定时任务时，在途模型请求
       // 要等内部守卫到点才停。这里与 Worker 工厂同款覆盖一次。
       chat: (payload) => scheduledAgentChat(payload, { signal }),
-      orchestrateTask: (a) => toolOrchestrateTask({ ...a, cwd: rc.dir }, { signal, conversationId: `scheduled:${taskId}`, projectPath: rc.dir }),
+      // P1-6：绑定了军团时，末两个 spread 把派活通道覆盖成**团队语义**（roster 快照 / defaultMode / budget）
+      orchestrateTask: (a) => toolOrchestrateTask({ ...a, cwd: rc.dir }, { signal, conversationId: `scheduled:${taskId}`, projectPath: rc.dir }), ...(schedCtx.teamTools ? { teamTools: schedCtx.teamTools } : {}), ...(schedCtx.teamHandler ? { orchestrateTask: schedCtx.teamHandler } : {}),
     }), { cwd: rc.dir, conversationId: `scheduled:${taskId}` }),
     // V 层旁路：台账（父 run 才有）+ 最近一次测试输出（J3 输入）
     // trace 落盘用 runId（不是 taskId）：否则同一任务的多次运行互相覆盖，事后无法还原这一次发生了什么
@@ -1250,7 +1256,7 @@ async function runScheduledAgentTask({ prompt, model: schedModel, signal, taskId
     onDone: (_text, usage) => { if (usage) totalUsage = usage; },
   });
   // 收尾判定：产物照常返回；writes 是 V 层确定性对账的「成功写入次数」，调度器据此判「零写入不成功」
-  const vres = await sv.finish(finalText || '');
+  const vres = await sv.finish(finalText || ''); schedCtx.onFinished(finalText || ''); // P1-6：绑定了 thread_id 时把产出回写原会话（Codex Thread automation 形态）
   return {
     output: finalText || '', toolCalls: toolCount, usage: totalUsage, writes: vres.writes, shellWrites: vres.shellWrites, workDir: rc.dir,
     verify: vres.verify, delivery: vres.delivery, pendingActions: sguard.take(),

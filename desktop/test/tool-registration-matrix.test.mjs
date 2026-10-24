@@ -77,18 +77,49 @@ const NO_LABEL_TOOLS = ['orchestrate_task', 'search_plugins', 'install_plugin', 
 const ENGINE_INTERNAL_TOOLS = ['todo_write', 'spawn_subagent', 'deep_research'];
 // A-08：引擎内置工具必须是**机器可读事实**（此前只存在于 agent-core 的注释里）。
 // 三方对齐：agent-core 导出 → 宿主 registry 标注 → 本矩阵的引擎内部清单。
+//
+// T-04（本轮修复）：旧版三条断言全是**空集自洽**——
+//   ① 只比 `[] === []`（两侧清单双双清空仍 PASS）；
+//   ② `[].every(...)` 恒真；
+//   ③ 只查 engine ⊆ matrix，不查反向。
+//   变异验证 M5 实测：两侧清单清空 ⇒ 162/162 全绿、三条 A-08 全 PASS ⇒ 确证的空过假闸。
+// 本版改成：**非空下界 + 双向相等 + 通道不相交（按解析出的通道判）**。
 {
-  const fromEngine = core.ENGINE_BUILTIN_TOOL_NAMES || [];
-  const fromHost = registry.ENGINE_BUILTIN_TOOLS || [];
-  check('A-08 引擎内置工具标注与引擎导出完全一致',
-    JSON.stringify([...fromEngine].sort()) === JSON.stringify([...fromHost].sort()),
-    `engine=${fromEngine.join(',')} host=${fromHost.join(',')}`);
+  const fromEngine = Array.isArray(core.ENGINE_BUILTIN_TOOL_NAMES) ? core.ENGINE_BUILTIN_TOOL_NAMES : [];
+  const fromHost = Array.isArray(registry.ENGINE_BUILTIN_TOOLS) ? registry.ENGINE_BUILTIN_TOOLS : [];
+  const engSorted = [...fromEngine].sort();
+  const hostSorted = [...fromHost].sort();
+  // ① 下界：清单为空时后面所有「相等/包含」断言都会退化成空集自洽，故先把非空钉死。
+  check('A-08 引擎内置工具清单非空（空清单会让后续相等断言退化为空集自洽）',
+    engSorted.length > 0 && hostSorted.length > 0,
+    `engine=${engSorted.length} 条 / host=${hostSorted.length} 条`);
+  // ② 双向相等：engine ⊆ host **且** host ⊆ engine。
+  //    只查单向时「宿主漏登记」看不出来，只查另一向时「宿主多登记」看不出来。
+  const missingInHost = engSorted.filter((n) => !hostSorted.includes(n));
+  const extraInHost = hostSorted.filter((n) => !engSorted.includes(n));
+  check('A-08 引擎内置工具标注与引擎导出双向相等（缺一或多一都红）',
+    missingInHost.length === 0 && extraInHost.length === 0,
+    `engine=[${engSorted.join(',')}] host=[${hostSorted.join(',')}]`
+    + (missingInHost.length ? `；宿主缺：${missingInHost.join(',')}` : '')
+    + (extraInHost.length ? `；宿主多：${extraInHost.join(',')}` : ''));
+  // ③ 内置工具解析出的通道不得是已登记 RPC 通道。
+  //    旧判据是 `TOOL_CHANNELS.includes(工具名)` —— 拿**工具名**去比**通道名**，天然不相交，
+  //    恒真。正确判法：先按 TOOL_HANDLER_NAMES 解析出通道，再看该通道是否已登记。
+  const channelized = fromHost.filter((n) => {
+    const ch = core.TOOL_HANDLER_NAMES[n];
+    return ch != null && registry.TOOL_CHANNELS.includes(ch);
+  });
   check('A-08 引擎内置工具不得同时登记宿主通道',
-    fromHost.every((n) => !registry.TOOL_CHANNELS.includes(n)),
-    fromHost.filter((n) => registry.TOOL_CHANNELS.includes(n)).join(','));
-  check('A-08 矩阵的引擎内部清单必须包含全部引擎内置工具',
-    fromEngine.every((n) => ENGINE_INTERNAL_TOOLS.includes(n)),
-    fromEngine.filter((n) => !ENGINE_INTERNAL_TOOLS.includes(n)).join(','));
+    channelized.length === 0,
+    channelized.length ? `同时有通道：${channelized.map((n) => `${n}→${core.TOOL_HANDLER_NAMES[n]}`).join(',')}` : `${fromHost.length} 个工具均无宿主通道`);
+  // ④ 与矩阵自身声明的引擎内部清单双向相等（旧版只查 engine ⊆ ENGINE_INTERNAL_TOOLS）。
+  const notInMatrix = engSorted.filter((n) => !ENGINE_INTERNAL_TOOLS.includes(n));
+  const extraInMatrix = [...ENGINE_INTERNAL_TOOLS].sort().filter((n) => !engSorted.includes(n));
+  check('A-08 矩阵的引擎内部清单与引擎导出双向相等',
+    notInMatrix.length === 0 && extraInMatrix.length === 0,
+    `矩阵=[${[...ENGINE_INTERNAL_TOOLS].sort().join(',')}] engine=[${engSorted.join(',')}]`
+    + (notInMatrix.length ? `；矩阵缺：${notInMatrix.join(',')}` : '')
+    + (extraInMatrix.length ? `；矩阵多：${extraInMatrix.join(',')}` : ''));
 }
 // TOOL_CHANNELS 中非「模型工具名→通道」映射产物的通道（模型调用通道 / mcp__* 统一入口）。
 const NON_TOOL_CHANNELS = ['chat', 'mcpCallTool'];
@@ -138,6 +169,9 @@ check('0 审批登记面已从 approval.js 导出（TOOL_LEVEL / READONLY_TOOLS 
 
 // ── 各环节的数据源（只读一次，逐工具断言复用）──
 const indexSrc = read('agent-core/index.js');
+// T-04：引擎内部工具的「确有处理」判据要在**剥离注释后**的源码上求值——
+// 注释里写一句 `case 'x':` 不代表引擎真的处理它（本文件 ⑤-d 已因同一形态踩过坑）。
+const indexSrcCode = blankComments(indexSrc);
 const mainSrc = blankComments(read('main/main.js'));
 const hStart = mainSrc.indexOf('createToolHandlers: ({ sender');
 const hEnd = mainSrc.indexOf("ipcMain.handle('agent:run'");
@@ -200,11 +234,14 @@ for (const t of ALL_TOOLS) {
   const okSchema = BASE_NAMES.includes(t) || RUNTIME_SCHEMA_TOOLS.includes(t);
   // ② RPC 通道白名单（引擎内部工具不过 RPC，无通道义务）
   const okChan = engineInternal ? true : (channel != null && CHANNELS.has(channel));
-  // ③ handler：引擎内部工具由 agent-core 显式分支处理；其余必须在**它该出现的调用形态**里
-  // 真有这个键。条件展开的通道（member-task）查「成员任务形态」，其余查「交互式形态 ∪ main.js 区间」。
+  // ③ handler：引擎内部工具由 agent-core 的 switch **显式 case 分支**处理；其余必须在
+  // **它该出现的调用形态**里真有这个键。
+  // T-04：旧判据 `new RegExp("['\"`]tool['\"`]").test(indexSrc)` 只要求「名字出现过」——
+  //   工具名躺在数组里、甚至躺在注释里都算过（实测：清单清空后此条仍 PASS）。
+  //   收紧为「确有 `case '<tool>':` 分支」，并在剥离注释后的源码上求值。
   const shapeKeys = engineInternal ? null : shapeKeysOf(channel);
   const okHandler = engineInternal
-    ? new RegExp(`['"\`]${t}['"\`]`).test(indexSrc)
+    ? new RegExp(`case\\s+'${t}'\\s*:`).test(indexSrcCode)
     : (channel != null && (shapeKeys
       ? shapeKeys.has(channel)
       : new RegExp(`\\b${channel}\\b`).test(handlerRegion)));
@@ -280,6 +317,15 @@ console.log('');
   });
   check('③ 主进程 handler：每个非引擎内部工具均在**其调用形态**下注册', missing.length === 0,
     missing.length ? `未注册：${missing.join(', ')}` : `${needHandler.length} 个工具全覆盖`);
+
+  // ③-f（T-04）：引擎内部工具的「第三环节」也必须是有内容的下界断言。
+  //   旧版这里把它们整体排除（`needHandler` 过滤掉了 ENGINE_INTERNAL_TOOLS），
+  //   于是「清单里列了、引擎里没处理」这种状态只能靠上面那条「名字出现过」兜——
+  //   而它空了。现在改为逐个要求**确有 case 分支**。
+  const missingBranch = ENGINE_INTERNAL_TOOLS.filter((t) => !new RegExp(`case\\s+'${t}'\\s*:`).test(indexSrcCode));
+  check('③ 引擎内部工具在 agent-core 中均有显式 case 分支处理（不是「名字出现过」）',
+    missingBranch.length === 0,
+    missingBranch.length ? `无对应分支：${missingBranch.join(', ')}` : `${ENGINE_INTERNAL_TOOLS.length} 个工具均有分支`);
 
   // ── A-03 核心：把「条件展开」本身变成被断言的对象 ──────────────────────────
   // ① 声明表必须覆盖全部条件展开键（差异集 ⇔ 声明表，双向）：漏登记 → 红，

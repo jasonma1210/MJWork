@@ -64,9 +64,12 @@ const MEMBER_TASK_ONLY_CHANNELS = [
 ];
 // 引擎内部显式分支处理的工具（模型侧名称）：不经 RPC、无通道义务。
 // A-08 收口：这是**机器可读标注**，由 tool-registration-matrix 断言
-//   ① 与 agent-core 导出的 ENGINE_BUILTIN_TOOL_NAMES 完全一致；
+//   ① 与 agent-core 导出的 ENGINE_BUILTIN_TOOL_NAMES 完全一致（**双向**相等）；
 //   ② 不与 TOOL_CHANNELS 相交（内置工具不该同时登记宿主通道）。
-const ENGINE_BUILTIN_TOOLS = ['todo_write'];
+// T-04：清单曾只列 todo_write，漏了同为「引擎内部 switch 分支处理、无宿主通道」的
+//   spawn_subagent 与 deep_research（二者在 TOOL_HANDLER_NAMES 里映射为 undefined）。
+//   与 agent-core 那份必须逐字一致——它是同一事实的两处落点，不是两份独立配置。
+const ENGINE_BUILTIN_TOOLS = ['todo_write', 'spawn_subagent', 'deep_research'];
 // 通知型回调（fire-and-forget，单向序列化即可）
 const NOTIFY_CBS = ['onStream', 'onToolCall', 'onMessage', 'onTodos', 'onSubagentEvent', 'onBudget', 'onTrace', 'onDone'];
 // 请求-响应型回调（需要返回值语义：onSuspend 返回断点是否保存成功）

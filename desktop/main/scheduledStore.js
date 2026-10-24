@@ -18,13 +18,31 @@ const { writeFileDurable } = require('./data/durableWrite');
 function empty() { return { tasks: [], runs: [] }; }
 const corruptCopyPath = (file) => `${file}.corrupt-${Date.now()}`;
 
+/**
+ * 可选列的归一（fail-closed）：`team_id` / `thread_id` 必须是字符串或 null。
+ * 非字符串（对象/数组/数字/空串）一律落 null —— 定时任务是**无人值守执行面**，
+ * 脏值会让「这次到底跑哪支军团 / 回写哪个会话」变得不可预期。
+ */
+function optStr(v) {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  return s ? s.slice(0, 128) : null;
+}
+
+/** 任务对象归一：只碰新增的两条可选列，其余字段原样保留（不猜、不改写）。 */
+function normalizeTask(t) {
+  if (!t || typeof t !== 'object') return t;
+  if (!('team_id' in t) && !('thread_id' in t)) return t;
+  return { ...t, team_id: optStr(t.team_id), thread_id: optStr(t.thread_id) };
+}
+
 // 读一个文件为 store 形状；不存在/损坏/结构非法一律返回 null（不抛、不猜）
 function parse(file) {
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!j || !Array.isArray(j.tasks)) return null;
     return {
-      tasks: j.tasks,
+      tasks: j.tasks.map(normalizeTask),
       runs: Array.isArray(j.runs) ? j.runs : [],
       cleared_at: typeof j.cleared_at === 'string' ? j.cleared_at : '',
     };
@@ -118,4 +136,4 @@ function restoreFromBackup(file) {
   return { ok: true, store: { tasks: snap.tasks, runs: snap.runs }, tasks: snap.tasks.length, runs: snap.runs.length };
 }
 
-module.exports = { parse, read, write, restoreFromBackup };
+module.exports = { parse, read, write, restoreFromBackup, normalizeTask, optStr };

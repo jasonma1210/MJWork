@@ -9,6 +9,8 @@ import Button from './ui/Button';
 import { useI18n, tGlobal } from '../i18n';
 // 窗口解析与主进程同一张表（lib/modelWindows.ts ↔ main/modelWindows.js 有 parity 测试）
 import { resolveWindow } from '../lib/modelWindows';
+// §7.6 / P1-6：定时任务可预先声明「用哪支军团跑」（team_id 随任务落库，空 = 匿名编排）
+import { ScheduledTeamPicker, ScheduledTeamBadge } from './ScheduledTeamPicker';
 
 // labelKey 而非 label：顶层常量不持有求值结果，渲染时经 t() 取文案
 // P0-8a：missed=应用未运行期间错过计划执行（主进程启动扫描标记，绝不静默）
@@ -109,7 +111,7 @@ export default function ScheduledTasks() {
   const [filter, setFilter] = useState('all'); // all | enabled | disabled
   const [showForm, setShowForm] = useState(false);
   // Bug2：TRAE 同款表单——任务名称 + 提示词 + 重复/时间/有效期
-  const [form, setForm] = useState({ name: '', prompt: '', repeat: 'daily', time: '09:00', schedule: '0 9 * * *', validType: 'forever', validUntil: '', allowExternal: false, expectsFile: true, triggerType: 'cron', eventSource: '', eventName: '', modelRef: '' });
+  const [form, setForm] = useState({ name: '', prompt: '', repeat: 'daily', time: '09:00', schedule: '0 9 * * *', validType: 'forever', validUntil: '', allowExternal: false, expectsFile: true, triggerType: 'cron', eventSource: '', eventName: '', modelRef: '', teamId: '' });
   // 任务级模型选项：providers × models 展平（value 用 `providerId::modelId`，
   // providerId 由主进程生成、不含 '::'，所以按第一个分隔符切分是安全的）
   const [modelOptions, setModelOptions] = useState([]);
@@ -256,6 +258,9 @@ export default function ScheduledTasks() {
         // 时钟 or 事件触发（事件任务没有 cron，由 ingestEvent 驱动）
         trigger_type: isEvent ? 'event' : 'cron',
         ...(isEvent ? { event_source: form.eventSource.trim(), event_name: form.eventName.trim() } : {}),
+        // §7.6：预先声明的军团（null = 匿名编排，与既有行为逐字一致）。
+        // 无人值守不静默升级：这里只提交用户显式选定的值，不做任何自动判定。
+        team_id: form.teamId ? String(form.teamId) : null,
         // 任务级模型：null = 跟随会话当前模型
         model: (() => {
           const o = modelOptions.find((x) => x.value === form.modelRef);
@@ -263,7 +268,7 @@ export default function ScheduledTasks() {
         })(),
       });
       setShowForm(false);
-      setForm({ name: '', prompt: '', repeat: 'daily', time: '09:00', schedule: '0 9 * * *', validType: 'forever', validUntil: '', allowExternal: false, expectsFile: true, triggerType: 'cron', eventSource: '', eventName: '', modelRef: '' });
+      setForm({ name: '', prompt: '', repeat: 'daily', time: '09:00', schedule: '0 9 * * *', validType: 'forever', validUntil: '', allowExternal: false, expectsFile: true, triggerType: 'cron', eventSource: '', eventName: '', modelRef: '', teamId: '' });
       setError('');
       setNotice(t('scheduled.createdNotice'));
       load();
@@ -494,6 +499,7 @@ export default function ScheduledTasks() {
               {modelOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <p className="text-xs text-text2 mb-3">{t('scheduled.modelHint')}</p>
+            <ScheduledTeamPicker value={form.teamId} onChange={(v) => setForm({ ...form, teamId: v })} />
             {smallWindowForBulk && (
               <p className="text-xs text-danger mb-3 -mt-2">
                 {t('scheduled.modelTooSmall', {
@@ -622,6 +628,8 @@ export default function ScheduledTasks() {
                   {task.valid_until && (
                     <span className="text-xs text-text2 shrink-0" title={t('scheduled.validUntilTitle')}>{t('scheduled.untilPrefix', { date: task.valid_until })}</span>
                   )}
+                  {/* §7.6：军团绑定徽标只按**任务里真实存在的 team_id** 显示（不按表单状态推断） */}
+                  <ScheduledTeamBadge teamId={task.team_id} />
                 </div>
                 <div className="text-xs text-text2 mt-1 line-clamp-2">{task.prompt.slice(0, 100)}</div>
                 {/* 熔断留痕：自动暂停必须给理由，否则用户只看到一个「已暂停」，会以为是自己关的 */}

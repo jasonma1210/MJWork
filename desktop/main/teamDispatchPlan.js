@@ -92,6 +92,80 @@ function buildChatTasks({ roster } = {}) {
   });
 }
 
+// ── 确认卡预拆任务的入口归一（双入口 P0/P1 接线，2026-10-24）───────────────
+//
+// 为什么需要这一层：`entryRouter` 的 C1 确认卡承诺「卡上的子任务清单就是实际执行的清单」
+// （设计纪律①：否则用户确认 A、执行 B）。渲染层点「按这个执行」时把卡上清单原样回传，
+// 由 `teams:dispatch` 当作 presetTasks 直接落库——绕开 LLM 二次拆解，两者才一致。
+//
+// 但这意味着**渲染层的内容会变成模型提示词**，所以必须在这里归一而不是信任入参：
+//   · 数量上限 8（与 orchestrator 的 DAG 上限同口径）——一次 IPC 不能塞进任意多任务；
+//   · title/prompt 长度封顶——超长正文会撑爆 Worker 上下文；
+//   · dependsOn 只保留「本批真实存在的 id」且剔除自环——否则编排器会判环失败、
+//     整组派不出去（真机踩过：一个坏依赖让所有任务都没派）。
+// 非法项**丢弃而非整批失败**：确认卡是用户已经看过的清单，个别条目坏掉不该让派活整体失败；
+// 若一条都不合法则返回 null，回落 LLM 拆解（宁可用新拆解，也不执行空计划）。
+
+const PRESET_TASK_MAX = 8;
+const PRESET_TITLE_MAX = 200;
+const PRESET_PROMPT_MAX = 4000;
+
+/**
+ * 归一「确认卡回传的预拆任务」。纯函数、不抛异常。
+ * @param {unknown} input
+ * @returns {Array<object>|null} 合法则返回可交给 orchestrator 的 tasks；否则 null
+ */
+function normalizePresetTasks(input) {
+  if (!Array.isArray(input) || !input.length) return null;
+  const head = input.slice(0, PRESET_TASK_MAX);
+  const kept = [];
+  for (let i = 0; i < head.length; i++) {
+    const raw = head[i];
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const title = String(raw.title == null ? '' : raw.title).trim().slice(0, PRESET_TITLE_MAX);
+    const prompt = String(raw.prompt == null ? '' : raw.prompt).trim().slice(0, PRESET_PROMPT_MAX);
+    if (!title || !prompt) continue;
+    const id = String(raw.id == null ? '' : raw.id).trim().slice(0, 64) || `t${i + 1}`;
+    kept.push({ id, title, prompt, dependsOn: Array.isArray(raw.dependsOn) ? raw.dependsOn : [] });
+  }
+  if (!kept.length) return null;
+  // id 去重（后者让位）：重复 id 会让 depends_on 指向二义节点
+  const seen = new Set();
+  const tasks = [];
+  for (const t of kept) {
+    if (seen.has(t.id)) continue;
+    seen.add(t.id);
+    tasks.push(t);
+  }
+  if (!tasks.length) return null;
+  const ids = new Set(tasks.map((t) => t.id));
+  return tasks.map((t) => ({
+    id: t.id,
+    title: t.title,
+    prompt: t.prompt,
+    // 只留本批存在的依赖、去掉自环；顺序保持不变（编排器按拓扑分层）
+    dependsOn: [...new Set(t.dependsOn.map(String).filter((d) => ids.has(d) && d !== t.id))],
+    critical: false,
+    maxRetry: 1,
+  }));
+}
+
+/**
+ * 解析「本次派活用哪份任务清单」——派活层唯一的决策点（可单测，不依赖 IPC）。
+ *
+ * 优先级：对话型目标（确定性清单）> 确认卡回传（归一后）> null（回落 LLM 拆解）。
+ * 为什么要有这一层：早期 `ipc/teams.js` 里同时存在「归一后的 presetTasks」与「原样透传
+ * payload.presetTasks」两条路，后者会把前者顶掉⇒归一形同虚设。把决策收成一个纯函数后，
+ * 「绕过归一」这种退化只能通过改这个函数发生，行为断言能直接抓住。
+ *
+ * @param {{chatOnly?:boolean, roster?:Array<object>, incoming?:unknown}} input
+ * @returns {Array<object>|null}
+ */
+function resolveDispatchPresetTasks({ chatOnly = false, roster = [], incoming = null } = {}) {
+  if (chatOnly) return buildChatTasks({ roster });
+  return normalizePresetTasks(incoming);
+}
+
 /**
  * 从全量名册里挑出「本次真正参与」的成员（B-05）。
  *
@@ -160,5 +234,7 @@ module.exports = {
   pickParticipatingRoster,
   isChatOnlyGoal,
   buildChatTasks,
+  normalizePresetTasks,
+  resolveDispatchPresetTasks,
   SELECT_MODE,
 };

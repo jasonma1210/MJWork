@@ -151,12 +151,69 @@ const mkTasks = (n) => Array.from({ length: n }, (_, i) => ({ id: `t${i + 1}`, t
   check('B-05 接线：派活钩子调用 buildDispatchPlan', src.includes('buildDispatchPlan({'));
   // 反向：`roster: snapshotRoster(roster)` 是改前的全量快照形态，回来一个就说明修法被回退
   check('B-05 接线：已不存在「全量快照」旧写法', !/roster:\s*snapshotRoster\(roster\)\s*,/.test(src));
-  check('对话型接线：派活层把确定性任务交给编排器（跳过 LLM 拆解）',
-    src.includes('isChatOnlyGoal(goal)') && src.includes('buildChatTasks({ roster })')
-      && src.includes('presetTasks'));
+  // 行为断言（不读源码文本）：对话型目标必须由 resolveDispatchPresetTasks 产出确定性清单，
+  // 且**优先于**任何回传清单 —— 这条替换掉了原先的 `src.includes('buildChatTasks({ roster })')`
+  // 文本断言（那条在「函数搬进 teamDispatchPlan」后会假红，在「分支被绕过」时又会假绿）。
+  const { resolveDispatchPresetTasks } = require(path.join(__dirname, '..', 'main', 'teamDispatchPlan'));
+  const chatTasks = resolveDispatchPresetTasks({
+    chatOnly: true, roster: [mkMember('a'), mkMember('b')], incoming: [{ title: 'x', prompt: 'y' }],
+  });
+  check('对话型接线：确定性清单优先于回传清单（跳过 LLM 拆解）',
+    Array.isArray(chatTasks) && chatTasks.length === 2 && chatTasks[0].prompt.includes('不要调用任何工具'),
+    JSON.stringify(chatTasks && chatTasks.map((t) => t.title)));
   const pool = fs.readFileSync(path.join(__dirname, '..', 'main', 'workerPool.js'), 'utf8');
   check('对话型接线：Worker 读 runMeta.chatOnly 并下发空工具表',
     pool.includes('runMeta.chatOnly') && pool.includes('tools: []'));
+}
+
+// ── ⑦ 确认卡预拆任务归一（双入口，2026-10-24）：**行为断言**，不读源码文本 ──
+// 语义：卡上展示的子任务必须就是实际执行的子任务（设计纪律①），所以回传清单要经
+// normalizePresetTasks 归一；归一必须能挡住「超量 / 超长 / 坏依赖 / 重复 id」。
+{
+  const {
+    normalizePresetTasks,
+  } = require(path.join(__dirname, '..', 'main', 'teamDispatchPlan'));
+
+  const ok = normalizePresetTasks([
+    { id: 't1', title: '查资料', prompt: '查 A 与 B 的差异' },
+    { title: '写结论', prompt: '汇总成三条', dependsOn: ['t1', 't1', '不存在'] },
+  ]);
+  check('确认卡：合法清单原样通过（缺 id 自动补 t2）',
+    Array.isArray(ok) && ok.length === 2 && ok[0].id === 't1' && ok[1].id === 't2',
+    JSON.stringify(ok));
+
+  check('确认卡：依赖去重且剔除「不存在」与自环（否则编排器判环、整组派不出去）',
+    JSON.stringify(ok[1].dependsOn) === JSON.stringify(['t1'])
+      && Array.isArray(ok[0].dependsOn) && ok[0].dependsOn.length === 0,
+    JSON.stringify(ok.map((t) => t.dependsOn)));
+
+  check('确认卡：空清单 / 全非法 ⇒ null（回落 LLM 拆解，不执行空计划）',
+    normalizePresetTasks([]) === null
+      && normalizePresetTasks(null) === null
+      && normalizePresetTasks([{ title: '  ', prompt: '' }, null, 42]) === null);
+
+  check('确认卡：数量封顶 8（与 DAG 上限同口径，一次 IPC 不能塞任意多任务）',
+    normalizePresetTasks(Array.from({ length: 20 }, (_, i) => ({ title: `t${i}`, prompt: 'p' }))).length === 8);
+
+  check('确认卡：超长正文被截断（不撑爆 Worker 上下文）',
+    normalizePresetTasks([{ title: 'x'.repeat(500), prompt: 'y'.repeat(9000) }])[0].prompt.length === 4000
+      && normalizePresetTasks([{ title: 'x'.repeat(500), prompt: 'p' }])[0].title.length === 200);
+
+  check('确认卡：重复 id 只保留首个（防 depends_on 指向二义节点）',
+    normalizePresetTasks([
+      { id: 'dup', title: 'A', prompt: 'a' },
+      { id: 'dup', title: 'B', prompt: 'b' },
+    ]).length === 1);
+
+  // 诊断臂：非对话型 + 回传清单 ⇒ 必须走归一（而不是原样透传）。
+  // 断言的是**行为**：超量被截到 8、坏依赖被剔除；若哪天有人加回「原样透传」分支，
+  // 这里会因为拿到 20 条 / 带非法依赖而变红。
+  const { resolveDispatchPresetTasks } = require(path.join(__dirname, '..', 'main', 'teamDispatchPlan'));
+  const many = Array.from({ length: 20 }, (_, i) => ({ title: `t${i}`, prompt: 'p', dependsOn: ['nope'] }));
+  const resolved = resolveDispatchPresetTasks({ chatOnly: false, roster: [], incoming: many });
+  check('确认卡接线：派活层消费的是归一结果（非法输入不会原样进编排器）',
+    Array.isArray(resolved) && resolved.length === 8 && resolved.every((t) => t.dependsOn.length === 0),
+    JSON.stringify({ n: resolved && resolved.length, deps: resolved && resolved[0] && resolved[0].dependsOn }));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

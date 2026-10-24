@@ -5,12 +5,10 @@
 // - P0-D：执行通道为 Agent（agent-core 工具循环 + 审批分级 + 沙箱 + 轮次预算），
 //   未提供 runAgentTask 时回落单轮对话（chatOnce，兼容旧调用方）
 // - 单任务墙钟超时（默认 10 分钟，startScheduler 可注入 taskTimeoutMs）防无人值守僵死
-// - 有效期 valid_until（YYYY-MM-DD）过期后自动跳过；任务执行中不重复触发
-// - P0-8a：上次触发时刻 last_fired 随 store 持久化（原内存 Map 重启即丢失）；启动时扫描
+// - 有效期 valid_until（YYYY-MM-DD）过期后自动跳过；任务执行中不重复触发// - P0-8a：上次触发时刻 last_fired 随 store 持久化（原内存 Map 重启即丢失）；启动时扫描
 //   [last_fired, now] 区间，宽限窗口内（与今天同日）补跑一次，否则标记 missed + last_status，
 //   绝不静默；回放窗口上限 7 天，超长缺失只标记不补跑
-// - P0-8b：runTask 收尾把 status/last_run_at/last_result 写回任务对象（UI 卡片直读，
-//   此前主进程从不写入这三个字段）
+// - P0-8b：runTask 收尾把 status/last_run_at/last_result 写回任务对象（UI 卡片直读，此前主进程从不写）
 // - 与服务端 /scheduled-tasks 同构：list 返回任务数组，runs 返回执行历史数组
 const path = require('path');
 const fs = require('fs');
@@ -325,6 +323,7 @@ async function runTask(id, trigger = 'manual') {
     output: '',
     error: '',
     channel: useAgent ? 'agent' : 'chat', // P0-D：执行通道可观测
+    execution_mode: t.team_id ? 'team' : 'agent', // 团队化执行（预先声明了 team_id）还是匿名编排
     tools: 0,                              // Agent 通道的工具调用计数
     tokens: null,                          // Agent 通道的 token 用量 {prompt_tokens, completion_tokens}
     writes: null,                          // Agent 通道的写工具成功次数（V 层对账）；null=未知，不能用它判「没写文件」
@@ -349,6 +348,9 @@ async function runTask(id, trigger = 'manual') {
         runId: run.id,
         // 任务级放行开关：默认（缺省）拦截对外/不可逆动作，转成「待确认动作清单」
         externalPolicy: t.external_policy === 'allow' ? 'allow' : 'block',
+        // 军团/会话绑定（可选）：执行通道据此走团队派活语义 / 装入原会话历史
+        teamId: t.team_id || null,
+        threadId: t.thread_id || null,
       });
       run.output = String(r?.output || '').slice(0, 20000);
       run.tools = Number(r?.toolCalls) || 0;
@@ -554,8 +556,9 @@ function normalizeTaskModel(m) {
 }
 
 // 创建定时任务（IPC 与模型工具共用同一实现，避免两套校验规则漂移）。
-function createTask({ name, prompt, schedule, enabled, valid_until: validUntilRaw, external_policy: externalPolicy, trigger_type: triggerType, event_source: eventSource, event_name: eventName, model: taskModel, expects_file: expectsFile } = {}) {
-  const nm = String(name || '').trim();
+// teamId / threadId：可选的**军团绑定**与**会话绑定**（设计文档 §14 P1-6）。
+// 无人值守纪律：团队化必须**预先声明**（team_id + 预算），不得在无人值守时静默升级。
+function createTask({ name, prompt, schedule, enabled, valid_until: validUntilRaw, external_policy: externalPolicy, trigger_type: triggerType, event_source: eventSource, event_name: eventName, model: taskModel, expects_file: expectsFile, teamId, threadId } = {}) {  const nm = String(name || '').trim();
   const pr = String(prompt || '');
   const sc = String(schedule || '').trim();
   const isEvent = triggerType === 'event';
@@ -586,6 +589,9 @@ function createTask({ name, prompt, schedule, enabled, valid_until: validUntilRa
     expects_file: expectsFile !== false,
     // 任务级模型（null = 跟随会话当前模型）。存快照而不是引用：运行时 provider 可能已被删。
     model: normalizeTaskModel(taskModel),
+    // 可选绑定：team_id = 用哪支军团跑（null = 匿名编排，现状）；thread_id = 绑定哪个会话（Codex Thread automation 形态）
+    team_id: scheduledStore.optStr(teamId),
+    thread_id: scheduledStore.optStr(threadId),
     valid_until: validUntilRaw ? String(validUntilRaw).slice(0, 10) : null,
     created_at: new Date().toISOString(),
   };
@@ -614,6 +620,7 @@ function registerIpc() {
         name: { max: 120, optional: true },
         prompt: { max: 20000, optional: true },
         schedule: { max: 120, optional: true },
+        team_id: { max: 128, optional: true }, thread_id: { max: 128, optional: true },
       });
     } catch (e) {
       return { ok: false, error: e.message };
@@ -656,6 +663,9 @@ function registerIpc() {
       if (has('valid_until')) patch.valid_until = p.valid_until ? String(p.valid_until).slice(0, 10) : null;
       if (has('external_policy')) patch.external_policy = p.external_policy === 'allow' ? 'allow' : 'block';
       if (has('expects_file')) patch.expects_file = p.expects_file !== false;
+      // 军团/会话绑定（可选）：非字符串一律落 null（fail-closed，见 scheduledStore.optStr）
+      if (has('team_id')) patch.team_id = scheduledStore.optStr(p.team_id);
+      if (has('thread_id')) patch.thread_id = scheduledStore.optStr(p.thread_id);
       // 用「键存在」判定而不是非空：显式传 model:null 表示**恢复跟随会话模型**
       if (Object.prototype.hasOwnProperty.call(p, 'model')) patch.model = normalizeTaskModel(p.model);
       Object.assign(t, patch);
@@ -669,7 +679,7 @@ function registerIpc() {
     if (!name || !prompt || !schedule) return { ok: false, error: '任务名称、提示词与 Cron 表达式必填' };
     if (!cronValid(schedule)) return { ok: false, error: 'Cron 表达式无效（5 字段：分 时 日 月 周）' };
     const validUntil = p.valid_until ? String(p.valid_until).slice(0, 10) : null;
-    return createTask({ name, prompt, schedule, enabled: p.enabled, valid_until: validUntil, external_policy: p.external_policy, model: p.model, expects_file: p.expects_file });
+    return createTask({ name, prompt, schedule, enabled: p.enabled, valid_until: validUntil, external_policy: p.external_policy, model: p.model, expects_file: p.expects_file, teamId: p.team_id, threadId: p.thread_id });
   });
   ipcMain.handle('scheduled:delete', async (_, { id } = {}) => {
     // X14：id 决定删掉哪条任务及其运行历史——非字符串会 filter 掉全部（id 不匹配任何记录），

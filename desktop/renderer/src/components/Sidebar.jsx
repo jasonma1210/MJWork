@@ -1,25 +1,35 @@
 import { useEffect, useState } from 'react';
 import ThreadList from './ThreadList';
-import { IconClock, IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers } from './icons';
+import { IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers } from './icons';
 import { activeNavOf } from '../lib/navState';
 import logo from '../assets/logo.png';
 import { useI18n } from '../i18n';
 
-// 左侧栏（对标 Codex）：New chat / Scheduled / Tasks / Plugins + Projects→会话嵌套；底部 Settings
-// 「打开项目」不设一级导航：Projects 区头「+」承担添加（Codex 同款），
-// 新会话自动归属当前项目/默认工作区，无需先「打开项目」再操作
+// 左侧栏（2026-10-24 双入口重组）：一级导航从 4 项收敛为 2 项 ——「新建任务」+「助理」。
+//
+// 取舍说明（对应设计文档 §9 P0-2 与 D8「生态中心的层级 = 降级为弹层」）：
+//   · 「定时任务」与「团队编制」不再是独立入口，它们是**助理工作台的子 Tab**
+//     （Tab1 军团编制 / Tab3 定时任务）⇒ 侧栏删掉这两项；
+//   · 「生态中心」按 D8 降级为弹层，但**必须仍然可达** ⇒ 放在底部次级区
+//     （与「已归档」「设置」同列），弹层打开时它高亮（activeNav==='ecosystem'）。
+//     为什么不放回一级区：用户只要 2 个一级入口（D8 的推荐结论）；
+//     为什么不彻底删掉：生态中心是数字员工/技能/连接器的唯一浏览入口，
+//     删掉就断了「招募数字员工 → 组成军团」这条主链路。
 export default function Sidebar({
   threads, activeThread, onSelect, onNew, onDelete, onRenameThread, onAssignThread, onOpenArchive,
-  onOpenScheduled, onOpenEcosystem, onOpenTeams, onOpenProjectPicker, onOpenSettings,
+  onOpenAssistant, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
   projects, activeProject, onSelectProject, onRemoveProject, onRenameProject,
   onNewThread, filter, view,
 }) {
   const { t } = useI18n();
   // 一级导航选中态：互斥且穷尽（判定逻辑与其背景见 lib/navState.ts）
   const activeNav = activeNavOf({
-    showScheduled: !!view?.showScheduled,
+    showAssistant: !!view?.showAssistant,
+    assistantTab: view?.assistantTab,
     showDashboard: !!view?.showDashboard,
     showEcosystem: !!view?.showEcosystem,
+    // 兼容输入：旧调用方仍可能传这两个字段（它们现在是助理的子 Tab）
+    showScheduled: !!view?.showScheduled,
     showTeams: !!view?.showTeams,
     hasActiveThread: !!activeThread,
   });
@@ -44,15 +54,12 @@ export default function Sidebar({
         <div className="text-xs text-text2 mt-1 truncate">{t('sidebar.tagline')}</div>
       </div>
 
-      {/* 主操作（对标 Codex：New chat / Scheduled / Plugins）
-          选中态由 App 计算 activeNav 后传入（互斥）；此前只有 New chat 传 active，
+      {/* 一级导航（对标 Codex 的 New chat）：两个入口 ——「新建任务」与「助理」。
+          选中态由 activeNavOf 计算（互斥且穷尽）；此前只有 New chat 传 active，
           且判据是 !activeThread —— 在定时任务页里没有打开会话，于是该亮的不亮。 */}
       <div className="px-2 space-y-1">
         <NavItem icon={<IconEdit size={16} />} label={t('sidebar.newChat')} onClick={onNew} active={activeNav === 'new'} />
-        <NavItem icon={<IconClock size={16} />} label={t('sidebar.scheduled')} onClick={onOpenScheduled} active={activeNav === 'scheduled'} />
-        <NavItem icon={<IconPuzzle size={16} />} label={t('sidebar.ecosystem')} onClick={onOpenEcosystem} active={activeNav === 'ecosystem'} />
-        {/* M5 / T5-1：MJ 军团（团队编制页）——与生态中心并列的一级入口 */}
-        <NavItem icon={<IconUsers size={16} />} label={t('sidebar.teams')} onClick={onOpenTeams} active={activeNav === 'teams'} />
+        <NavItem icon={<IconUsers size={16} />} label={t('sidebar.assistant')} onClick={onOpenAssistant} active={activeNav === 'assistant'} />
       </div>
 
       {/* 会话（项目 → 会话 二级结构） */}
@@ -79,8 +86,9 @@ export default function Sidebar({
         onOpenProjectPicker={onOpenProjectPicker}
       />
 
-      {/* 底部 */}
+      {/* 底部次级区：生态中心（D8：降级为弹层，但保留可达入口）/ 归档 / 设置 */}
       <div className="border-t border-border px-2 py-2 shrink-0">
+        <NavItem icon={<IconPuzzle size={16} />} label={t('sidebar.ecosystem')} onClick={onOpenEcosystem} active={activeNav === 'ecosystem'} />
         {/* P1-E：归档管理仅本地模式可用（服务端归档 API 未实现）——在线模式隐藏入口，
             此前在线模式点击会直接弹「归档管理需离线模式或等待服务端支持」错误 */}
         {onOpenArchive && <NavItem icon={<IconArchive size={16} />} label={t('sidebar.archived')} onClick={onOpenArchive} />}

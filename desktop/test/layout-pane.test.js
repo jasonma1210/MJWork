@@ -89,7 +89,9 @@ check('侧栏文件树已移出（避免与右侧面板重复）', () => {
   const sidebar = read('components/Sidebar.jsx');
   assert.ok(!/FileTree/.test(sidebar), 'Sidebar 仍引入 FileTree');
   // T3-2 i18n：原断言 /任务/ 匹配的是「定时任务」区段入口文案，改为两段式验证
-  assertI18nCopy(sidebar, 'sidebar', '任务', '侧栏区段应改名为「任务」');
+  // 2026-10-24 双入口重组：侧栏不再有「定时任务」区段（它已降级为「助理 → 定时任务」子 Tab），
+  // 故按新 IA 验：一级入口「助理」的文案必须存在且被 Sidebar 真实引用（同样的两段式强度）。
+  assertI18nCopy(sidebar, 'sidebar', '助理', '侧栏一级入口应含「助理」');
 });
 
 check('面板开关快捷键已注册（⌘B / ⌘⌥B / ⌘P）', () => {
