@@ -68,30 +68,32 @@ define('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 }
 
 const rendererRequire = createRequire(path.join(DESKTOP, 'renderer/package.json'));
-const probeFile = path.join(SRC, '__onboarding_probe.jsx');
-fs.writeFileSync(probeFile, [
-  "import { LanguageProvider } from './i18n';",
-  "import Onboarding from './components/Onboarding.jsx';",
-  'export function render(props) { return <LanguageProvider><Onboarding {...props} /></LanguageProvider>; }',
-].join('\n'));
-let bundle;
-try {
-  bundle = esbuild.buildSync({
-    entryPoints: [probeFile],
-    bundle: true,
-    external: ['react', 'react-dom', 'react-dom/server', 'react/jsx-runtime'],
-    define: { 'process.env.NODE_ENV': '"production"' },
-    format: 'cjs', platform: 'browser', jsx: 'automatic',
-    loader: { '.jsx': 'jsx', '.tsx': 'tsx', '.js': 'jsx', '.mjs': 'jsx', '.png': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
-    write: false, logLevel: 'silent',
-  });
-} finally {
-  fs.unlinkSync(probeFile);
-}
+// S11：探针走 esbuild stdin 内存编译（与 render-smoke 的 compileInline 同口径），磁盘零落盘。
+// 旧写法先 writeFileSync 到 renderer/src/__onboarding_probe.jsx、buildSync 之后再 unlinkSync
+// （此处原本有 try/finally，所以崩溃不残留，但正常路径仍往源码目录写盘；另两个套件没有
+// finally，实测各残留 1 次）。stdin 下 resolveDir 仍是 SRC，'./i18n'、
+// './components/Onboarding.jsx' 这类相对 import 照常解析；sourcefile 只作报错文件名。
+const PROBE_FILE = '__onboarding_probe.jsx';
+const bundle = esbuild.buildSync({
+  bundle: true,
+  external: ['react', 'react-dom', 'react-dom/server', 'react/jsx-runtime'],
+  define: { 'process.env.NODE_ENV': '"production"' },
+  format: 'cjs', platform: 'browser', jsx: 'automatic',
+  loader: { '.jsx': 'jsx', '.tsx': 'tsx', '.js': 'jsx', '.mjs': 'jsx', '.png': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
+  write: false, logLevel: 'silent',
+  stdin: {
+    contents: [
+      "import { LanguageProvider } from './i18n';",
+      "import Onboarding from './components/Onboarding.jsx';",
+      'export function render(props) { return <LanguageProvider><Onboarding {...props} /></LanguageProvider>; }',
+    ].join('\n'),
+    resolveDir: SRC, sourcefile: PROBE_FILE, loader: 'jsx',
+  },
+});
 const moduleObj = { exports: {} };
 // eslint-disable-next-line no-new-func
 new Function('require', 'module', 'exports', '__filename', '__dirname', bundle.outputFiles[0].text)(
-  rendererRequire, moduleObj, moduleObj.exports, probeFile, SRC,
+  rendererRequire, moduleObj, moduleObj.exports, path.join(SRC, PROBE_FILE), SRC,
 );
 const { render } = moduleObj.exports;
 const React = rendererRequire('react');

@@ -59,27 +59,34 @@ const rendererRequire = makeRequire(path.join(DESKTOP, 'renderer/package.json'))
   }
   globalThis.__MJ_I18N_PACKS__ = packs;
 }
-const probeFile = path.join(SRC, '__subtask_probe.jsx');
-fs.writeFileSync(probeFile, [
-  "import { LanguageProvider } from './i18n';",
-  "import Tree from './components/tools/SubtaskTree.tsx';",
-  'export default function Root(props) { return <LanguageProvider><Tree {...props} /></LanguageProvider>; }',
-].join('\n'));
+// S11：探针走 esbuild stdin 内存编译（与 render-smoke 的 compileInline 同口径），磁盘零落盘。
+// 旧写法先 writeFileSync 到 renderer/src/__subtask_probe.jsx，再在 buildSync 之后 unlinkSync：
+// buildSync 一旦抛错（比如 SubtaskTree 不再默认导出），unlink 永不执行，
+// 探针就永久留在源码树里（S10 变异实验实测残留 1 次）。
+// stdin 下 resolveDir 仍是 SRC，'./i18n'、'./components/tools/SubtaskTree.tsx'
+// 这类相对 import 照常解析；sourcefile 只是报错信息里的文件名，不写盘。
+const PROBE_FILE = '__subtask_probe.jsx';
 const result = esbuild.buildSync({
-  entryPoints: [probeFile],
   bundle: true,
   external: ['react', 'react-dom', 'react-dom/server', 'react/jsx-runtime'],
   define: { 'process.env.NODE_ENV': '"production"' },
   format: 'cjs', platform: 'browser', jsx: 'automatic',
   loader: { '.jsx': 'jsx', '.tsx': 'tsx', '.js': 'jsx', '.mjs': 'jsx', '.png': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
   write: false, logLevel: 'silent',
+  stdin: {
+    contents: [
+      "import { LanguageProvider } from './i18n';",
+      "import Tree from './components/tools/SubtaskTree.tsx';",
+      'export default function Root(props) { return <LanguageProvider><Tree {...props} /></LanguageProvider>; }',
+    ].join('\n'),
+    resolveDir: SRC, sourcefile: PROBE_FILE, loader: 'jsx',
+  },
 });
-fs.unlinkSync(probeFile);
 const moduleObj = { exports: {} };
 // eslint-disable-next-line no-new-func
 new Function('require', 'module', 'exports', '__filename', '__dirname', result.outputFiles[0].text)(
   rendererRequire, moduleObj, moduleObj.exports,
-  probeFile, SRC,
+  path.join(SRC, PROBE_FILE), SRC,
 );
 const SubtaskTree = moduleObj.exports.default;
 const React = rendererRequire('react');
