@@ -24,6 +24,11 @@ function check(name, ok, detail = '') {
   else { fail++; console.log(`❌ ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
+// A10 守卫辅助：去除 JS 行/块注释，仅保留「生效」源码，用于判断 token 是否真正参与执行。
+function stripJsComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
 const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'src', 'components', 'ChatArea.jsx'), 'utf8');
 
 // ── T3-2 i18n 适配 helper ──
@@ -61,6 +66,17 @@ check('isCreatingThread 只包裹会话级状态清理（plan / planReport / pla
   // 守卫块内不得再出现 setRunSummary（否则又会被吞掉）
   return hasPlan && !/setRunSummary/.test(guarded);
 })());
+
+// ── A10 守卫：setRunSummary 必须作为「去注释生效代码」落在恢复块内、且在 isCreatingThread 守卫之前 ──
+// 旧检查只在恢复块文本内比对 token 存在+顺序，对「setRunSummary 被注释/挪出恢复块但仍残留在文本」
+// 的回归是盲的（假绿）。这里剥离注释后断言 setRunSummary 真正作为生效代码落在恢复块内、且仍在守卫之前（无条件执行）。
+{
+  const restoreActive = stripJsComments(restoreBlock);
+  const sumActive = restoreActive.indexOf('setRunSummary(');
+  const guardActive = restoreActive.indexOf('if (!isCreatingThread) {');
+  check('A10 守卫：setRunSummary 在去注释恢复块内、且位于 isCreatingThread 守卫之前（无条件）',
+    sumActive > 0 && (guardActive === -1 || sumActive < guardActive));
+}
 
 // ── 其余快照同样无条件恢复（loading/流式/工具调用）──
 for (const [name, re] of [

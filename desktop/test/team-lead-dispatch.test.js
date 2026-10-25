@@ -18,6 +18,26 @@ function check(name, ok, detail = '') {
   else { fail++; console.log(`❌ ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
+/** 从 startIdx 处的开括号起，返回配对闭括号的下标（跳过字符串/模板串/注释里的括号）。 */
+function matchBracket(src, startIdx) {
+  const open = src[startIdx];
+  const close = open === '{' ? '}' : ')';
+  let depth = 0;
+  for (let i = startIdx; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const quote = ch; i++;
+      while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === quote) break; i++; }
+      continue;
+    }
+    if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); if (nl < 0) return -1; i = nl; continue; }
+    if (ch === '/' && src[i + 1] === '*') { const end = src.indexOf('*/', i + 2); if (end < 0) return -1; i = end + 1; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-team-dispatch-'));
   const db = await openDbAsync(dir, { driver: 'sqljs' });
@@ -165,6 +185,24 @@ function check(name, ok, detail = '') {
     return end < 0 ? '' : teamStoreSrc.slice(start, end);
   };
   const setEnabledBody = bodyOf('setMemberEnabled(');
+  // A10（窗口外扩守卫）：bodyOf 用「首个 \n  }」切函数体，启发式脆弱（缩进错位 / 嵌套块都会外扩或截断）。
+  // 双路径互证：bodyOf 命中的闭括号必须与括号配对算出的闭括号一致。
+  {
+    const g = (() => {
+      try {
+        const start = teamStoreSrc.indexOf('setMemberEnabled(');
+        if (start < 0) return { ok: false, detail: '找不到 setMemberEnabled(' };
+        const openBrace = teamStoreSrc.indexOf('{', start);
+        const byBracket = matchBracket(teamStoreSrc, openBrace);
+        const byBodyOfNl = teamStoreSrc.indexOf('\n  }', start);
+        const byBodyOfBrace = byBodyOfNl + 3; // bodyOf 命中 \n，+3 指到 } 自身，与括号配对口径一致
+        if (byBracket < 0 || byBodyOfNl < 0) return { ok: false, detail: '窗口边界未配对/未找到' };
+        if (byBracket !== byBodyOfBrace) return { ok: false, detail: `窗口边界错位：括号配对到 ${byBracket}，bodyOf 命中 ${byBodyOfBrace}（窗口外扩/截断，setMemberEnabled 体被切错）` };
+        return { ok: true, detail: '' };
+      } catch (e) { return { ok: false, detail: e.message }; }
+    })();
+    check('setMemberEnabled 窗口边界与括号配对一致（未被 bodyOf 的 \\n  } 启发式外扩/截断）', g.ok, g.detail);
+  }
   check('编制下架只做软删（setMemberEnabled 用 UPDATE 写 enabled/removed_at）',
     setEnabledBody.includes('UPDATE team_members SET enabled = ?') && !/DELETE\s+FROM/i.test(setEnabledBody));
   const delTeamStart = teamStoreSrc.indexOf('deleteTeam(');

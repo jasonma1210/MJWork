@@ -37,6 +37,11 @@ const check = (name, ok, detail = '') => {
   else { fail++; console.log(`❌ ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 
+// A10 守卫辅助：去除 JS 行/块注释（保留 `://` 不被误删），仅保留「生效」源码。
+function stripJsComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-worker-mem-'));
   const db = await openDbAsync(dir, { driver: 'sqljs' });
@@ -101,6 +106,14 @@ const check = (name, ok, detail = '') => {
       /conversationId:\s*groupThreadId/.test(seg) && /groupThreadId\s*=\s*group\.thread_id/.test(seg));
     check('③ 有会话才收 session 层，无会话时 scopes 不含 session',
       /groupThreadId\s*\?\s*\['session',\s*'project',\s*'global'\]\s*:\s*\['project',\s*'global'\]/.test(seg));
+
+    // ── A10 守卫：scopes 与 conversationId 必须作为「去注释生效代码」真的传给 recallContents ──
+    // 旧检查只在 4000 字符窗口内比对 token 有无，对「scopes / conversationId 被注释/失效但仍残留在
+    // 窗口文本」的回归是盲的（假绿，B-11 单空间全量旧路径会悄悄回来）。这里剥离注释后断言这些 token
+    // 真正作为生效代码出现在 recallContents 调用里。
+    const segActive = stripJsComments(seg);
+    check('③ A10 守卫：buildTaskPrompt 去注释后仍真的把 scopes 与 conversationId 传给 recallContents',
+      /scopes[,:]/.test(segActive) && /conversationId:\s*groupThreadId/.test(segActive));
   }
 
   // ── ④ 每层配额真封顶（T-05：此前无一条断言检查配额）──

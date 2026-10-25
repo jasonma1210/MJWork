@@ -45,6 +45,26 @@ function check(name, fn) {
   catch (e) { console.error(`[FAIL] ${name} — ${e.message}`); process.exitCode = 1; }
 }
 
+/** 从 startIdx 处的开括号起，返回配对闭括号的下标（跳过字符串/模板串/注释里的括号）。 */
+function matchBracket(src, startIdx) {
+  const open = src[startIdx];
+  const close = open === '{' ? '}' : ')';
+  let depth = 0;
+  for (let i = startIdx; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const quote = ch; i++;
+      while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === quote) break; i++; }
+      continue;
+    }
+    if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); if (nl < 0) return -1; i = nl; continue; }
+    if (ch === '/' && src[i + 1] === '*') { const end = src.indexOf('*/', i + 2); if (end < 0) return -1; i = end + 1; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
 // ── D1 Plan 模式 ──
 // V02（2026-10-16）：plan 过滤从 5 写工具黑名单升级为只读白名单（shell/code_exec/MCP/
 // browser/chrome/orchestrate 全部纳入），白名单名单与运行时守卫见 r1-plan-allowlist.test.mjs 的
@@ -92,6 +112,21 @@ check('worktree 存放于用户级目录且有上限保护', () => {
   assert.match(wt, /\.mjcode', 'worktrees'/);
   assert.match(wt, /DEFAULT_LIMIT = 8/);
   assert.match(wt, /无法使用隔离工作区/, '非 Git 仓库需给出中文提示');
+});
+
+// A10（窗口外扩守卫）：syncToLocal 抽取窗口是 [函数名, 文件尾)，断言只查尾部 token 出现，
+// 项被挪到函数外/尾部注释就静默绿。这里把窗口锁成 syncToLocal 自己的函数体（括号配对），
+// 断言 listWorktrees(worktreePath) 与「未提交改动」兜底真在函数体内。
+check('syncToLocal 窗口锁在其函数体内（listWorktrees 调用 + 未提交改动 兜底不得被挪到函数外/尾部）', () => {
+  const wt = fs.readFileSync(path.join(__dirname, '../main/worktree.js'), 'utf8');
+  const fnStart = wt.indexOf('async function syncToLocal');
+  assert.ok(fnStart > 0, 'worktree.js 找不到 async function syncToLocal');
+  const openBrace = wt.indexOf('{', fnStart);
+  const close = matchBracket(wt, openBrace);
+  assert.ok(close > openBrace, 'syncToLocal 函数体括号未配对（窗口吃到文件尾了？）');
+  const body = wt.slice(openBrace, close + 1);
+  assert.ok(/listWorktrees\(worktreePath\)/.test(body), 'syncToLocal 函数体内缺少 listWorktrees(worktreePath)（可能被挪到函数外/尾部）');
+  assert.ok(/未提交改动/.test(body), 'syncToLocal 函数体内缺少「未提交改动」兜底（可能被挪到函数外/尾部）');
 });
 
 check('syncToLocal 不在 worktree 内解析主检出目录', () => {

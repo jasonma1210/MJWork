@@ -25,6 +25,31 @@ const check = (name, ok, detail = '') => {
   else { fail++; console.log(`❌ ${name}${detail ? ` — ${detail}` : ''}`); }
 };
 
+// A10 守卫辅助：括号配对（跳过字符串/模板串/注释），用于锁定函数体边界。
+function matchBracket(src, startIdx) {
+  const open = src[startIdx];
+  const close = open === '{' ? '}' : ')';
+  let depth = 0;
+  for (let i = startIdx; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const quote = ch; i++;
+      while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === quote) break; i++; }
+      continue;
+    }
+    if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); if (nl < 0) return -1; i = nl; continue; }
+    if (ch === '/' && src[i + 1] === '*') { const end = src.indexOf('*/', i + 2); if (end < 0) return -1; i = end + 1; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+// 去除 JS 行/块注释，仅保留「生效」源码，用于判断 token 是否真正参与执行。
+function stripJsComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
 // ── ① 纯谓词行为 ──
 const prefOf = (map) => (k) => map[k];
 check('① 偏好未设置 ⇒ 默认开（否则解耦等于没做）', teamCaptureEnabled(prefOf({})) === true);
@@ -54,6 +79,24 @@ check('① 没有 getter ⇒ 按开（装配缺失不当作「用户关了」）
     /getPreference\('memory\.autoCapture'\)/.test(seg) ? '仍有旧闸' : '已清除');
   check('③ 团队闸读的是独立键 memory.teamAutoCapture',
     /memory\.teamAutoCapture/.test(fs.readFileSync(path.join(ROOT, 'main/teamMemoryGate.js'), 'utf8')));
+
+  // ── A10 守卫：把闸 token 钉在 rememberTeamMemory 的「去注释函数体」内 ──
+  // 旧检查只看 2200 字符窗口内的 token 有无，对「gate 被注释/挪出函数体但仍残留在窗口里」
+  // 的回归是盲的（假绿）。这里括号配对锁定箭头函数体，再剥离注释，确认 teamCaptureEnabled(
+  // 真正作为生效代码落在函数体内、且旧 autoCapture 闸不在函数体内。
+  {
+    const marker = 'rememberTeamMemory:';
+    const mAt = src.indexOf(marker);
+    const arrowAt = src.indexOf('=>', mAt);
+    const bodyOpen = src.indexOf('{', arrowAt);
+    const bodyClose = matchBracket(src, bodyOpen);
+    const body = src.slice(bodyOpen, bodyClose + 1);
+    const bodyActive = stripJsComments(body);
+    check('③ A10 守卫：rememberTeamMemory 函数体（去注释）仍以 teamCaptureEnabled( 作为唯一闸',
+      /teamCaptureEnabled\(/.test(bodyActive));
+    check('③ A10 守卫：函数体（去注释）不再残留旧 autoCapture 闸',
+      !/getPreference\('memory\.autoCapture'\)/.test(bodyActive));
+  }
 }
 
 // ── ④ 用户侧入口（设置页开关 + 中英 i18n）──

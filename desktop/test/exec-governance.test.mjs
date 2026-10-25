@@ -23,6 +23,11 @@ function check(name, fn) {
   catch (e) { console.error(`[FAIL] ${name} — ${e.message}`); fail++; }
 }
 
+// A10 守卫辅助：去除 JS 行/块注释（保留 `://` 不被误删），仅保留「生效」源码。
+function stripJsComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 // ── ① 行为：sandboxPolicy 只能收紧，不能被载荷放宽 ──
 check('full-access 被钳制为 workspace-write（不做隔离的档位不得经直连 IPC 进入）', () => {
   assert.equal(ipcGovernance({ sandboxPolicy: 'full-access', cwd: '/tmp/proj' }).sandboxPolicy, 'workspace-write');
@@ -183,6 +188,20 @@ check('已知缺口登记：hunk 三通道按设计不弹卡（只写索引、�
     const checkIdx = body.indexOf("typeof deps?.requestApproval !== 'function'");
     const callIdx = body.indexOf('deps.requestApproval(');
     assert.ok(checkIdx > 0 && callIdx > checkIdx, '先调审批后判通道（deps 为空时会 TypeError）');
+  });
+
+  // ── A10 守卫：guardDestructive 的 fail-closed 审批通道检查必须作为「去注释生效代码」存在 ──
+  // 旧检查只在函数体文本内比对 token 存在+顺序，对「fail-closed 检查被注释/失效但仍残留在文本」
+  // 的回归是盲的（假绿）。这里剥离注释后断言该检查真正作为生效代码存在、且仍在调用 requestApproval 之前。
+  check('A10 守卫：guardDestructive 去注释函数体仍有 fail-closed 审批通道检查、且位于调用之前', () => {
+    const gsrc = fs.readFileSync(path.join(ROOT, 'main', 'ipc', 'gitHunks.js'), 'utf8');
+    const g = gsrc.slice(gsrc.indexOf('async function guardDestructive'));
+    const b = g.slice(0, g.indexOf('\n}'));
+    const bActive = stripJsComments(b);
+    const cIdx = bActive.indexOf("typeof deps?.requestApproval !== 'function'");
+    const callIdx = bActive.indexOf('deps.requestApproval(');
+    assert.ok(cIdx > 0, '去注释函数体内未找到 fail-closed 审批通道检查（已被注释或移除）');
+    assert.ok(callIdx > cIdx, 'fail-closed 检查必须在 deps.requestApproval( 调用之前');
   });
 
   check('放弃文件走单条命令 + 单次审批（避免一次点击两张卡）', () => {

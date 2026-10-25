@@ -32,6 +32,26 @@ function check(name, ok, detail = '') {
   else { fail++; console.log(`❌ ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
+/** 从 startIdx 处的开括号起，返回配对闭括号的下标（跳过字符串/模板串/注释里的括号）。 */
+function matchBracket(src, startIdx) {
+  const open = src[startIdx];
+  const close = open === '{' ? '}' : ')';
+  let depth = 0;
+  for (let i = startIdx; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const quote = ch; i++;
+      while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === quote) break; i++; }
+      continue;
+    }
+    if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); if (nl < 0) return -1; i = nl; continue; }
+    if (ch === '/' && src[i + 1] === '*') { const end = src.indexOf('*/', i + 2); if (end < 0) return -1; i = end + 1; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
 // ── 测试夹具 ──
 
 const CTX = { teamId: 'team-1', runId: 'run-1', taskId: 't2', memberId: 'm-dev' };
@@ -271,6 +291,27 @@ const prStub = { prView() {}, prDiff() {}, prReview() {}, prComment() {} };
   check('四个工具名 → 通道映射齐全',
     ['team_list_members: \'teamListMembers\'', 'team_send_message: \'teamSendMessage\'',
       'team_board: \'teamBoard\'', 'team_wait: \'teamWait\''].every((s) => coreSrc.includes(s)));
+
+  // A10（窗口外扩守卫）：TOOL_TIMEOUT_OVERRIDES 的超时项必须真在它的对象字面量里，
+  // 不能因为切片是从标记到文件尾、断言只查尾部 token 出现，就被挪到对象外/尾部注释而静默绿。
+  {
+    const g = (() => {
+      try {
+        const src = coreSrc;
+        const decl = src.indexOf('export const TOOL_TIMEOUT_OVERRIDES = {');
+        if (decl < 0) return { ok: false, detail: '找不到 export const TOOL_TIMEOUT_OVERRIDES = {' };
+        const openBrace = src.indexOf('{', decl);
+        const close = matchBracket(src, openBrace);
+        if (close <= openBrace) return { ok: false, detail: 'TOOL_TIMEOUT_OVERRIDES 对象字面量括号未配对（窗口吃到文件尾了？）' };
+        const obj = src.slice(openBrace, close + 1);
+        for (const [k, v] of [['team_wait', 60000], ['team_board', 30000], ['team_send_message', 30000], ['team_list_members', 30000]]) {
+          if (!new RegExp(`${k}: ${v}`).test(obj)) return { ok: false, detail: `TOOL_TIMEOUT_OVERRIDES 对象内缺少 ${k}: ${v}（可能被挪到对象外/尾部别处）` };
+        }
+        return { ok: true, detail: '' };
+      } catch (e) { return { ok: false, detail: e.message }; }
+    })();
+    check('TOOL_TIMEOUT_OVERRIDES 窗口锁在其对象字面量内（超时项不得被挪到尾部别处）', g.ok, g.detail);
+  }
 
   const timeouts = coreSrc.slice(coreSrc.indexOf('TOOL_TIMEOUT_OVERRIDES'));
   check('超时已登记（wait 60s / 其余 30s）',

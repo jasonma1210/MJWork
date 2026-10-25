@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "generatedAt": "2026-10-24T16:32:28.919Z",
+  "generatedAt": "2026-10-25T01:04:43.569Z",
   "note": "② ratchet 基线（位置级）：key = 文件#语句内容哈希；新增即红，消失请重跑 --write",
   "tiers": {
     "bareIife": 46,
@@ -223,9 +223,9 @@
       "line": 27,
       "text": "(async () => { // ── 并发审批按 id 精确分发（原竞态场景：两个等待者，响应不得串扰）── const ch = new ApprovalChannel(); const idA"
     },
-    "test/compact-safety.test.mjs#b0f4bae5bba7": {
+    "test/compact-safety.test.mjs#328f7c57f376": {
       "tier": "bareIife",
-      "line": 56,
+      "line": 61,
       "text": "(async () => { // ── A. 行为：窗口取值决定裁不裁 ── const noWindow = await compactHistory(convo, { provider: { i"
     },
     "test/computerUse.test.js#b6b38c5f81c7": {
@@ -238,9 +238,9 @@
       "line": 521,
       "text": "(async () => { await executors(); await loopVisionFallback(); await loopVisionStrongConfirm(); await"
     },
-    "test/degrade.test.js#e572b17ef305": {
+    "test/degrade.test.js#c655352f28d2": {
       "tier": "bareIife",
-      "line": 31,
+      "line": 56,
       "text": "(async () => { // ── degrade：可降级判定 ── await check('ECONNREFUSED 判定为可降级', () => { assert.equal(degrad"
     },
     "test/github-pr-review.test.js#381be67bffc2": {
@@ -350,7 +350,7 @@
     },
     "test/scheduled-team-tools.test.mjs#006e9a5300be": {
       "tier": "bareIife",
-      "line": 170,
+      "line": 205,
       "text": "(async () => { // ── ① 引擎通告面：runParams 是否带 teamContext ────────────────────────── await check('声明了 t"
     },
     "test/sidebar-nav-active.test.js#c6cb6efd6632": {
@@ -398,9 +398,9 @@
       "line": 32,
       "text": "(async () => { // ── 1. 提供方元数据 ── check('内置 8 家提供方且 id 唯一', sp.SEARCH_PROVIDERS.length === 8 && new "
     },
-    "test/worker-memory-layering.test.mjs#859ee339aef1": {
+    "test/worker-memory-layering.test.mjs#7352384f7f04": {
       "tier": "bareIife",
-      "line": 40,
+      "line": 45,
       "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-worker-mem-')); const db = awai"
     },
     "test/worker-session.test.js#05390d48e827": {
@@ -429,6 +429,14 @@
       "at": "2026-10-24T16:32:28.919Z",
       "added": 1,
       "removed": 1,
+      "net": 0,
+      "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-10-25T01:04:43.568Z",
+      "added": 3,
+      "removed": 3,
       "net": 0,
       "files": [],
       "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"

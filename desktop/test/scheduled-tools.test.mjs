@@ -37,6 +37,26 @@ function check(name, fn) {
   catch (e) { console.error(`[FAIL] ${name} — ${e.message}`); fail++; }
 }
 
+/** 从 startIdx 处的开括号起，返回配对闭括号的下标（跳过字符串/模板串/注释里的括号）。 */
+function matchBracket(src, startIdx) {
+  const open = src[startIdx];
+  const close = open === '{' ? '}' : ')';
+  let depth = 0;
+  for (let i = startIdx; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const quote = ch; i++;
+      while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === quote) break; i++; }
+      continue;
+    }
+    if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); if (nl < 0) return -1; i = nl; continue; }
+    if (ch === '/' && src[i + 1] === '*') { const end = src.indexOf('*/', i + 2); if (end < 0) return -1; i = end + 1; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
 const { scheduledToolHandlers } = require(path.join(ROOT, 'main', 'scheduledTools.js'));
 
 // 用假实现填充 deps：本文件只验「清单是否完整」，不验各工具内部逻辑
@@ -83,6 +103,32 @@ check('结果只渲染一处（runResult 优先、last_result 兜底）', () => 
   // 旧写法：两个独立条件同时成立 → 同一次运行渲染两次
   assert.doesNotMatch(src, /\{task\.last_result && \([\s\S]{0,400}?\)\}\s*\{runResult\?\.taskId === task\.id && \(/,
     '仍存在「last_result 与 runResult 并列渲染」的旧写法');
+});
+
+// A10（窗口外扩守卫）：runNow 的抽取窗口必须恰好是它的函数体，
+// 不能因为前面插了个同名假标记 / 把 showRuns 挪走而外扩吃掉相邻代码。
+// 双路径互证窗口边界：A=括号配对（跳字符串/模板串/注释），B=缩进层级（只看行首）。
+check('runNow 抽取窗口未被外扩（函数体闭括号后紧接 showRuns，双路径一致）', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'renderer/src/components/ScheduledTasks.jsx'), 'utf8');
+  const runNowStart = src.indexOf('async function runNow');
+  assert.ok(runNowStart > 0, 'ScheduledTasks.jsx 找不到 async function runNow（结构变了要同步本抽取器）');
+  const openBrace = src.indexOf('{', runNowStart);
+  assert.ok(openBrace > runNowStart, 'runNow 声明后找不到开括号');
+  const closeByBracket = matchBracket(src, openBrace);
+  assert.ok(closeByBracket > openBrace, 'runNow 函数体括号未配对（窗口一路吃到文件尾了？）');
+  const showRunsStart = src.indexOf('async function showRuns');
+  assert.ok(showRunsStart > closeByBracket, 'runNow 的闭括号落在 showRuns 之后（窗口错位/外扩）');
+  // B 路径：缩进层级算出的闭括号（indexOf 命中的是 \n，需 +1+缩进长 才指到 } 自身，与括号配对口径一致）
+  const fnLineStart = src.lastIndexOf('\n', runNowStart) + 1;
+  const fnIndent = /^\s*/.exec(src.slice(fnLineStart))[0];
+  const closeByIndentAt = src.indexOf(`\n${fnIndent}}`, openBrace);
+  assert.ok(closeByIndentAt > openBrace, `找不到缩进层 ${JSON.stringify(fnIndent)} 的闭合花括号（runNow 的缩进层级变了？）`);
+  const closeByIndent = closeByIndentAt + 1 + fnIndent.length;
+  assert.equal(closeByBracket, closeByIndent,
+    `runNow 函数体窗口两条路径不一致：括号配对算到 ${closeByBracket}，缩进层级算到 ${closeByIndent}（多半是配对漏跳了字符串/注释导致窗口外扩）`);
+  // 闭括号与 showRuns 之间只允许空白：窗口没吃到相邻函数体（从闭括号之后开始算）
+  const between = src.slice(closeByBracket + 1, showRunsStart);
+  assert.ok(/^\s*$/.test(between), `runNow 闭括号与 showRuns 之间夹了非空白内容（窗口外扩吃了相邻代码）：${between.slice(0, 120)}`);
 });
 
 check('「立即运行」如实透传成功/失败（不再硬编码 ok:true）', () => {

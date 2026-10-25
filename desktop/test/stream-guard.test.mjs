@@ -43,6 +43,11 @@ async function checkAsync(name, fn) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
 
+// A10 守卫辅助：去除 JS 行/块注释，仅保留「生效」源码，用于判断 token 是否真正参与执行。
+function stripJsComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
 // 起一个守卫，记录触发原因与次数
 function arm(opts) {
   const fired = [];
@@ -158,6 +163,15 @@ check('源码：读流循环里每个 chunk 都必须 touch（漏掉就会在思
   assert(i > 0, '未找到读流循环');
   const seg = src.slice(i, i + 400);
   assert(/streamGuard\.touch\(\)/.test(seg), 'read() 之后未见 streamGuard.touch()');
+});
+
+check('源码：读流循环里每个 chunk 都必须 touch（去注释，A10 守卫）', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'main/main.js'), 'utf8');
+  const i = src.indexOf('const { done, value } = await reader.read();');
+  assert(i > 0, '未找到读流循环');
+  const seg = src.slice(i, i + 400);
+  const segActive = stripJsComments(seg);
+  assert(/streamGuard\.touch\(\)/.test(segActive), 'read() 之后（去注释）未见生效的 streamGuard.touch()');
 });
 
 check('源码：catch 里先判守卫原因，避免把超时当成用户主动中止', () => {

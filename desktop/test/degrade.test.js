@@ -16,6 +16,31 @@ async function check(name, fn) {
   catch (e) { console.error(`[FAIL] ${name} — ${e.message}`); process.exitCode = 1; }
 }
 
+// A10 守卫辅助：括号配对（跳过字符串/模板串/注释），用于锁定函数体边界。
+function matchBracket(src, startIdx) {
+  const open = src[startIdx];
+  const close = open === '{' ? '}' : ')';
+  let depth = 0;
+  for (let i = startIdx; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const quote = ch; i++;
+      while (i < src.length) { if (src[i] === '\\') { i += 2; continue; } if (src[i] === quote) break; i++; }
+      continue;
+    }
+    if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); if (nl < 0) return -1; i = nl; continue; }
+    if (ch === '/' && src[i + 1] === '*') { const end = src.indexOf('*/', i + 2); if (end < 0) return -1; i = end + 1; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+// 去除 JS 行/块注释，仅保留「生效」源码，用于判断 token 是否真正参与执行。
+function stripJsComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
 // ── 捕获 console 输出，验证日志级别策略 ──
 function captureConsole(fn) {
   const out = { error: [], warn: [], log: [] };
@@ -169,6 +194,24 @@ function captureConsole(fn) {
     const okIdx = tail.indexOf('return { ok: true, count }');
     assert.ok(assignIdx > 0 && okIdx > 0, '未找到 authToken 赋值或成功返回');
     assert.ok(assignIdx < okIdx, 'authToken 必须在成功返回之前赋值');
+  });
+
+  // ── A10 守卫：把 authToken 赋值钉在「去注释的 secretsInFlight 异步函数体」内 ──
+  // 旧检查只在 2000 字符窗口内比对 token 先后，对「authToken = token 被注释/挪出函数体但仍残留在
+  // 窗口」的回归是盲的（假绿）。这里括号配对锁住 secretsInFlight 异步函数体，再剥离注释，
+  // 确认 authToken = token 真正作为生效代码落在函数体内、且仍在成功返回之前。
+  await check('A10 守卫：secretsInFlight 函数体（去注释）内 authToken = token 在成功返回之前', () => {
+    const asyncAt = mainSrc.indexOf('secretsInFlight = (async () => {');
+    const bodyOpen = mainSrc.indexOf('{', asyncAt);
+    const bodyClose = matchBracket(mainSrc, bodyOpen);
+    assert.ok(bodyClose > bodyOpen, '未能括号配对锁定 secretsInFlight 函数体');
+    const body = mainSrc.slice(bodyOpen, bodyClose + 1);
+    const bodyActive = stripJsComments(body);
+    const aIdx = bodyActive.indexOf('authToken = token');
+    const oIdx = bodyActive.indexOf('return { ok: true, count }');
+    assert.ok(aIdx > 0, '去注释函数体内未找到 authToken = token（已被注释或移除）');
+    assert.ok(oIdx > 0, '去注释函数体内未找到成功返回');
+    assert.ok(aIdx < oIdx, 'authToken 必须在成功返回之前赋值');
   });
 
   await check('getSecrets 已加 in-flight 去重', () => {

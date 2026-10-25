@@ -23,6 +23,11 @@ function check(name, ok, detail = '') {
   else { fail++; console.log(`❌ ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
+// A10 守卫辅助：去除 JS/TS 行/块注释（保留 `://` 不被误删），仅保留「生效」源码。
+function stripTsComments(s) {
+  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK_SRC = fs.readFileSync(path.join(HERE, '../renderer/src/hooks/useAgentRun.ts'), 'utf8');
 // P0-4 的实现落在 lib/compactSession（hook 贴 800 行软档，逻辑搬家但门禁跟着搬）
@@ -98,6 +103,21 @@ function compactContextBody() {
   // 搬家后最容易出的退化：hook 不再调用它（实现还在，但没人用）
   check('P0-4 hook 真的调用 compactSession（搬走实现不等于断开接线）',
     /await compactSession\(\{/.test(HOOK_SRC) && /from '\.\.\/lib\/compactSession'/.test(HOOK_SRC));
+
+  // ── A10 守卫：关键接线 token 必须作为「去注释生效代码」落在函数体 / 调用片段内 ──
+  // 旧检查只在函数体文本内比对 token 存在，对「if (loading) / buildRunModel(model) / compactHistory 调用
+  // 被注释或失效但仍残留在文本」的回归是盲的（假绿）。这里剥离注释后断言这些 token 真正作为生效代码存在。
+  {
+    const bodyActive = stripTsComments(body);
+    check('A10 守卫：compactSession 函数体（去注释）仍有运行中 loading 守卫',
+      /if\s*\(\s*loading\s*\)/.test(bodyActive));
+    check('A10 守卫：compactSession 函数体（去注释）仍以 buildRunModel(model) 现算窗口',
+      /buildRunModel\(model\)/.test(bodyActive));
+    const ci = body.indexOf('compactHistory(');
+    const callLineActive = stripTsComments(body.slice(ci - 120, ci + 120));
+    check('A10 守卫：传给 compactHistory 的仍是 runModel（去注释生效代码）',
+      /compactHistory\(\s*convo\s*,\s*runModel/.test(callLineActive));
+  }
 
   console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
   process.exit(fail === 0 ? 0 : 1);
