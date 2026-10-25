@@ -122,7 +122,7 @@
       "source": "desktop/renderer/src（排除 components/ui/ 与 styles/，口径同 test/ui-conventions.test.js）",
       "unit": "button",
       "total": 252,
-      "scannedFiles": 134,
+      "scannedFiles": 135,
       "groups": [
         {
           "file": "components/Onboarding.jsx",
@@ -200,11 +200,6 @@
           "disposition": "pending"
         },
         {
-          "file": "App.jsx",
-          "count": 5,
-          "disposition": "pending"
-        },
-        {
           "file": "components/LocalMcpSection.tsx",
           "count": 5,
           "disposition": "pending"
@@ -216,6 +211,11 @@
         },
         {
           "file": "components/SettingsModal.jsx",
+          "count": 5,
+          "disposition": "pending"
+        },
+        {
+          "file": "components/TopBarActions.tsx",
           "count": 5,
           "disposition": "pending"
         },

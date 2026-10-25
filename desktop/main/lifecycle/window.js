@@ -44,7 +44,7 @@ function createWindow() {
     x: state?.x,
     y: state?.y,
     minWidth: 1200, minHeight: 700,
-    title: 'MJ Coder', backgroundColor: '#0d0d0d', titleBarStyle: 'hiddenInset',
+    title: 'MJ Nexus', backgroundColor: '#0d0d0d', titleBarStyle: 'hiddenInset',
     // 首帧闪烁修复（2026-10-17）：默认 show:true 时窗口先以纯色底显示，
     // 浅色主题用户会先看到一帧深色再跳到白底（比黑屏更刺眼）。
     // 改为等 ready-to-show（渲染进程首帧已绘制）再显示，外观由启动页接管。

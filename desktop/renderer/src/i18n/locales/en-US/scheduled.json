@@ -63,7 +63,7 @@
   "modelTag": "Model: {model}",
   "catchupTrigger": "· Catch-up run",
   "autoLaunch": "Run at login",
-  "autoLaunchHint": "Launch MJ Coder at login so scheduled tasks stop being missed while the app is closed",
+  "autoLaunchHint": "Launch MJ Nexus at login so scheduled tasks stop being missed while the app is closed",
   "autoLaunchFailed": "Failed to set run-at-login: {msg}",
   "validUntilTitle": "Valid until",
   "untilPrefix": "Until {date}",

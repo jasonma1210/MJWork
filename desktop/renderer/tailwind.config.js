@@ -45,6 +45,19 @@ export default {
         raise: v('surface-raise-rgb'),
         // 表单凹陷面：比卡片暗一档，替代此前直接复用页面底色 bg-bg（凹陷过深）
         input: v('surface-input-rgb'),
+        // 填充三档（阶段 0 追加）：给「hover / 选中 / 按下」分层用，解决此前
+        // 列表里 hover 铺满与 selected 底色只能用同一档 --theme-hover 的互抢。
+        // **刻意不用 v() 通道**：这三档的 alpha 已经烘进 token 值（rgba(...,.04)），
+        // 再走 `rgb(var(--x-rgb) / <alpha-value>)` 会丢掉 alpha 变成不透明纯白。
+        // 与既有 select-bg / *-bg 同型（也不支持 /opacity），故 Tailwind 侧用法一致。
+        'fill-1': 'var(--sem-fill-1)',
+        'fill-2': 'var(--sem-fill-2)',
+        'fill-3': 'var(--sem-fill-3)',
+      },
+      // 衬线字族（阶段 0 追加）：引用 theme.css 的 --font-serif。
+      // 全仓此前 font-serif 零命中 ⇒ 纯增量；标题使用即可获得原型的纸张感，无回归面。
+      fontFamily: {
+        serif: 'var(--font-serif)',
       },
       // 字阶：补齐 13px 中间档（中文在 12px 以下笔画会粘连）；prose 单列一档给对话正文
       fontSize: {

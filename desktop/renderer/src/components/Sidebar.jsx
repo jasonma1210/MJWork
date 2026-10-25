@@ -48,8 +48,8 @@ export default function Sidebar({
         {/* 品牌行：左 logo+名称，右版本号（右对齐）；下一行 slogan 单行显示 */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <img src={logo} alt="MJ Code" className="w-6 h-6 rounded-lg shrink-0 object-cover" draggable={false} />
-            <div className="font-semibold text-base leading-none">MJ Code</div>
+            <img src={logo} alt="MJ Nexus" className="w-6 h-6 rounded-lg shrink-0 object-cover" draggable={false} />
+            <div className="font-semibold text-base leading-none">MJ Nexus</div>
           </div>
           {version && <div className="text-xs text-text2 shrink-0">{`v${version.replace(/-/g, ' ')}`}</div>}
         </div>

@@ -22,8 +22,7 @@ import TaskSummaryPanel from './components/TaskSummaryPanel';
 import BrowserPanel from './components/BrowserPanel';
 import SideChatPanel from './components/SideChatPanel';
 import ArtifactPanel from './components/ArtifactPanel';
-import ArchiveModal from './components/ArchiveModal';
-import { IconChart, IconPalette, IconPanelRight, IconSearch, IconSidebar } from './components/icons';
+import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions';
 import { api, setLocalMode, isLocalMode } from './lib/api';
 import { restoreMcpTools } from './lib/mcpTools';
 import { loadAgentsMd } from './lib/agentsMd';
@@ -493,49 +492,8 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-bg text-text">
       {splash}
-      {/* 统一顶栏（常驻全宽，不随左右栏开合移动）；pl-[var(--titlebar-inset)] 预留 macOS 交通灯位置 */}
       <header className="flex items-center gap-2 pl-[var(--titlebar-inset)] pr-3 h-11 shrink-0 border-b border-border">
-        <button
-          onClick={() => setSidebarOpen((v) => !v)}
-          className="text-text2 hover:text-text p-1 rounded-lg"
-          title={tr('app.toggleSidebarTitle')}
-          aria-label={tr('app.toggleSidebar')}
-        >
-          <IconSidebar size={16} />
-        </button>
-        <button
-          onClick={() => setPaletteOpen(true)}
-          className="text-text2 hover:text-text p-1 rounded-lg"
-          title={tr('app.searchTitle')}
-          aria-label={tr('app.search')}
-        >
-          <IconSearch size={16} />
-        </button>
-        <div className="ml-auto flex items-center gap-2">
-          {/* 右栏开关常驻（与左栏开关对称）：开/关都在，状态用高亮区分 */}
-          <button
-            onClick={() => { if (activeThreadRef.current) setPaneOpen((v) => !v); }}
-            disabled={!activeThread}
-            className={`p-1 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed ${paneOpen ? 'text-text' : 'text-text2 hover:text-text'}`}
-            title={activeThread ? tr('app.togglePaneTitle') : tr('app.paneDisabledHint')}
-            aria-label={tr('app.togglePane')}
-          >
-            <IconPanelRight size={16} />
-          </button>
-          <button onClick={cycleTheme}
-            className="text-text2 hover:text-text px-2 py-1 rounded-lg" title={tr('app.themeTitle', { name: themeLabel() })} aria-label={tr('app.switchTheme')}>
-            <IconPalette size={15} />
-          </button>
-          {localMode && (
-            <span className="text-caption px-2 py-1 rounded-lg bg-warn-bg text-warn" title={tr('app.offlineTitle')}>
-              {tr('app.offlineMode')}
-            </span>
-          )}
-          <button onClick={() => { resetView(); setShowDashboard(true); }}
-            className={`text-xs px-2 py-1 rounded-lg flex items-center gap-1 ${showDashboard ? 'bg-accent-solid text-on-accent' : 'text-text2 hover:text-text'}`}>
-            <IconChart size={14} /> {tr('app.data')}
-          </button>
-        </div>
+        <TopBarActions onToggleSidebar={() => setSidebarOpen((v) => !v)} onOpenSearch={() => setPaletteOpen(true)} paneOpen={paneOpen} onTogglePane={() => { if (activeThreadRef.current) setPaneOpen((v) => !v); }} hasActiveThread={!!activeThread} onCycleTheme={cycleTheme} themeLabel={themeLabel()} localMode={localMode} showDashboard={showDashboard} onOpenDashboard={() => { resetView(); setShowDashboard(true); }} />
       </header>
       <div className="flex flex-1 min-h-0 relative">
       {sidebarOpen && (

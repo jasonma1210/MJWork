@@ -63,7 +63,7 @@
   "modelTag": "模型：{model}",
   "catchupTrigger": "· 补跑",
   "autoLaunch": "开机自动运行",
-  "autoLaunchHint": "开机时自动启动 MJ Coder，定时任务不再因应用未开而错过",
+  "autoLaunchHint": "开机时自动启动 MJ Nexus，定时任务不再因应用未开而错过",
   "autoLaunchFailed": "开机自启设置失败：{msg}",
   "validUntilTitle": "有效期截止",
   "untilPrefix": "至 {date}",

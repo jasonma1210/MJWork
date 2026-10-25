@@ -269,6 +269,47 @@
   --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.17);
 }
 
+/* ── 阶段 0 token 补丁（2026-10-24 追加）：纯增量，零既有值改动 ──
+   依据：deliverables/mjwork-one-person-company/styles/tokens.css，
+         docs/MJWork-前端按原型统一改造-方案与取舍-2026-10-24.md §4（差异表）/ §6（阶段 0）。
+   纪律三条：
+     1) 只**新增**，不动既有 token。刻意不碰：--shadow-pop / --shadow-menu / --shadow-modal
+        的现有值、5 套主题的 --theme-* / --radius-* / --z-* / --dur-*、主色与默认明暗。
+     2) 新增颜色 token 一律「本体 + -rgb 三元组」双份 —— Tailwind v3 无法对 var(--hex)
+        应用 /opacity，bg-x/10 这类类会**整个不生成**，带 border 的元素回调到 preflight
+        的 #e5e7eb（暗色界面上的莫名亮白细边）。
+     3) -rgb 必须是**空格分隔的 r g b**（如 `13 13 13`），不能是 rgba(...)、也不能是逗号分隔。 */
+:root {
+  /* 填充三档：解决「hover 与选中态只能二选一」。既有只有 --theme-hover 一档，
+     同一张列表里 hover 铺满与 selected 底色必然互抢。深色主题取白色半透明、
+     浅色主题取黑色半透明（中性色，故 5 套主题下都成立；不做固定色相，
+     以便与用户自选强调色共存）。 */
+  --sem-fill-1: rgba(255, 255, 255, 0.04);  --sem-fill-1-rgb: 255 255 255;
+  --sem-fill-2: rgba(255, 255, 255, 0.07);  --sem-fill-2-rgb: 255 255 255;
+  --sem-fill-3: rgba(255, 255, 255, 0.12);  --sem-fill-3-rgb: 255 255 255;
+  /* 衬线字族：原型最强的观感来源之一 —— 标题用衬线、UI chrome 用无衬线是最省成本的
+     「产品气质」分层。全仓 font-serif 此前零命中 ⇒ 纯增量，零回归面。 */
+  --font-serif: 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
+  /* 动效曲线：只取 ease-out。原型另有 --ease-spring（弹跳）被**刻意不引入** ——
+     本文件明令「禁弹跳曲线」，且下方 prefers-reduced-motion 已全局降级。 */
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  /* 布局尺寸：本轮**只定义，不切换任何消费方**。现有侧栏是 w-[clamp(216px,20vw,260px)]、
+     顶栏是 h-11（44px，非 56px），贸然切值会动三栏骨架与 layout-pane /
+     layout-resilience 的既有断言。后续 §8 第 9 条：只给新页面（desk / 用量）用。 */
+  --sidebar-w: 232px;
+  --topbar-h: 56px;
+  --view-max: 1280px;
+  /* 暖调浮层阴影：原型 --shadow-pop 是暖黑 rgba(20,20,18,...)，现有是纯黑 ——
+     **同名不同色相基**，直接覆盖会波及所有 popover。故另开名字，由新页面按需选用。 */
+  --shadow-pop-warm: 0 14px 36px rgba(20, 20, 18, 0.16), 0 2px 8px rgba(20, 20, 18, 0.08);
+}
+
+[data-theme="light"] {
+  --sem-fill-1: rgba(26, 26, 26, 0.04);  --sem-fill-1-rgb: 26 26 26;
+  --sem-fill-2: rgba(26, 26, 26, 0.07);  --sem-fill-2-rgb: 26 26 26;
+  --sem-fill-3: rgba(26, 26, 26, 0.12);  --sem-fill-3-rgb: 26 26 26;
+}
+
 /* ── 层级层（L3）：禁止裸 z-index ──
    次序（C6 修复）：approval 130 > toast 120 > palette 110 > diff 90 > menu 60 > settings 50 > drawer 40
    原值 palette(110) > approval(100) 导致命令面板盖住最高优先级的审批卡
