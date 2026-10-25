@@ -1,0 +1,42 @@
+{
+  "title": "IM 对接",
+  "desc": "填入钉钉 / 飞书 / 企业微信「自建应用」的应用凭证，即可把手机端 IM 接入本机工作台。",
+  "scopeNote": "当前为配置与配对码阶段：凭证只存本机（系统钥匙串加密），完整 OAuth 授权与消息收发将随后续版本提供。",
+  "bridgeNotReady": "主进程桥未就绪，请重启应用后重试。",
+  "platform": {
+    "dingtalk": "钉钉",
+    "feishu": "飞书",
+    "wecom": "企业微信"
+  },
+  "platformDesc": {
+    "dingtalk": "钉钉开放平台 → 企业内部应用 → 机器人：取 AppKey / AppSecret / AgentId。",
+    "feishu": "飞书开放平台 → 企业自建应用 → 添加机器人 + 事件订阅：取 App ID / App Secret / Verification Token。",
+    "wecom": "企业微信管理后台 → 应用管理 → 自建应用 → 接收消息：取 CorpID / AgentID / Secret / Token。"
+  },
+  "field": {
+    "dingtalk": { "appKey": "AppKey", "appSecret": "AppSecret", "agentId": "AgentId", "robotCode": "RobotCode（选填）" },
+    "feishu": { "appId": "App ID", "appSecret": "App Secret", "verificationToken": "Verification Token", "encryptKey": "Encrypt Key（选填）" },
+    "wecom": { "corpId": "CorpID", "agentId": "AgentID", "secret": "Secret", "token": "Token", "encodingAESKey": "EncodingAESKey（选填）" }
+  },
+  "secret": "密钥",
+  "secretPlaceholder": "已保存的密钥留空即保持不变",
+  "statusConfigured": "已配置",
+  "statusUnconfigured": "未配置",
+  "statusPairing": "配对码有效",
+  "save": "保存配置",
+  "pair": "生成配对码",
+  "delete": "删除配置",
+  "saved": "已保存",
+  "deleted": "已删除",
+  "saveFailed": "保存失败，请重试",
+  "missingFields": "请补齐必填项（标 * ）",
+  "cryptoUnavailable": "本机安全存储不可用，拒绝以明文保存密钥",
+  "pairNeedConfig": "请先保存配置再生成配对码",
+  "pairFailed": "生成配对码失败",
+  "pairingIntro": "在手机端对应 IM 使用以下配对码 / 链接完成对接（完整 OAuth 授权为后续版本）：",
+  "copyCode": "复制配对码",
+  "copyLink": "复制链接",
+  "copied": "已复制",
+  "copyFailed": "复制失败，请手动选择",
+  "pairingExpire": "配对码 {min} 分钟内有效，过期请重新生成。"
+}

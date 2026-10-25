@@ -244,6 +244,7 @@
   "tabMemory": "记忆",
   "tabModels": "模型配置",
   "tabNetwork": "网络配置",
+  "tabIm": "IM 对接",
   "tabTeamSpace": "团队空间",
   "taskDecompose": "大任务拆分",
   "testConnection": "测试连接",

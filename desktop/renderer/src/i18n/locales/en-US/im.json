@@ -1,0 +1,42 @@
+{
+  "title": "IM Integration",
+  "desc": "Enter your DingTalk / Feishu / WeCom custom-app credentials to connect your mobile IM to this local workspace.",
+  "scopeNote": "Config + pairing-code stage for now: credentials stay on this machine (OS keychain-encrypted); full OAuth authorization and messaging arrive in a later release.",
+  "bridgeNotReady": "Main-process bridge not ready — restart the app and retry.",
+  "platform": {
+    "dingtalk": "DingTalk",
+    "feishu": "Feishu",
+    "wecom": "WeCom"
+  },
+  "platformDesc": {
+    "dingtalk": "DingTalk Open Platform → Enterprise Internal App → Robot: AppKey / AppSecret / AgentId.",
+    "feishu": "Feishu Open Platform → Enterprise Custom App → Add bot + Event Subscription: App ID / App Secret / Verification Token.",
+    "wecom": "WeCom Admin Console → App Management → Custom App → Receive Messages: CorpID / AgentID / Secret / Token."
+  },
+  "field": {
+    "dingtalk": { "appKey": "AppKey", "appSecret": "AppSecret", "agentId": "AgentId", "robotCode": "RobotCode (optional)" },
+    "feishu": { "appId": "App ID", "appSecret": "App Secret", "verificationToken": "Verification Token", "encryptKey": "Encrypt Key (optional)" },
+    "wecom": { "corpId": "CorpID", "agentId": "AgentID", "secret": "Secret", "token": "Token", "encodingAESKey": "EncodingAESKey (optional)" }
+  },
+  "secret": "secret",
+  "secretPlaceholder": "Leave a saved secret blank to keep it unchanged",
+  "statusConfigured": "Configured",
+  "statusUnconfigured": "Not configured",
+  "statusPairing": "Pairing code active",
+  "save": "Save",
+  "pair": "Generate pairing code",
+  "delete": "Delete",
+  "saved": "Saved",
+  "deleted": "Deleted",
+  "saveFailed": "Save failed, please retry",
+  "missingFields": "Please fill the required fields (marked *)",
+  "cryptoUnavailable": "Secure storage unavailable on this machine — refusing to save the secret in plaintext",
+  "pairNeedConfig": "Save the config before generating a pairing code",
+  "pairFailed": "Failed to generate pairing code",
+  "pairingIntro": "Use the pairing code / link below in your mobile IM to connect (full OAuth authorization comes in a later release):",
+  "copyCode": "Copy code",
+  "copyLink": "Copy link",
+  "copied": "Copied",
+  "copyFailed": "Copy failed — please select manually",
+  "pairingExpire": "The pairing code is valid for {min} minutes; regenerate if expired."
+}

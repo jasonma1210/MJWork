@@ -244,6 +244,7 @@
   "tabMemory": "Memory",
   "tabModels": "Models",
   "tabNetwork": "Network",
+  "tabIm": "IM Integration",
   "tabTeamSpace": "Team Space",
   "taskDecompose": "Task Decomposition",
   "testConnection": "Test Connection",

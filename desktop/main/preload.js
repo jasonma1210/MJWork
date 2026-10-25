@@ -59,6 +59,11 @@ contextBridge.exposeInMainWorld('mjcode', {
   // P1：「撤回本轮」的基线（run 开始前的工作区快照 SHA；工作区干净时为空串，撤回=回到 HEAD）
   runCreateBaseline: (payload) => ipcRenderer.invoke('run:createBaseline', payload),
   gitRestoreStaged: (payload) => ipcRenderer.invoke('tool:gitRestoreStaged', payload),
+  // IM 对接（钉钉/飞书/企微）：配置 CRUD + 配对码脚手架（密钥加解密在主进程，渲染层只拿脱敏配置）
+  imList: () => ipcRenderer.invoke('im:list'),
+  imSave: (payload) => ipcRenderer.invoke('im:save', payload),
+  imDelete: (payload) => ipcRenderer.invoke('im:delete', payload),
+  imPair: (payload) => ipcRenderer.invoke('im:pair', payload),
   gitApplyHunk: (payload) => ipcRenderer.invoke('tool:gitApplyHunk', payload),
   // P0-E：GitHub 最小闭环（gh CLI）
   githubStatus: () => ipcRenderer.invoke('github:status'),

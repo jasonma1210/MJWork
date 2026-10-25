@@ -16,6 +16,7 @@ const ideLib = require('../ide');
 const ecosystemLib = require('../ecosystem');
 const searchProviders = require('../webSearchProviders');
 const guard = require('./payloadGuard');
+const { initImIpc } = require('./im');
 const rbac = require('../rbac');
 const { writeFileDurableWithMode } = require('../data/durableWrite');
 
@@ -511,6 +512,9 @@ function register() {
 function initEcosystemIpc(d) {
   deps = d; // { getLocalStore, featureFlags, audit, getSkillsDir }
   register();
+  // IM 对接（钉钉/飞书/企微）IPC：main.js 已顶到 1500 行 eslint 门禁，杂项 IPC 域经此 hub 一次性接线；
+  // 逻辑在 main/imConfig.js + main/ipc/im.js，密钥经 getCredentialCrypto 加密，渲染层只拿脱敏配置。
+  initImIpc({ ipcMain, getCredentialCrypto: deps.getCredentialCrypto });
 }
 
 module.exports = { initEcosystemIpc, resolveEmployeeById };

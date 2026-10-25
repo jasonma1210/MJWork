@@ -12,13 +12,14 @@ import MemorySection from './MemorySection';
 import HooksSection from './HooksSection';
 // P1-4：Windows OS 级沙箱接线入口（仅 win32 渲染，组件内部另有平台守卫）
 import WindowsSandboxSetup from './WindowsSandboxSetup';
-import { IconCheck, IconCpu, IconGitBranch, IconGlobe, IconMemory, IconPalette, IconSettings, IconShield, IconTerminal, IconUser, IconX } from './icons';
+import { IconCheck, IconCpu, IconGitBranch, IconGlobe, IconMemory, IconMessage, IconPalette, IconSettings, IconShield, IconTerminal, IconUser, IconX } from './icons';
 import Switch from './ui/Switch';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 // T2-4：模型页 / 网络页与共享原语已抽到 settings/（God File 拆薄，文案与视觉零改动）
 import ModelsTab from './settings/ModelsTab';
 import NetworkTab from './settings/NetworkTab';
+import ImTab from './settings/ImTab';
 import { Section, OptionRow, Toggle } from './settings/shared';
 import THEMES from '../lib/themes.json';
 import ACCENT_CHOICES from '../lib/accentColors.json';
@@ -41,6 +42,7 @@ const NAV = [
   { groupKey: 'settings.navGroupFeatures', items: [
     { id: 'ecosystem', icon: <IconUser size={16} />, labelKey: 'settings.tabEcosystem' },
     { id: 'network', icon: <IconGlobe size={16} />, labelKey: 'settings.tabNetwork' },
+    { id: 'im', icon: <IconMessage size={16} />, labelKey: 'settings.tabIm' },
     { id: 'browser', icon: <IconGlobe size={16} />, labelKey: 'settings.tabBrowser' },
     { id: 'git', icon: <IconGitBranch size={16} />, labelKey: 'settings.tabGit' },
     { id: 'hooks', icon: <IconTerminal size={16} />, labelKey: 'settings.tabHooks' },
@@ -451,6 +453,7 @@ export default function SettingsModal({
 
         {/* 网络配置 */}
         {tab === 'network' && <NetworkTab />}
+        {tab === 'im' && <ImTab />}
 
         {/* 生态中心（M7）：唯一管理入口（技能/MCP 已由设置页迁入，统一入口重构 T3） */}
         {tab === 'ecosystem' && (
