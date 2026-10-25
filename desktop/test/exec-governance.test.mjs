@@ -204,6 +204,41 @@ check('已知缺口登记：hunk 三通道按设计不弹卡（只写索引、�
     assert.ok(callIdx > cIdx, 'fail-closed 检查必须在 deps.requestApproval( 调用之前');
   });
 
+  // ── A10 守卫：补齐 guardDestructive 之外的三个残留窗口（2026-10-25 完整修复）──
+  // 报告 §5 残留：gitDiscardFiles handler 块、面板 reject/rejectAll 函数此前只用「原始窗口文本」
+  // 比对 token，对「token 被注释掉/挪走但仍以注释形态残留在窗口文本」的回归是盲的（假绿）。
+  // 这里对同样的窗口剥离注释后，断言关键 token 仍作为「生效代码」存在。
+  check('A10 守卫：gitDiscardFiles 去注释 handler 块仍复用 guardDestructive 且一条命令回退 staged+worktree', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'main', 'ipc', 'gitHunks.js'), 'utf8');
+    const at = src.indexOf("tool:gitDiscardFiles'");
+    assert.ok(at > 0, '未找到 gitDiscardFiles handler');
+    const rest = src.slice(at);
+    const nextAt = rest.indexOf('ipcMain.handle', 10);
+    const block = nextAt > 0 ? rest.slice(0, nextAt) : rest;
+    const blockActive = stripJsComments(block);
+    assert.match(blockActive, /guardDestructive\(deps, 'git_checkout'/,
+      '去注释后未找到复用 checkout 审批闸（guardDestructive 被注释/挪走）');
+    assert.match(blockActive, /'--staged', '--worktree'/,
+      '去注释后未找到同时回退索引与工作区（分步 = 两张审批卡）');
+  });
+
+  check('A10 守卫：面板 reject / rejectAll 去注释后仍有人工确认、可撤销告知、单次 gitDiscardFiles', () => {
+    const panel = fs.readFileSync(path.join(ROOT, 'renderer/src/components/DiffReviewPanel.jsx'), 'utf8');
+    const rejectFn = panel.slice(panel.indexOf('async function reject(file)'), panel.indexOf('function offerUndo'));
+    const rejectActive = stripJsComments(rejectFn);
+    assert.doesNotMatch(rejectActive, /if \(!snapshotId\)/, '确认被快照结果条件跳过（去注释后仍在）');
+    assert.match(rejectActive, /const ok = await confirm\(/, '单文件放弃缺少人工确认（去注释后缺失）');
+    assert.match(rejectActive, /diff\.undoAvailable/, '单文件确认文案未告知可撤销（去注释后缺失）');
+    assert.equal((rejectActive.match(/gitDiscardFiles\(/g) || []).length, 1,
+      '单文件放弃去注释后 gitDiscardFiles 调用次数不为 1（被注释/重复调用）');
+    assert.doesNotMatch(rejectActive, /gitRestoreStaged\(/, '单文件放弃去注释后仍单独取消暂存');
+    const rejectAllFn = panel.slice(panel.indexOf('async function rejectAll'), panel.indexOf('async function openPr'));
+    const rejectAllActive = stripJsComments(rejectAllFn);
+    assert.match(rejectAllActive, /await countConfirm\(/, '批量放弃缺少数量确认（去注释后缺失）');
+    assert.match(rejectAllActive, /diff\.undoAvailable/, '批量确认文案未告知可撤销（去注释后缺失）');
+    assert.match(rejectAllActive, /window\.mjcode\.gitDiscardFiles\(/, '批量放弃去注释后未走 gitDiscardFiles 单次调用');
+  });
+
   check('放弃文件走单条命令 + 单次审批（避免一次点击两张卡）', () => {
     const src = fs.readFileSync(path.join(ROOT, 'main', 'ipc', 'gitHunks.js'), 'utf8');
     const at = src.indexOf("tool:gitDiscardFiles'");
