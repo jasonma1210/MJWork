@@ -58,6 +58,17 @@
       }
     } catch (e) {}
   </script>
+  <style>
+    /* TH6b：theme.css（经 main.jsx import 的外部样式）加载前的预绘背景，消除冷启动白屏/闪变。
+       背景由上方内联主题脚本写出的 data-theme 驱动；这些 hex 必须与 styles/theme.css
+       各 [data-theme] 的 --theme-bg 保持一致，改主题底色时两处同改。
+       用内联 <style>（CSP style-src 已允许 'unsafe-inline'）而非改上面脚本——那会动其 sha256 使 CSP 拦截。 */
+    html { background: #0d0d0d; color-scheme: dark; }
+    html[data-theme="light"] { background: #ffffff; color-scheme: light; }
+    html[data-theme="midnight"] { background: #0a0e1a; }
+    html[data-theme="forest"] { background: #0c120e; }
+    html[data-theme="sunset"] { background: #1a0f0a; }
+  </style>
 </head>
 <body>
   <div id="root"></div>
