@@ -491,18 +491,27 @@ export default function EcosystemModal({ onClose, embedded = false, enabledSkill
                           <span className="text-caption px-2 py-1 leading-none rounded bg-hover text-text2">{t('ecosystem.noPermissions')}</span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 mt-auto pt-4">
-                        {/* 启用开关：只管「+」菜单可见性（启用≠连接） */}
-                        <Switch checked={on} onChange={(next) => toggleConnector(c, next)}
-                          label={t('settings.enableToggle', { name: String(c.display_name || c.name || '') })} />
-                        <span className={`text-xs shrink-0 ${on ? 'text-accent' : 'text-text2'}`}>
-                          {on ? t('ecosystem.enabled') : t('ecosystem.disabled')}
-                        </span>
-                        <span className="flex-1" />
-                        {/* 配置/授权：按 auth_mode 与启动计划就地分流（ConnectorConfigDialog） */}
-                        <Button variant="secondary" size="md" className="shrink-0" onClick={() => setCfgConnector(c)}>
-                          <IconPlug size={13} /> {t('ecosystem.configure')}
-                        </Button>
+                      {/* P1-11（2026-10-26）：连接器「启用」仅控制「+」菜单可见性，不等于已连接。
+                          此前开关为主视觉、缺连接状态，用户开开关以为接好了——而派单时工具调不通。
+                          这里在开关下方加一行澄清：启用≠连接，需配置凭证并在会话中连接后才可用。 */}
+                      <div className="mt-auto pt-4">
+                        <div className="flex items-center gap-3">
+                          <Switch checked={on} onChange={(next) => toggleConnector(c, next)}
+                            label={t('settings.enableToggle', { name: String(c.display_name || c.name || '') })} />
+                          <span className={`text-xs shrink-0 ${on ? 'text-accent' : 'text-text2'}`}>
+                            {on ? t('ecosystem.enabled') : t('ecosystem.disabled')}
+                          </span>
+                          <span className="flex-1" />
+                          {/* 配置/授权：按 auth_mode 与启动计划就地分流（ConnectorConfigDialog） */}
+                          <Button variant="secondary" size="md" className="shrink-0" onClick={() => setCfgConnector(c)}>
+                            <IconPlug size={13} /> {t('ecosystem.configure')}
+                          </Button>
+                        </div>
+                        {on && (
+                          <p className="text-[11px] text-text2 mt-1 leading-snug">
+                            {t('ecosystem.enableOnlyMenuHint')}
+                          </p>
+                        )}
                       </div>
                     </div>
                   );

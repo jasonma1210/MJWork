@@ -3,6 +3,9 @@ import { tGlobal } from '../i18n';
 
 // 渲染层崩溃兜底（M3-5）：捕获渲染异常，展示恢复界面而非白屏
 // i18n：类组件无法用 hook，render 时经 tGlobal 求值（Provider 切换会同步 activeLocale）
+// P1-18（2026-10-26）：新增 compact 模式——用于包裹局部区域（如右栏），
+// 某块组件抛异常时只在该区域内显示错误并保留「重试」，不再替换整个界面（含会话）。
+// 注：本文件为 .jsx（不纳入 tsc 类型检查），compact 直接经 this.props.compact 读取。
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -25,6 +28,16 @@ export default class ErrorBoundary extends React.Component {
 
   render() {
     if (this.state.error) {
+      if (this.props.compact) {
+        return (
+          <div className="p-4 flex flex-col items-center justify-center gap-2 text-center m-2 rounded-xl border border-danger/40 bg-bg">
+            <p className="text-sm text-text">{tGlobal('errorBoundary.compactTitle')}</p>
+            <p className="text-caption text-text2">{tGlobal('errorBoundary.compactHint')}</p>
+            <button onClick={() => this.setState({ error: null })}
+              className="border border-border rounded-lg px-3 py-1 text-xs hover:bg-hover">{tGlobal('errorBoundary.retry')}</button>
+          </div>
+        );
+      }
       return (
         <div className="h-screen flex flex-col items-center justify-center bg-bg text-text px-8 text-center">
           <h1 className="text-2xl font-semibold mb-3">{tGlobal('errorBoundary.title')}</h1>

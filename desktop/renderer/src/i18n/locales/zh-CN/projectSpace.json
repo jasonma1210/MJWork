@@ -52,6 +52,7 @@
   "creating": "正在创建项目空间…",
   "cancel": "取消",
   "requiredHint": "请先补全必填项",
+  "requiredHintCount": "还有 {count} 处待修正",
   "bridgeMissing": "当前环境不支持项目空间创建（接口未就绪）",
   "createFailed": "创建失败，请稍后重试",
   "createFailedWith": "创建失败：{error}",

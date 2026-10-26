@@ -273,6 +273,9 @@ export default function ChatArea({
       setAttachments([]);
       setLastFailed(null);
       setQueued([]);
+      setInput(''); // P1-1（2026-10-26）：切会话（含切到无会话态）必须清空输入框草稿，
+                    // 否则 A 会话写了一半的需求会残留在输入框，回车误发到 B 会话。
+                    // 新建会话（undefined→id）不在此列——那些草稿正是用户刚拖入/输入的。
     }
     if (thread?.id) {
       const reqId = ++msgReqRef.current;

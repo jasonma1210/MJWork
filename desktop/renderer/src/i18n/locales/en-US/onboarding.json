@@ -69,6 +69,8 @@
   "catalogLoading": "Reading the local catalog…",
   "catalogEmpty": "Nothing available on this machine yet. Skip for now and configure it later in the Ecosystem Center.",
   "skipThisStep": "Decide later",
+  "viewAllCount": "View all {count}",
+  "showLess": "Show less",
   "skillPickHint": "Selected skills are installed locally when you finish; anything that fails to install is not enabled.",
   "connectorHint": "Enabling is not connecting: keys and authorization still go in Ecosystem Center → Connectors. The agent never receives credentials you have not configured.",
   "stepOf": "{current} / {total}",

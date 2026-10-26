@@ -32,7 +32,7 @@ export default function Dashboard() {
         <h2 className="text-xl font-semibold mb-4">{t('dashboard.title')}</h2>
         <div className="grid grid-cols-4 gap-4 mb-6">
           {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="bg-surface rounded-lg border border-border p-4 animate-pulse">
+            <div key={i} className="bg-surface rounded-xl border border-border p-4 animate-pulse">
               <div className="h-8 bg-hover rounded mb-2" />
               <div className="h-3 bg-hover rounded w-2/3" />
             </div>
@@ -78,7 +78,7 @@ export default function Dashboard() {
       )}
 
       {/* 模型使用分布 */}
-      <div className="bg-surface rounded-lg border border-border p-4 mb-4">
+      <div className="bg-surface rounded-xl border border-border p-4 mb-4">
         <h3 className="text-sm font-medium mb-3">{t('dashboard.modelDistribution')}</h3>
         {dist.length === 0 ? (
           <p className="text-text2 text-sm">{t('dashboard.noData')}</p>
@@ -98,7 +98,7 @@ export default function Dashboard() {
       </div>
 
       {/* 最近 7 天活跃 */}
-      <div className="bg-surface rounded-lg border border-border p-4 mb-4">
+      <div className="bg-surface rounded-xl border border-border p-4 mb-4">
         <h3 className="text-sm font-medium mb-3">{t('dashboard.recentActivity')}</h3>
         {activity.length === 0 ? (
           <p className="text-text2 text-sm">{t('dashboard.noRecentMessages')}</p>
@@ -116,7 +116,7 @@ export default function Dashboard() {
 
       {/* 近 8 周对话趋势 —— D1：数据源为空时整卡隐藏（本地模式此前永远「暂无数据」，属假功能） */}
       {weekly.length > 0 && (
-        <div className="bg-surface rounded-lg border border-border p-4">
+        <div className="bg-surface rounded-xl border border-border p-4">
           <h3 className="text-sm font-medium mb-3">{t('dashboard.weeklyThreads')}</h3>
           <div className="flex items-end gap-2 h-20">
             {weekly.slice().reverse().map((w, i) => {
@@ -137,7 +137,7 @@ export default function Dashboard() {
 
 function StatCard({ label, value, icon }) {
   return (
-    <div className="bg-surface rounded-lg border border-border p-4">
+    <div className="bg-surface rounded-xl border border-border p-4">
       <div className="text-accent mb-1">{icon}</div>
       <div className="text-xl font-semibold tabular-nums">{value}</div>
       <div className="text-xs text-text2">{label}</div>

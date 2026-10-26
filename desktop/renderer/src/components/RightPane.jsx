@@ -41,9 +41,13 @@ const PANE_MIN = 320;
 const PANE_MAX = 900;
 const PANE_DEFAULT = 520;
 
+// P1-15（2026-10-26）：右栏宽度除常量夹取外，必须给主区留保底——否则大屏拖到 900 后缩回
+// 1200 窗口，主区可能被压成约 56px。主区保底 = 窗口宽 − 侧栏估算(240) − 主区最小(420) = −660。
 function clampWidth(v) {
   const n = parseInt(v, 10);
-  return Number.isFinite(n) ? Math.min(PANE_MAX, Math.max(PANE_MIN, n)) : PANE_DEFAULT;
+  const raw = Number.isFinite(n) ? n : PANE_DEFAULT;
+  const maxByWin = Math.max(PANE_MIN, window.innerWidth - 660);
+  return Math.min(PANE_MAX, Math.max(PANE_MIN, raw), maxByWin);
 }
 
 export default function RightPane({
@@ -73,9 +77,19 @@ export default function RightPane({
     try { localStorage.setItem('mj_pane_width', String(width)); } catch { /* 隐私模式等：宽度不持久化不影响使用 */ }
   }, [width]);
 
+  // P1-15（2026-10-26）：窗口缩小时，已拖拽宽度可能超过「窗口 − 侧栏 − 主区保底」，
+  // 导致主区被压成竖线。监听 resize 把 width 重新夹取到窗口约束内。
+  useEffect(() => {
+    const onResize = () => setWidth((w) => clampWidth(w));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // 窄宽度下只留图标：面板最小 320px，四个 tab 的「图标 + 文字」会挤掉右侧工具组。
   // 用 JS 判定而非容器查询——tailwind.config.js 未装 container-queries 插件，@[..] 变体会静默失效。
-  const showTabLabels = maximized || width >= 460;
+  // P1-15（2026-10-26）：tab 数量从 4 增至 7，「图标+文字」需要更宽阈值；低于阈值只显示图标，
+  // 避免文字截断挤压右侧工具组（此前 460 是按 4 个 tab 定的，7 个 tab 需约 590px）。
+  const showTabLabels = maximized || width >= 590;
 
   // 收起时用 hidden 而非 return null：
   // 常驻面板的语义是「保持上下文」，如果直接卸载，
@@ -211,15 +225,19 @@ export default function RightPane({
         </div>
 
         <div className="flex-1 min-h-0 flex flex-col">
-          {active.id === 'diff' && diffPanel}
-          {active.id === 'files' && filesPanel}
-          {/* T6-10：工件面板常驻挂载（非激活时隐藏）——它负责「首次生成工件 → 自动展开一次」，
-              卸载会让这个一次性触发点永远不执行 */}
+          {/* P1-2（2026-10-26）：除 artifact 外，其余面板统一改为 hidden 常驻保活，
+              与 artifact 的「收起而非卸载」语义一致（见本文件第 80-82 行注释）。
+              此前为条件渲染（{active.id === 'X' && panel}），切 tab 即卸载——
+              终端跑过的命令、浏览器页面、diff 行内评论草稿、侧聊上下文全部清空。
+              改为：激活时 contents（等价于原直接渲染，panel 根直接成为 flex 子项）、非激活时 hidden。
+              注意：7 个面板全部常驻挂载，遵循本文件「保持上下文」的设计意图（与 artifact 同策略）。 */}
+          <div className={active.id === 'diff' ? 'contents' : 'hidden'}>{diffPanel}</div>
+          <div className={active.id === 'files' ? 'contents' : 'hidden'}>{filesPanel}</div>
           <div className={active.id === 'artifact' ? 'contents' : 'hidden'}>{artifactPanel}</div>
-          {active.id === 'subtasks' && subtasksPanel}
-          {active.id === 'terminal' && terminalPanel}
-          {active.id === 'browser' && browserPanel}
-          {active.id === 'sidechat' && sidechatPanel}
+          <div className={active.id === 'subtasks' ? 'contents' : 'hidden'}>{subtasksPanel}</div>
+          <div className={active.id === 'terminal' ? 'contents' : 'hidden'}>{terminalPanel}</div>
+          <div className={active.id === 'browser' ? 'contents' : 'hidden'}>{browserPanel}</div>
+          <div className={active.id === 'sidechat' ? 'contents' : 'hidden'}>{sidechatPanel}</div>
         </div>
       </div>
     </aside>

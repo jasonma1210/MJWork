@@ -67,6 +67,11 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
   const [catalogSkills, setCatalogSkills] = useState([]);
   const [connectors, setConnectors] = useState([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
+  // P2-9（2026-10-26）：目录三步原硬切 slice(0,6)，用户以为目录只有 6 个。
+  // 新增「查看全部」开关，展开后渲染完整列表（容器本身 overflow-y-auto 即可滚动）。
+  const [showAllEmp, setShowAllEmp] = useState(false);
+  const [showAllSkills, setShowAllSkills] = useState(false);
+  const [showAllConn, setShowAllConn] = useState(false);
   const [pickedEmployee, setPickedEmployee] = useState(null);   // id | null
   const [pickedSkills, setPickedSkills] = useState([]);         // [id]
   const [pickedConnectors, setPickedConnectors] = useState([]); // [id]
@@ -447,9 +452,9 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
                 <p className="text-xs text-text2 py-6 text-center">{t('onboarding.catalogLoading')}</p>
               ) : employees.length === 0 ? (
                 <InlineAlert type="info">{t('onboarding.catalogEmpty')}</InlineAlert>
-              ) : (
+              ) : (<>
                 <div className="grid grid-cols-2 gap-3 max-h-[304px] overflow-y-auto pr-1">
-                  {employees.slice(0, 6).map((e) => {
+                  {employees.slice(0, showAllEmp ? employees.length : 6).map((e) => {
                     const on = pickedEmployee === e.id;
                     return (
                       <button key={e.id} onClick={() => setPickedEmployee(on ? null : e.id)}
@@ -465,7 +470,12 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
                     );
                   })}
                 </div>
-              )}
+                {employees.length > 6 && (
+                  <button onClick={() => setShowAllEmp((v) => !v)} className="text-xs text-accent hover:opacity-80 mt-2">
+                    {showAllEmp ? t('onboarding.showLess') : t('onboarding.viewAllCount', { count: employees.length })}
+                  </button>
+                )}
+              </>)}
               <div className="flex justify-between items-center mt-5">
                 <button onClick={back} className="text-text2 text-sm hover:text-text">{t('onboarding.back')}</button>
                 <div className="flex items-center gap-3">
@@ -485,9 +495,9 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
                 <p className="text-xs text-text2 py-6 text-center">{t('onboarding.catalogLoading')}</p>
               ) : catalogSkills.length === 0 ? (
                 <InlineAlert type="info">{t('onboarding.catalogEmpty')}</InlineAlert>
-              ) : (
+              ) : (<>
                 <div className="grid grid-cols-2 gap-3 max-h-[304px] overflow-y-auto pr-1">
-                  {catalogSkills.slice(0, 6).map((s) => {
+                  {catalogSkills.slice(0, showAllSkills ? catalogSkills.length : 6).map((s) => {
                     const on = pickedSkills.includes(s.id);
                     return (
                       <button key={s.id}
@@ -506,6 +516,11 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
                     );
                   })}
                 </div>
+                {catalogSkills.length > 6 && (
+                  <button onClick={() => setShowAllSkills((v) => !v)} className="text-xs text-accent hover:opacity-80 mt-2">
+                    {showAllSkills ? t('onboarding.showLess') : t('onboarding.viewAllCount', { count: catalogSkills.length })}
+                  </button>
+                )}</>
               )}
               <p className="text-caption text-text2 mt-3">{t('onboarding.skillPickHint')}</p>
               <div className="flex justify-between items-center mt-4">
@@ -527,9 +542,9 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
                 <p className="text-xs text-text2 py-6 text-center">{t('onboarding.catalogLoading')}</p>
               ) : connectors.length === 0 ? (
                 <InlineAlert type="info">{t('onboarding.catalogEmpty')}</InlineAlert>
-              ) : (
+              ) : (<>
                 <div className="grid grid-cols-2 gap-3 max-h-[304px] overflow-y-auto pr-1">
-                  {connectors.slice(0, 6).map((c) => {
+                  {connectors.slice(0, showAllConn ? connectors.length : 6).map((c) => {
                     const on = pickedConnectors.includes(c.id);
                     return (
                       <button key={c.id}
@@ -546,6 +561,11 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
                     );
                   })}
                 </div>
+                {connectors.length > 6 && (
+                  <button onClick={() => setShowAllConn((v) => !v)} className="text-xs text-accent hover:opacity-80 mt-2">
+                    {showAllConn ? t('onboarding.showLess') : t('onboarding.viewAllCount', { count: connectors.length })}
+                  </button>
+                )}</>
               )}
               <p className="text-caption text-text2 mt-3">{t('onboarding.connectorHint')}</p>
               <div className="flex justify-between items-center mt-4">

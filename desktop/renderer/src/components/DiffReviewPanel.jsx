@@ -360,7 +360,7 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
+      <div className="flex items-center justify-between px-2 h-9 border-b border-border shrink-0">
         <h3 className="font-semibold text-xs flex items-center gap-2">
           <IconFileDiff size={14} />
           {t('diff.changesHeader', { n: visible.length })}

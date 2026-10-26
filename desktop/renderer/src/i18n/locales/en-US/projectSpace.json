@@ -52,6 +52,7 @@
   "creating": "Creating project space…",
   "cancel": "Cancel",
   "requiredHint": "Complete the required fields first",
+  "requiredHintCount": "{count} item(s) still need fixing",
   "bridgeMissing": "Project space creation is unavailable in this environment",
   "createFailed": "Creation failed, please try again",
   "createFailedWith": "Creation failed: {error}",

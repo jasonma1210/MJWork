@@ -558,7 +558,7 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
       ) : (
         <>
           {user && (
-            <div className="mb-4 flex justify-end">
+            <div className="mb-4 flex justify-end group">
               <div className="msg-prose bg-surface rounded-2xl px-4 py-2 max-w-2xl">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>{user.content}</ReactMarkdown>
               </div>
@@ -574,7 +574,7 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
             const tokensIn = m.tokens_input ?? m.tokensInput ?? 0;
             const tokensOut = m.tokens_output ?? m.tokensOutput ?? 0;
             return (
-              <div key={m.id ?? `a-${k}`} className="mb-4 max-w-3xl">
+              <div key={m.id ?? `a-${k}`} className="mb-4 max-w-3xl group">
                 <div className="text-xs text-text2 mb-1 flex items-center gap-2">
                   MJ Nexus
                   <CopyButton text={m.content} />

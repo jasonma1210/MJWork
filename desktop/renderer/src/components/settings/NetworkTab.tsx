@@ -23,12 +23,16 @@ interface StreamTimeoutView {
 // 写死必然有一边被误杀。这里让用户按自己的供应商调。
 // 校验在主进程（streamSettings.clampMs）：越界会**收敛**，保存后重新拉一次"生效值"回显，
 // 这样用户能看见自己填的 5 秒被收到 10 秒，而不是以为没生效。
-function StreamTimeoutSection() {
+function StreamTimeoutSection({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const { t } = useI18n();
   const [view, setView] = useState<StreamTimeoutView | null>(null);
   const [draft, setDraft] = useState<Draft>({ firstByte: '', idle: '', total: '' });
   const [flash, setFlash] = useState('');
   const [error, setError] = useState('');
+  const [dirty, setDirty] = useState(false);
+  // P0-1（2026-10-26）：流式超时也是「本地草稿 + 手动保存」，改动未保存须上报，
+  // 让 SettingsModal 关闭时拦截，避免关窗静默丢失。
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
 
   const applyView = (v: StreamTimeoutView) => {
     setView(v);
@@ -56,6 +60,7 @@ function StreamTimeoutSection() {
       await window.mjcode?.localSetPreference?.({ key: 'stream_timeouts', value });
       const v = await window.mjcode?.getStreamTimeouts?.() as StreamTimeoutView | undefined;
       if (v) applyView(v);
+      setDirty(false);
       setFlash(t('settings.streamSaved'));
       setTimeout(() => setFlash(''), 2500);
     } catch (e) { setError((e as Error).message || String(e)); }
@@ -87,7 +92,7 @@ function StreamTimeoutSection() {
                 value={draft[r.key]}
                 min={Math.round(b.min / 1000)}
                 max={Math.round(b.max / 1000)}
-                onChange={(e) => { setDraft({ ...draft, [r.key]: e.target.value }); setFlash(''); }}
+                onChange={(e) => { setDraft({ ...draft, [r.key]: e.target.value }); setFlash(''); setDirty(true); }}
                 className="w-24 bg-surface border border-border rounded-lg px-2 py-1 text-sm text-text text-right"
               />
             </div>
@@ -128,12 +133,17 @@ interface WebSearchGetResult {
   error?: string;
 }
 
-export default function NetworkTab() {
+export default function NetworkTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const { t } = useI18n();
   const [meta, setMeta] = useState<SearchProviderMeta[]>([]);
   const [providers, setProviders] = useState<SearchProviderConfig[]>([]);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [providersDirty, setProvidersDirty] = useState(false);
+  const [streamDirty, setStreamDirty] = useState(false);
+  // P0-1（2026-10-26）：综合「搜索提供方 + 流式超时」两套手动保存的脏标记，
+  // 上报给 SettingsModal，使其在关闭弹层前拦截，避免未保存配置静默丢失。
+  useEffect(() => { onDirtyChange?.(providersDirty || streamDirty); }, [providersDirty, streamDirty, onDirtyChange]);
 
   useEffect(() => {
     (window.mjcode?.webSearchGetConfig?.() as Promise<WebSearchGetResult | undefined>).then((res) => {
@@ -145,6 +155,7 @@ export default function NetworkTab() {
   const update = (id: string, patch: Partial<SearchProviderConfig>) => {
     setProviders((list) => list.map((p) => (p.id === id ? { ...p, ...patch } : p)));
     setSaved(false);
+    setProvidersDirty(true);
   };
 
   async function save() {
@@ -152,7 +163,7 @@ export default function NetworkTab() {
     try {
       const bridge = window.mjcode as NonNullable<Window['mjcode']>;
       const r = await bridge.webSearchSetConfig(providers) as WebSearchGetResult | undefined;
-      if (r?.ok) { setProviders(r.config?.providers || providers); setSaved(true); setTimeout(() => setSaved(false), 2000); }
+      if (r?.ok) { setProviders(r.config?.providers || providers); setSaved(true); setProvidersDirty(false); setTimeout(() => setSaved(false), 2000); }
       else setError(r?.error || t('settings.saveFailed'));
     } catch (e) { setError((e as Error).message || String(e)); }
   }
@@ -162,7 +173,7 @@ export default function NetworkTab() {
   return (
     <>
       {/* T6（2026-10-17）：三层流式超时——放在「网络」分区，因为它只在网络慢/供应商挂起时才有意义 */}
-      <StreamTimeoutSection />
+      <StreamTimeoutSection onDirtyChange={setStreamDirty} />
       <Section title={t('settings.searchProvidersTitle')}>
         <p className="py-3 text-xs text-text2">
           {t('settings.searchProvidersDesc')}

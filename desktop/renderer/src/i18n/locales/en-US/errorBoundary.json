@@ -2,5 +2,7 @@
   "title": "Something went wrong",
   "hint": "Threads and window state are saved — reopening will restore them.",
   "retry": "Retry",
-  "reload": "Reload"
+  "reload": "Reload",
+  "compactTitle": "This panel failed to load",
+  "compactHint": "Press Retry to reload just this panel; the rest of the app is unaffected."
 }

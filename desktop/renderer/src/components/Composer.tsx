@@ -217,20 +217,28 @@ export default function Composer({
           设计约束（军团设计文档 v1.5 / 2026-10-20 需求⑤）：对话内协同、直接发消息，
           ⇒ 不做独立入口、不加确认弹窗、不建页面；区分度全部做在这条状态行与发送按钮语义上。 */}
       {activeTeam && (
-        <div className="mx-4 mb-2 flex items-center gap-2 rounded-xl border border-accent/40 bg-accent-bg px-3 py-2 text-xs text-accent">
-          <IconUsers size={13} className="shrink-0" />
-          <span className="font-medium shrink-0">{t('composer.dispatchTo')}</span>
-          <span className="font-medium truncate min-w-0" title={activeTeam.name}>{activeTeam.name}</span>
-          <span className="text-text2 shrink-0 tabular-nums" title={activeTeam.description || ''}>
-            {t('composer.teamMembers', { n: teamMemberCount })}
-          </span>
-          <span className="text-text2 shrink-0 tabular-nums">· {teamBudgetLabel}</span>
-          <span className="ml-auto" />
-          {teamBusy && <IconSpinner size={11} className="animate-spin shrink-0" />}
-          <Button variant="ghost" size="xs" onClick={() => onClearTeam?.()} aria-label={t('composer.removeTeam')}>
-            <IconX size={11} />
-          </Button>
-        </div>
+        <>
+          {/* P1-10（2026-10-26）：选中编制后目标条视觉像「已派活」，但实际发送走普通对话
+              （roster 仅作为 candidateRoster 会话上下文写入，见 ChatArea.sendOrDispatch / 350 行）。
+              为避免「以为这一发把活派给团队」的信任级误导，这里加一行常驻澄清。 */}
+          <div className="mx-4 mb-1 flex items-center gap-2 rounded-xl border border-accent/40 bg-accent-bg px-3 py-2 text-xs text-accent">
+            <IconUsers size={13} className="shrink-0" />
+            <span className="font-medium shrink-0">{t('composer.dispatchTo')}</span>
+            <span className="font-medium truncate min-w-0" title={activeTeam.name}>{activeTeam.name}</span>
+            <span className="text-text2 shrink-0 tabular-nums" title={activeTeam.description || ''}>
+              {t('composer.teamMembers', { n: teamMemberCount })}
+            </span>
+            <span className="text-text2 shrink-0 tabular-nums">· {teamBudgetLabel}</span>
+            <span className="ml-auto" />
+            {teamBusy && <IconSpinner size={11} className="animate-spin shrink-0" />}
+            <Button variant="ghost" size="xs" onClick={() => onClearTeam?.()} aria-label={t('composer.removeTeam')}>
+              <IconX size={11} />
+            </Button>
+          </div>
+          <p className="mx-4 mb-2 text-[11px] text-text2 leading-snug">
+            {t('composer.rosterContextHint')}
+          </p>
+        </>
       )}
       {hasTaskBadges && (
       <div className="flex items-center gap-3 px-4 pb-2 text-xs text-text2">

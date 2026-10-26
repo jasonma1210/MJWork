@@ -44,14 +44,22 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: () => v
   return <Switch checked={on} onChange={() => onChange()} label={label} />;
 }
 
-export function Input({ placeholder, value, onChange, type = 'text' }: {
+// P1-17（2026-10-26）：扩展 label / hint 为可选 ReactNode，与 ui/Input 形态对齐；
+// 既有调用（仅 placeholder/value/onChange/type）不受影响。
+export function Input({ placeholder, value, onChange, type = 'text', label, hint }: {
   placeholder?: string;
   value: string;
   onChange: (e: ChangeEvent<HTMLInputElement>) => void;
   type?: string;
+  label?: ReactNode;
+  hint?: ReactNode;
 }) {
   return (
-    <input placeholder={placeholder} value={value} onChange={onChange} type={type}
-      className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm my-1 outline-none focus:border-accent" />
+    <div>
+      {label && <label className="block text-xs text-text2 mb-1">{label}</label>}
+      <input placeholder={placeholder} value={value} onChange={onChange} type={type}
+        className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm my-1 outline-none focus:border-accent" />
+      {hint && <p className="text-caption text-text2 mt-1">{hint}</p>}
+    </div>
   );
 }

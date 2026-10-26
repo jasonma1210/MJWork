@@ -111,8 +111,9 @@ function outlineLines(raw: string): string[] {
 }
 
 // 字段容器：label + 控件 + 红字（与 Input/TextArea 的排版一致；下拉框没有统一原语）
+// P2-10（2026-10-26）：label 由 string 放宽为 ReactNode，以支持必填星标（红 *）等内联标记。
 function Field({ label, error, hint, children }: {
-  label: string; error?: string; hint?: string; children: ReactNode;
+  label: ReactNode; error?: string; hint?: string; children: ReactNode;
 }) {
   return (
     <div>
@@ -287,8 +288,11 @@ export default function ProjectCreateModal({ open, onClose, projects = [], onCre
 
   const footer = (
     <>
+      {/* P2-10（2026-10-26）：打开即 invalid（按钮禁用），但未 touched 字段不显红字，
+          原 footer 只一句「请先补全必填项」，用户看不到哪几处卡住。此处改为动态数量提示，
+          配合必填星标，使灰色按钮的原因可被定位（不触发满屏红字，尊重原「打开即全红不易读」的设计）。 */}
       <span className="text-caption text-text2 mr-auto">
-        {invalid ? t('projectSpace.requiredHint') : ''}
+        {invalid ? t('projectSpace.requiredHintCount', { count: Object.keys(errors).length }) : ''}
       </span>
       <Button variant="secondary" onClick={onClose} disabled={saving}>{t('projectSpace.cancel')}</Button>
       <Button onClick={submit} loading={saving} disabled={invalid}>{t('projectSpace.create')}</Button>
@@ -313,7 +317,7 @@ export default function ProjectCreateModal({ open, onClose, projects = [], onCre
 
         <div className="grid grid-cols-2 gap-3">
           <Input
-            label={t('projectSpace.name')}
+            label={<span>{t('projectSpace.name')}<span className="text-danger ml-0.5">*</span></span>}
             value={form.name}
             maxLength={40}
             placeholder={t('projectSpace.namePh')}
@@ -335,7 +339,7 @@ export default function ProjectCreateModal({ open, onClose, projects = [], onCre
         </div>
 
         <TextArea
-          label={t('projectSpace.objective')}
+          label={<span>{t('projectSpace.objective')}<span className="text-danger ml-0.5">*</span></span>}
           value={form.objective}
           maxLength={2000}
           rows={4}
@@ -369,7 +373,7 @@ export default function ProjectCreateModal({ open, onClose, projects = [], onCre
             </select>
           </Field>
           {form.teamTemplate === 'existing' && (
-            <Field label={t('projectSpace.existingTeam')} error={errorFor('teamId')}>
+            <Field label={<span>{t('projectSpace.existingTeam')}<span className="text-danger ml-0.5">*</span></span>} error={errorFor('teamId')}>
               <select
                 value={form.teamId}
                 onChange={(e) => patch('teamId', e.target.value)}

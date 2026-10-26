@@ -70,31 +70,54 @@ export default function FileTree({ root, onOpenFile }) {
   );
 }
 
+// P1-16（2026-10-26）：修复文件树展开 bug——原 DirNode 的 open 是「一层同级列表」的状态，
+// 却被该层每个文件夹共用：点任一文件夹会收起/展开整层；首次点击 open 已为 true 不触发 loadDir。
+// 重构为每个目录项拥有独立的展开状态（DirEntry），点 B 只切换 B 自身、不影响同级，且首次展开必触发 loadDir。
 function DirNode({ path: dir, entries, depth, tree, loadDir, onSelect, onOpenFile, isIgnored }) {
-  const [open, setOpen] = useState(depth === 0);
   return (
     <div>
       {entries.map((e) => {
         const full = dir.endsWith('/') ? dir + e.name : dir + '/' + e.name;
+        if (e.isDir) {
+          return (
+            <DirEntry key={full} dir={full} depth={depth} tree={tree} loadDir={loadDir} onSelect={onSelect} onOpenFile={onOpenFile} isIgnored={isIgnored} />
+          );
+        }
         return (
-          <div key={full}>
-            <div
-              style={{ paddingLeft: depth * 12 + 4 }}
-              className="py-1 cursor-pointer hover:bg-hover rounded truncate flex items-center gap-1"
-              onClick={() => {
-                if (e.isDir) { setOpen(!open); if (!open) loadDir(full); }
-                else if (onOpenFile) onOpenFile(full);
-                else onSelect(full);
-              }}
-            >
-              {e.isDir ? <IconFolder size={12} /> : <IconFile size={12} />} {e.name}
-            </div>
-            {e.isDir && open && tree[full] && (
-              <DirNode path={full} entries={tree[full].filter((x) => !isIgnored(x.name))} depth={depth + 1} tree={tree} loadDir={loadDir} onSelect={onSelect} onOpenFile={onOpenFile} isIgnored={isIgnored} />
-            )}
+          <div
+            key={full}
+            style={{ paddingLeft: depth * 12 + 4 }}
+            className="py-1 cursor-pointer hover:bg-hover rounded truncate flex items-center gap-1"
+            onClick={() => (onOpenFile ? onOpenFile(full) : onSelect(full))}
+          >
+            <IconFile size={12} /> {e.name}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// 单个目录项：独立展开状态。展开后渲染其子项（递归 DirNode），收起即卸载。
+function DirEntry({ dir, depth, tree, loadDir, onSelect, onOpenFile, isIgnored }) {
+  const [open, setOpen] = useState(false);
+  const children = tree[dir];
+  return (
+    <div>
+      <div
+        style={{ paddingLeft: depth * 12 + 4 }}
+        className="py-1 cursor-pointer hover:bg-hover rounded truncate flex items-center gap-1"
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          if (next) loadDir(dir);
+        }}
+      >
+        <IconFolder size={12} /> {dir.split('/').pop()}
+      </div>
+      {open && children && (
+        <DirNode path={dir} entries={children.filter((x) => !isIgnored(x.name))} depth={depth + 1} tree={tree} loadDir={loadDir} onSelect={onSelect} onOpenFile={onOpenFile} isIgnored={isIgnored} />
+      )}
     </div>
   );
 }

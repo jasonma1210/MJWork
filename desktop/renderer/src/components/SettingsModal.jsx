@@ -102,6 +102,9 @@ export default function SettingsModal({
 }) {
   const { locale, setLocale, t } = useI18n();
   const [tab, setTab] = useState('general');
+  // P0-1（2026-10-26）：网络设置（搜索提供方 + 流式超时）为本地草稿 + 手动保存，
+  // 关闭弹层前若有未保存更改须拦截确认，否则配置静默丢失。
+  const [networkDirty, setNetworkDirty] = useState(false);
   const [search, setSearch] = useState('');
   // ST3：插件/生态已内嵌到对应 Tab，弹窗态状态移除
   const [newP, setNewP] = useState({ name: '', base_url: '', api_key: '' });
@@ -220,15 +223,30 @@ export default function SettingsModal({
   // 既与窗口真实的交通灯（左上角、属于主窗口）语义重复，也和后端平台分支行为不一致。
   // 现在两个平台同一处、同一交互（Esc 亦可关闭）。
 
+  // P0-1（2026-10-26）：关闭设置弹层前，若网络设置存在未保存草稿则二次确认。
+  // 确认（危险态，红色）= 丢弃并关闭；取消（默认「取消」）= 留下去保存。
+  function handleClose() {
+    if (networkDirty) {
+      confirm({
+        title: t('settings.unsavedNetworkTitle'),
+        message: t('settings.unsavedNetworkMsg'),
+        danger: true,
+        confirmLabel: t('settings.discardClose'),
+      }).then((ok) => { if (ok) onClose(); });
+      return;
+    }
+    onClose();
+  }
+
   return (
-    <Modal open onClose={onClose} frameless
+    <Modal open onClose={handleClose} frameless
       ariaLabel={t('settings.navGroupSettings')}
       // 外壳类名刻意在本文件里写全（不在调用方「调参」）：settings-coverage.test.js
       // 对本文件有源码字符串断言（浮窗形态 + shadow-modal），且本文件保留自己的表头关闭按钮，
       // 因此这里是「只换外壳、内容与视觉零改动」——面板块仍是下面这层自带类。
       overlayClassName="fixed inset-0 z-settings flex items-center justify-center bg-overlay p-6">
       <div className="w-[min(920px,calc(100vw-3rem))] h-[min(680px,calc(100vh-3rem))] bg-bg border border-border rounded-2xl shadow-[var(--shadow-modal)] flex overflow-hidden relative">
-        <button onClick={onClose}
+        <button onClick={handleClose}
           className="absolute top-3 right-3 z-10 text-text2 hover:text-text p-2 rounded-lg hover:bg-hover"
           title={t('settings.closeSettingsEsc')} aria-label={t('settings.closeSettings')}>
           <IconX size={16} />
@@ -452,7 +470,7 @@ export default function SettingsModal({
         />}
 
         {/* 网络配置 */}
-        {tab === 'network' && <NetworkTab />}
+        {tab === 'network' && <NetworkTab onDirtyChange={setNetworkDirty} />}
         {tab === 'im' && <ImTab />}
 
         {/* 生态中心（M7）：唯一管理入口（技能/MCP 已由设置页迁入，统一入口重构 T3） */}

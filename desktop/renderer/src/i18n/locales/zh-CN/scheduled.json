@@ -11,6 +11,7 @@
   "emptyTasks": "暂无定时任务，点击右上角「新建任务」创建",
   "emptyFiltered": "当前筛选下暂无任务",
   "loadFailed": "任务列表加载失败",
+  "toggleFailed": "切换启用状态失败：{msg}",
   "namePromptRequired": "任务名称与提示词必填",
   "invalidSchedule": "执行计划无效：{err}",
   "createdNotice": "任务已创建并启用，到点将自动执行",

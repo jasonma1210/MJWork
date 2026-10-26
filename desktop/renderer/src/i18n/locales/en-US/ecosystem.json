@@ -43,6 +43,7 @@
   "enabled": "Enabled",
   "disabled": "Disabled",
   "configure": "Configure",
+  "enableOnlyMenuHint": "Enabling only adds it to the “+” menu; configure credentials and connect in a session before its tools become callable",
   "dialog": {
     "subtitle": "Configure / authorize in place",
     "openDocs": "Open official docs & credentials page",

@@ -65,6 +65,7 @@
   "dispatchPlaceholder": "What do you want to do? (the current roster can take it)…",
   "dispatch": "Send",
   "dispatchTip": "This roster can take the task; sending is still a normal chat — use “Dispatch now” in + → Teams to run it right away",
+  "rosterContextHint": "The team joins this turn as context; sending is still a normal chat. To dispatch it now, use “Dispatch now” in + → Squad.",
   "teamMembers": "{n} members",
   "teamBudget": "Budget {tokens} · {rounds} rounds",
   "teamBudgetDefault": "Default budget",

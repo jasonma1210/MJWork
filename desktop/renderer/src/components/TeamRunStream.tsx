@@ -13,7 +13,7 @@
 // 变化，只订阅其中一条都会出现「消息到了、状态还停在运行中」的半截界面。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
-import { IconBot, IconChevronDown, IconFile } from './icons';
+import { IconBot, IconChevronDown, IconFile, IconAlert } from './icons';
 import Button from './ui/Button';
 import { projectTeamRuns, memberLabel } from '../../../shared/teamStream.mjs';
 import { kindKey, messageText } from '../../../shared/teamLabels.mjs';
@@ -264,12 +264,14 @@ export default function TeamRunStream({ threadId, onOpenFile }: TeamRunStreamPro
   const [cards, setCards] = useState<TeamStreamCard[]>([]);
   // 项目配额水位：与卡片同一轮刷新拉取，避免「卡片在跑、徽标还是旧状态」
   const [quota, setQuota] = useState<TeamStreamQuota | null>(null);
+  // P1-3（2026-10-26）：刷新失败时标记「可能过期」，避免卡片永远停在「执行中」而无任何提示。
+  const [stale, setStale] = useState(false);
   // 看板弹层：点卡片头部的「看板」打开；数据直接复用当前 run 的投影（父层刷新即同步）
   const [board, setBoard] = useState<TeamStreamCard | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const refresh = useCallback(async () => {
-    if (!threadId) { setCards([]); setQuota(null); return; }
+    if (!threadId) { setCards([]); setQuota(null); setStale(false); return; }
     try {
       const [r, q] = await Promise.all([
         window.mjcode?.teamsListThreadRuns?.({ threadId }),
@@ -279,10 +281,13 @@ export default function TeamRunStream({ threadId, onOpenFile }: TeamRunStreamPro
       const quotaRes = q as { ok?: boolean; quota?: TeamStreamQuota | null } | undefined;
       // 配额读取失败只隐藏徽标，不影响团队卡（徽标是辅助信息，不阻塞主对话）
       setQuota(quotaRes?.ok ? (quotaRes.quota || null) : null);
-      if (!runRes?.ok) return;
+      if (!runRes?.ok) { setStale(false); return; }
       setCards(projectTeamRuns(runRes.runs || []) as TeamStreamCard[]);
+      setStale(false);
     } catch {
-      // 读取失败保留上一次投影：团队卡是辅助信息，不阻塞主对话
+      // 读取失败保留上一次投影，但标记可能过期，避免卡片永远停在「执行中」——
+      // 用户据此知道下方状态可能不是最新，可手动重试。
+      setStale(true);
     }
   }, [threadId]);
 
@@ -321,6 +326,13 @@ export default function TeamRunStream({ threadId, onOpenFile }: TeamRunStreamPro
         <IconBot size={12} className="shrink-0" />
         <span>{t(titleKey)}</span>
         <span>{cards.length}</span>
+        {stale && (
+          <span className="flex items-center gap-1 text-danger" title={t('teams.streamStaleHint')}>
+            <IconAlert size={12} className="shrink-0" />
+            <span>{t('teams.streamStale')}</span>
+            <button onClick={refresh} className="underline hover:opacity-80">{t('teams.streamRetry')}</button>
+          </span>
+        )}
       </div>
       {cards.map((card) => (
         <TeamRunCard

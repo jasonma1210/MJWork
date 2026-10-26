@@ -201,8 +201,18 @@ export default function ScheduledTasks() {
     }
   }
 
+  // P1-4（2026-10-26）：原 toggle 无 try/catch、无 busy 态，失败时开关静默弹回且无反馈。
+  // 改为：先置 busy 禁用开关，失败则显式报错，成功才 reload 反映新状态。
   async function toggle(id, enabled) {
-    await api.updateScheduledTask(id, { enabled: !enabled });
+    setBusyId(id);
+    try {
+      await api.updateScheduledTask(id, { enabled: !enabled });
+    } catch (err) {
+      setError(t('scheduled.toggleFailed', { msg: err instanceof Error ? err.message : String(err) }));
+      return;
+    } finally {
+      setBusyId(null);
+    }
     load();
   }
 
@@ -616,7 +626,7 @@ export default function ScheduledTasks() {
                 <Button variant="secondary" size="sm" onClick={() => toggleExpectsFile(task)} title={t('scheduled.expectsFileLabel')}>
                   {task.expects_file === false ? t('scheduled.expectsFileOffShort') : t('scheduled.expectsFileOn')}
                 </Button>
-                <Switch checked={!!task.enabled} onChange={() => toggle(task.id, task.enabled)}
+                <Switch checked={!!task.enabled} disabled={busyId === task.id} onChange={() => toggle(task.id, task.enabled)}
                   label={t('settings.enableToggle', { name: String(task.name || task.id || '') })} />
                 <button onClick={() => remove(task.id, task.name)} className="text-text2 hover:text-danger" title={t('scheduled.delete')}><IconX size={14} /></button>
               </div>

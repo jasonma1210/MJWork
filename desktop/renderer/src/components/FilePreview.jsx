@@ -160,7 +160,8 @@ export default function FilePreview({ filePath, projectPath }) {
       </div>
 
       {/* 操作栏 */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border shrink-0">
+      {/* P1-6（2026-10-26）：操作栏允许换行，避免窄面板下 4 个文字按钮（约 370px）溢出压到右侧文件树。 */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border shrink-0 flex-wrap">
         <button onClick={openInEditor} title={t('filePreview.openInEditorTitle')}
           className="text-xs px-2 py-1 rounded-lg border border-border hover:bg-hover flex items-center gap-1">
           <IconHammer size={12} /> {t('filePreview.openInEditor')}

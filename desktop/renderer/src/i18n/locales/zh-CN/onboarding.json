@@ -69,6 +69,8 @@
   "catalogLoading": "正在读取本机目录…",
   "catalogEmpty": "本机暂无可用条目。可以先跳过，之后在侧栏「生态中心」里配置。",
   "skipThisStep": "稍后再说",
+  "viewAllCount": "查看全部 {count} 个",
+  "showLess": "收起",
   "skillPickHint": "已选技能会在完成时安装到本机；未安装成功的不计入启用列表。",
   "connectorHint": "启用 ≠ 连接：密钥与授权仍需在「生态中心 → 连接器」中填写，Agent 不会拿到任何未配置的凭证。",
   "stepOf": "{current} / {total}",

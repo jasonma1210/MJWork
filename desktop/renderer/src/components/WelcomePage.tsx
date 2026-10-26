@@ -27,7 +27,11 @@ export default function WelcomePage({
 }) {
   const { t } = useI18n();
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-8">
+    <div className="flex-1 overflow-y-auto">
+      {/* P1-14（2026-10-26）：根容器改为可滚动；内容少时内层 min-h-full + justify-center 居中，
+          内容多（如 700px 小窗）时滚动而非被裁切——此前 justify-center 无 overflow-y-auto，
+          标题与 Composer 被 body overflow:hidden 切掉，只能拉大窗口才能开工。 */}
+      <div className="min-h-full flex flex-col items-center justify-center px-8 py-10">
       <h1 className="text-3xl font-semibold text-center mb-3">{t('welcome.heading')}</h1>
       {/* 副标题 = 项目入口（真机反馈：新建任务页找不到「选择目录/创建项目」入口）。
           只在本轮主动选择过项目时才说「在 X 中」——重启后残留的上次项目
@@ -96,6 +100,7 @@ export default function WelcomePage({
       {/* WorkBuddy 式 Agent 运行胶囊：在役数字员工一览（点击展开流程与强制关闭） */}
       <AgentDock />
       <Composer {...composerProps} workspaceBound={false} />
+      </div>
     </div>
   );
 }

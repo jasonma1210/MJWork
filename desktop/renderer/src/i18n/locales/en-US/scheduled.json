@@ -11,6 +11,7 @@
   "emptyTasks": "No scheduled tasks yet. Click \"New task\" at the top right to create one.",
   "emptyFiltered": "No tasks match the current filter",
   "loadFailed": "Failed to load the task list",
+  "toggleFailed": "Failed to toggle enabled state: {msg}",
   "namePromptRequired": "Task name and prompt are required",
   "invalidSchedule": "Invalid schedule: {err}",
   "createdNotice": "Task created and enabled. It will run automatically on schedule.",

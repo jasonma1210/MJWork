@@ -16,6 +16,7 @@ import EcosystemModal from './components/EcosystemModal';
 import StatusBar from './components/StatusBar';
 import CommandPalette from './components/CommandPalette';
 import RightPane from './components/RightPane';
+import ErrorBoundary from './components/ErrorBoundary';
 import FilesPanel from './components/FilesPanel';
 import TerminalPanel from './components/TerminalPanel';
 import TaskSummaryPanel from './components/TaskSummaryPanel';
@@ -617,6 +618,9 @@ export default function App() {
 
       {/* 右侧常驻面板：变更 / 文件 / 任务摘要 / 终端（同屏可见，不再全屏模态）
           面板切换、添加（+）、最大化、折叠四个控制点全在面板自己的顶栏上 */}
+      {/* P1-18（2026-10-26）：右栏局部边界——右栏任一面板抛异常时只在右栏区域显示错误并保留「重试」，
+          不再替换整个界面（含会话）。根边界（main.jsx）保持覆盖全应用。 */}
+      <ErrorBoundary compact>
       <RightPane
         open={paneOpen}
         tab={paneTab}
@@ -653,6 +657,7 @@ export default function App() {
         browserPanel={<BrowserPanel />}
         sidechatPanel={<SideChatPanel model={selectedModel} />}
       />
+      </ErrorBoundary>
 
       {showEcosystem && (
         <EcosystemModal

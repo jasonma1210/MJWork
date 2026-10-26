@@ -65,6 +65,7 @@
   "dispatchPlaceholder": "输入你想做什么（当前编制可承接这条任务）…",
   "dispatch": "发送",
   "dispatchTip": "本次编制可承接这条任务；发送仍是普通对话，要立刻派活请用「+ → 军团」里的「立即派活」",
+  "rosterContextHint": "团队作为本轮对话上下文参与，发送仍是普通对话；要立即派活执行，请用「+ → 军团」中的「立即派活」。",
   "teamMembers": "{n} 名成员",
   "teamBudget": "预算 {tokens} · {rounds} 轮",
   "teamBudgetDefault": "默认预算",
