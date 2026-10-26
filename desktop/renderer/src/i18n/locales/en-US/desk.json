@@ -62,6 +62,7 @@
     "openAll": "All artifacts",
     "empty": "No deliverables under this project yet. Hand the team an order first.",
     "noProject": "This conversation has no project space bound — pick or create a project on the left",
+    "noSession": "No conversation open yet — pick or create a project on the left",
     "notFound": "That project record is missing; it may have been removed. Try another project",
     "failed": "Reading deliverables failed. Retry later; if it keeps failing, check that this project's artifact records are intact"
   },

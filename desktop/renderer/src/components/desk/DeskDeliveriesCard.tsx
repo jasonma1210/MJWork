@@ -34,16 +34,19 @@ export interface DeskDeliveriesCardProps {
 export type DeliveriesState = { code: string | null; artifacts: ArtifactRow[] } | null;
 
 /**
- * 提示文案的 key —— 纯函数，导出以便直接验（不必跑 effect）。
- *
- * **默认分支绝不能落在「确实没有交付物」上**：
- *   · `null` ⇒ 不表态。此前直接走 empty ⇒ 有交付物的项目会先闪一帧「还没有交付物」再跳成列表
- *     （同屏运行卡/用量卡在"未知"时都整卡不表态）。
- *   · **其余任何 code（ERROR / UNAVAILABLE / 未来新增）一律走失败态**：查询失败不是
- *     「确实没有交付物」。把未知 code 归进 empty，等于用界面替我们断言一件并不知道的事。
+ * 提示文案的 key —— 纯函数（状态与会话 id 都从参数进，不读全局），导出以便直接验。
+ * 判定顺序（顺序本身是语义）：
+ *   ① `state === null`（未回来）⇒ 不表态（原来走 empty ⇒ 有交付物的项目会先闪一帧「还没有
+ *      交付物」；同屏运行卡/用量卡在"未知"时都整卡不表态）。
+ *   ② 无会话 ⇒ noSession，**排在 NO_PROJECT 之前**：连会话都没有时说「这个会话还没绑定项目」
+ *      是虚指，「没有会话」更前置。
+ *   ③ NO_PROJECT / NOT_FOUND 各自给人话（可引导 / 要排查，见文件头注）。
+ *   ④ 其余任何 code（ERROR / UNAVAILABLE / 未来新增）一律失败态：查询失败不是「确实没有交付物」。
+ *   ⑤ 真 0 件 ⇒ empty。
  */
-export function deliveriesHintKey(state: DeliveriesState): string {
+export function deliveriesHintKey(state: DeliveriesState, threadId?: string | null): string {
   if (state === null) return '';
+  if (!String(threadId || '').trim()) return 'desk.deliveries.noSession';
   if (state.code === 'NO_PROJECT') return 'desk.deliveries.noProject';
   if (state.code === 'NOT_FOUND') return 'desk.deliveries.notFound';
   if (state.code) return 'desk.deliveries.failed';
@@ -72,7 +75,7 @@ export default function DeskDeliveriesCard({ threadId = null, onOpenArtifacts }:
   }, [threadId]);
 
   const rows = state?.artifacts || [];
-  const hint = deliveriesHintKey(state);
+  const hint = deliveriesHintKey(state, threadId);
   return (
     <section className="rounded-xl border border-border bg-surface p-4" aria-label={t('desk.deliveries.title')}>
       <div className="flex items-center justify-between gap-3">
