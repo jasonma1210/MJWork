@@ -54,6 +54,7 @@
     "live": "运行中",
     "groups": "{n} 个任务组进行中",
     "latest": "最近目标",
+    "progress": "已完成 {done}/{total}",
     "viewChat": "查看对话",
     "empty": "这个会话里没有正在执行的任务组"
   },

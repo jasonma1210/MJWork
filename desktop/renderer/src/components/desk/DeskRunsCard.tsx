@@ -3,7 +3,8 @@
 //   variant="running" —— 进行中：真数据来自主进程 tasks:list，只取 status === 'running'。
 //     归属过滤与 TaskSummaryPanel 同口径：有 thread_id 的按会话匹配，历史组（无 thread_id）
 //     按 cwd 匹配 —— 不筛归属会把别人的任务挂到这屏上。
-//     **不做进度条**：任务组只有 group 级状态，子任务级不可数，画一个百分比就是编数字。
+//     进度条（R-16）：listGroups 已用关联子查询把每个组的 sub_tasks 真实计数（total/done/failed）
+//     一并带出，故最新运行组可渲染「已完成 X/Y」真实进度条——不再是编数字（前提是该组确有子任务）。
 //   variant="recent"  —— 最近运行：本机**没有跨会话运行记录的数据源**（runRegistry 是模块级
 //     Map，刷新即空），故恒显示静态「尚未接线」，不调任何接口、不造任何假运行记录。
 //
@@ -19,6 +20,10 @@ interface TaskGroupRow {
   status?: string;
   thread_id?: string | null;
   cwd?: string;
+  // R-16（2026-10-26）：运行卡「任务进度」——来自 listGroups 的关联子查询（sub_tasks 真实计数），非编造。
+  totalTasks?: number;
+  doneTasks?: number;
+  failedTasks?: number;
 }
 
 interface TasksListResult {
@@ -90,6 +95,10 @@ export default function DeskRunsCard({ variant, threadId = null, projectPath = '
   // 谓词无法让 TS 收窄（跨函数），故这里显式兜底一次；`?? []` 同时说明「空数组不渲染行」
   const live = running ?? [];
   const latest = live[0];
+  // R-16：最新运行组的子任务真实进度（done/total 来自 listGroups 计数），仅当该组确有子任务时才展示
+  const latestTotal = Number(latest?.totalTasks) || 0;
+  const latestDone = Number(latest?.doneTasks) || 0;
+  const latestPct = latestTotal > 0 ? Math.round((latestDone / latestTotal) * 100) : 0;
   return (
     <section className="rounded-xl border border-border bg-surface p-4" aria-label={t('desk.running.title')}>
       <div className="flex items-start justify-between gap-3">
@@ -102,6 +111,21 @@ export default function DeskRunsCard({ variant, threadId = null, projectPath = '
           {t('desk.running.live')}
         </span>
       </div>
+      {latestTotal > 0 ? (
+        <div className="mt-3">
+          <div className="flex items-center justify-between text-caption text-text2">
+            <span>{t('desk.running.progress', { done: latestDone, total: latestTotal })}</span>
+            <span>{latestPct}%</span>
+          </div>
+          <div
+            className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-hover"
+            role="img"
+            aria-label={t('desk.running.progress', { done: latestDone, total: latestTotal })}
+          >
+            <div className="h-full rounded-full bg-accent" style={{ width: `${latestPct}%` }} />
+          </div>
+        </div>
+      ) : null}
       {latest.goal ? (
         <div className="mt-3">
           <p className="text-caption text-text2">{t('desk.running.latest')}</p>

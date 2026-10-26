@@ -54,6 +54,7 @@
     "live": "Running",
     "groups": "{n} task groups running",
     "latest": "Latest goal",
+    "progress": "Completed {done}/{total}",
     "viewChat": "View conversation",
     "empty": "No task groups running in this conversation"
   },

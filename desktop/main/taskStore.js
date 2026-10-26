@@ -87,8 +87,25 @@ class TaskStore {
   }
 
   listGroups({ limit = 30 } = {}) {
-    return this.db.prepare('SELECT * FROM task_groups ORDER BY created_at DESC LIMIT ?').all(limit)
-      .map((g) => ({ ...g, dag: safeParse(g.dag_json), result: safeParse(g.result_json) }));
+    // R-16（2026-10-26）：组列表附带子任务真实计数（total/done/failed），供工作台运行卡渲染
+    // 「任务进度」——计数来自 sub_tasks 表（按 group_id 关联、每行含 status），是真实数据，
+    // 绝非编造百分比。关联子查询走 group_id 索引，开销可忽略；既有调用方只取组级字段，新增字段向后兼容。
+    return this.db.prepare(`
+      SELECT g.*,
+        (SELECT COUNT(*) FROM sub_tasks s WHERE s.group_id = g.group_id) AS total_tasks,
+        (SELECT COUNT(*) FROM sub_tasks s WHERE s.group_id = g.group_id AND s.status = 'done') AS done_tasks,
+        (SELECT COUNT(*) FROM sub_tasks s WHERE s.group_id = g.group_id AND s.status = 'failed') AS failed_tasks
+      FROM task_groups g
+      ORDER BY g.created_at DESC
+      LIMIT ?`).all(limit)
+      .map((g) => ({
+        ...g,
+        totalTasks: g.total_tasks,
+        doneTasks: g.done_tasks,
+        failedTasks: g.failed_tasks,
+        dag: safeParse(g.dag_json),
+        result: safeParse(g.result_json),
+      }));
   }
 
   /**
