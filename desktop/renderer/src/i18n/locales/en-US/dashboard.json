@@ -14,5 +14,8 @@
   "noRecentMessages": "No messages in the last 7 days",
   "weeklyThreads": "New Chats in the Last 8 Weeks",
   "weeklyTitle": "{week}: {count} chats",
-  "localScopeNote": "Local statistics cover thread count, message count and token usage only. Model distribution and activity trends require server data and are not computed locally, so those cards stay empty — this does not mean there was no activity."
+  "localScopeNote": "Local statistics cover thread count, message count and token usage only. Model distribution and activity trends require server data and are not computed locally, so those cards stay empty — this does not mean there was no activity.",
+  "ledgerTitle": "Usage ledger (by member)",
+  "ledgerUnassigned": "Unassigned",
+  "ledgerNote": "This counts token consumption, not money — there is no pricing data locally, so it cannot be converted to currency."
 }

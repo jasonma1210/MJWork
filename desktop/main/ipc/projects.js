@@ -179,6 +179,29 @@ function registerHandlers() {
     }
   });
 
+  // 账本（2026-10-27）：窗口内**按成员聚合**的真实 token 消耗，供「用量账本」页渲染。
+  // 与 projects:quota 同源（同一 QuotaLedger、同一 projectId 口径），只读取 quota_consumptions，
+  // 不改任何状态；无记录时返回空数组，前端据此整块卸载（不画空表、不编造数字）。
+  // ⚠ 口径纪律：这是 **token 消耗**，不是金额。全仓无价格/汇率数据，本通道**不折算**成钱。
+  ipcMain.handle('projects:quotaLedger', async (_, payload = {}) => {
+    const store = deps.getProjectStore?.();
+    const ledger = deps.getQuotaLedger?.();
+    if (!store || !ledger) return { ok: false, error: '项目子系统不可用（初始化失败）', code: 'UNAVAILABLE', rows: [] };
+    try {
+      const byId = String(payload.projectId || '').trim();
+      const byThread = String(payload.threadId || '').trim();
+      if (!byId && !byThread) return { ok: false, error: '缺少 projectId 或 threadId', code: 'NOT_FOUND', rows: [] };
+      const project = byId ? store.getProject(byId) : store.getProjectByThread(byThread);
+      // 未绑定项目的普通会话是常态，不是错误：rows=[] 让账本自己消失。
+      if (!project) return { ok: true, rows: [] };
+      const windowMs = Number(payload.windowMs) > 0 ? Number(payload.windowMs) : undefined;
+      const rows = ledger.ledgerByMember(project.projectId, windowMs);
+      return { ok: true, rows };
+    } catch (err) {
+      return { ...fail(err), rows: [] };
+    }
+  });
+
   ipcMain.handle('projects:updateStatus', async (_, payload = {}) => {
     const store = deps.getProjectStore?.();
     if (!store) return { ok: false, error: '项目子系统不可用（初始化失败）', code: 'UNAVAILABLE' };

@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { IconDownload, IconMail, IconMessage, IconUpload } from './icons';
+import LedgerCard from './LedgerCard';
 import { useI18n } from '../i18n';
 
-export default function Dashboard() {
+// 注意：本文件是 .jsx（非 .tsx），**不可写 TS 类型注解** —— 类型标注只放在 .tsx（如 LedgerCard.tsx）。
+export default function Dashboard({ threadId }) {
   const { t } = useI18n();
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
@@ -131,6 +133,8 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      {/* 用量账本：真实 token 消耗（按成员），无数据则整卡自卸（见 LedgerCard 文件头） */}
+      <LedgerCard threadId={threadId} />
     </div>
   );
 }

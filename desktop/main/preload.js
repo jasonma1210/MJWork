@@ -392,6 +392,8 @@ contextBridge.exposeInMainWorld('mjcode', {
   projectsUpdateStatus: (projectId, status) => ipcRenderer.invoke('projects:updateStatus', { projectId, status }),
   // T6-10：配额水位只读快照（运行卡徽标）。未绑定项目的会话返回 quota=null，不视为错误。
   projectsQuota: (payload) => ipcRenderer.invoke('projects:quota', payload || {}),
+  // 账本（2026-10-27）：窗口内按成员聚合的真实 token 消耗（只读；无记录返回 rows:[]）
+  projectsQuotaLedger: (payload) => ipcRenderer.invoke('projects:quotaLedger', payload || {}),
   // T6-10：工件只读域（侧面板）——写通道只有模型经 artifact_* 原生工具，渲染层无写入能力
   artifactsForProject: (payload) => ipcRenderer.invoke('artifacts:forProject', payload || {}),
   artifactsIndex: (payload) => ipcRenderer.invoke('artifacts:index', payload || {}),

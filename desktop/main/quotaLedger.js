@@ -139,6 +139,28 @@ class QuotaLedger {
     return safeNum(r && r.s);
   }
 
+  /**
+   * 账本视图（2026-10-27 新增）：窗口内**按成员聚合**的真实 token 消耗。
+   *
+   * 只读取 `quota_consumptions`（每次 recordRound/settle 都落一行，见 _insert），
+   * 不改动任何配额状态 —— 前端据此渲染「用量账本」，无记录时返回空数组
+   * （前端整块卸载，不画空表、不编造数字）。
+   *
+   * ⚠ 口径：这是 **token 消耗**，不是金额。全仓没有任何价格/汇率数据，
+   * 故本方法**不提供**「花了多少钱」——账单（¥）必须有真实定价源才能做，不可折算。
+   */
+  ledgerByMember(projectId, windowMs = 30 * 24 * 3600 * 1000, now = Date.now()) {
+    const anchor = this.effectiveNow(projectId, now);
+    const from = anchor - safeNum(windowMs, 30 * 24 * 3600 * 1000);
+    return this.db.prepare(`SELECT member_id AS memberId, SUM(tokens) AS tokens, COUNT(*) AS rounds
+      FROM quota_consumptions
+      WHERE project_id = ? AND created_at > ?
+      GROUP BY member_id
+      ORDER BY tokens DESC`)
+      .all(String(projectId || '').trim(), from)
+      .map((r) => ({ memberId: String(r.memberId || ''), tokens: safeNum(r.tokens), rounds: safeNum(r.rounds) }));
+  }
+
   reservedOf(projectId) {
     let sum = 0;
     for (const v of this._reserved.values()) {

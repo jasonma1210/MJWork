@@ -568,7 +568,7 @@ export default function App() {
       />
       )}
       <div className="flex-1 min-w-0 flex flex-col">
-        {showDashboard && <Dashboard />}
+        {showDashboard && <Dashboard threadId={activeThreadId} />}
         <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => { resetView(); setShowAssistant(true); if (a === 'open_assistant_scheduled') setAssistantTab('scheduled'); }} />
         {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}
         {showAssistant && <AssistantPage tab={assistantTab} onTab={setAssistantTab} threadId={activeThreadId} projectPath={activeProject?.path} onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }} />}{showScheduled && <ScheduledTasks />}{showStudio && <StudioPage threadId={activeThreadId} onOpenFile={openFileInPane} />}
