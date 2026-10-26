@@ -55,7 +55,15 @@ interface DeskThreadRow {
 export interface DeskPageProps {
   /** 会话列表（待决定计数与列表的唯一来源；本页只读，不调 IPC） */
   threads: DeskThreadRow[];
-  /** 当前会话 id —— **可空**：无会话时进行中/交付/用量三卡全部卸载 */
+  /**
+   * 当前会话 id —— **可空**。无会话时的实际行为（此前注释写成「三卡全部卸载」，
+   * 但交付卡是带引导文案的，属过度声明，已按真实行为订正）：
+   *   · 进行中   ⇒ 整卡卸载（「开工前一屏」的进行中只回答「我这个会话在跑什么」）
+   *   · 用量     ⇒ 整卡卸载（projectsQuota 返回 quota:null）
+   *   · 待你决定 ⇒ 整卡卸载（计数为 0）
+   *   · 最近交付 ⇒ **保留卡片 + 显示『未绑定项目』引导**：它有数据源，只是当前定位不到项目，
+   *                沉默会让人以为功能坏了
+   */
   threadId: string | null;
   /** 当前项目目录：只作 tasksList 历史组的 cwd 归属兜底，**禁止**当 projectId 用 */
   projectPath: string;

@@ -74,11 +74,28 @@ await check('A2 兼容别名不泄漏：teams 永不被返回（它是助理子 
   }
 });
 
-await check('A3 互斥：被点亮的一级入口恒不超过一个（含兼容输入）', () => {
-  for (const c of COMBOS) {
-    const got = activeNavOf(c);
-    const lit = ['new', 'assistant', 'scheduled', 'ecosystem', 'desk'].filter((k) => k === got);
-    assert.ok(lit.length <= 1, `多个入口同时点亮：${JSON.stringify(c)} → ${got}`);
+await check('A3 互斥（渲染侧）：多视图条件同时为真时，侧栏实际点亮的一级入口恒为 1 个', async () => {
+  // ⚠ 原断言是**恒真式**：`['new',…].filter((k) => k === got).length <= 1` ——
+  // `activeNavOf` 返回**单值**，命中数恒 ≤ 1，证明不了「不会两个入口同时亮」。
+  // 改为真渲染 Sidebar、数 aria-current="page"（这是唯一能证伪的形态）。
+  const { renderHtml, countAriaCurrent } = await import('./helpers/render-html.mjs');
+  const base = { threads: [], projects: [], activeThread: null, activeProject: null, onSelect: () => {} };
+  // 期望值写死，两个方向都验：冲突组合必须**恰好亮 1 个**（0 个＝点了没亮，也是缺陷）；
+  // 用量页按设计不点亮任何一级入口（activeNavOf 返回 ''），必须**恰好 0 个**。
+  // 只断言「≤1」会漏掉前者，只断言「=1」会误伤后者。
+  const cases = [
+    { view: { showDesk: true, showScheduled: true, showAssistant: true, showDashboard: true, showEcosystem: true, showTeams: true }, expect: 1 },
+    { view: { showDesk: true, showAssistant: true }, expect: 1 },
+    { view: { showDesk: true, showScheduled: true }, expect: 1 },
+    { view: { showDesk: false, showScheduled: true, showAssistant: true, showTeams: true }, expect: 1 },
+    { view: { showAssistant: true, showEcosystem: true }, expect: 1 },
+    { view: {}, expect: 1 },
+    { view: { showDashboard: true }, expect: 0 },
+  ];
+  for (const c of cases) {
+    const html = renderHtml('components/Sidebar.jsx', { ...base, view: { ...c.view, assistantTab: 'publish' } });
+    const n = countAriaCurrent(html);
+    assert.equal(n, c.expect, `${JSON.stringify(c.view)} → 点亮 ${n} 个（期望 ${c.expect}）`);
   }
 });
 

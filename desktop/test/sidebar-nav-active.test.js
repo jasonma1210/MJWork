@@ -113,11 +113,28 @@ const sidebar = blankComments(SIDEBAR);
     assert.equal(activeNavOf({ showAssistant: false, showDashboard: false, showEcosystem: false, hasActiveThread: false }), 'new');
   });
 
-  await check('互斥：任一组合下被选中的一级入口不超过一个', () => {
-    for (const c of combos) {
-      const got = activeNavOf(c);
-      const lit = ['new', 'assistant', 'scheduled', 'ecosystem', 'desk'].filter((k) => k === got);
-      assert.ok(lit.length <= 1, `${JSON.stringify(c)} → ${got}`);
+  // ⚠ 原断言是**恒真式**：`['new',…].filter((k) => k === got).length <= 1` ——
+  // `activeNavOf` 返回**单值**，`k === got` 的命中数恒 ≤ 1，它证明不了「不会两个入口同时亮」。
+  // 改为**渲染侧计数**：真渲染 Sidebar，数 NavItem 实际输出的 aria-current="page"。
+  await check('互斥（渲染侧）：多视图条件同时为真时，侧栏被点亮的一级入口恒为 1 个', async () => {
+    const { renderHtml, countAriaCurrent } = await import('./helpers/render-html.mjs');
+    const base = { threads: [], projects: [], activeThread: null, activeProject: null, onSelect: () => {} };
+    //     // 期望值写死，两个方向都验：冲突组合必须**恰好亮 1 个**（0 个＝点了没亮，也是缺陷）；
+    // 用量页按设计不点亮任何一级入口（activeNavOf 返回 ''），必须**恰好 0 个**。
+    // 只断言「≤1」会漏掉前者，只断言「=1」会误伤后者。
+    const cases = [
+      { view: { showDesk: true, showScheduled: true, showAssistant: true, showDashboard: true, showEcosystem: true, showTeams: false }, expect: 1 },
+      { view: { showDesk: true, showAssistant: true }, expect: 1 },
+      { view: { showDesk: true, showScheduled: true }, expect: 1 },
+      { view: { showDesk: false, showScheduled: true, showAssistant: true }, expect: 1 },
+      { view: { showAssistant: true, showEcosystem: true }, expect: 1 },
+      { view: {}, expect: 1 },
+      { view: { showDashboard: true }, expect: 0 },
+    ];
+    for (const c of cases) {
+      const html = renderHtml('components/Sidebar.jsx', { ...base, view: { ...c.view, assistantTab: 'publish' } });
+      const n = countAriaCurrent(html);
+      assert.equal(n, c.expect, `${JSON.stringify(c.view)} → 点亮 ${n} 个（期望 ${c.expect}）`);
     }
   });
 
@@ -161,4 +178,10 @@ const sidebar = blankComments(SIDEBAR);
 
   console.log(`\nsidebar-nav-active: ${pass}/${total} 通过`);
   if (pass !== total) process.exitCode = 1;
-})();
+})().catch((err) => {
+  // 显式兜底（原先靠 test/helpers/unhandled-preload.cjs 全局捕获）：顶层动态 import 失败
+  // 会让整个套件静默变成 0 项，看起来像"没红"。同时这一步让本文件不再是「裸 async IIFE」，
+  // 从此改断言体不会再触发 audit-check-await 的位置级指纹轮换。
+  console.error('[sidebar-nav-active] 套件初始化失败：', err);
+  process.exitCode = 1;
+});

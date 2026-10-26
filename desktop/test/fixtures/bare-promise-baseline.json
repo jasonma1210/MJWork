@@ -1,9 +1,9 @@
 {
   "version": 3,
-  "generatedAt": "2026-10-26T00:11:58.164Z",
+  "generatedAt": "2026-10-26T00:36:00.466Z",
   "note": "② ratchet 基线（位置级）：key = 文件#语句内容哈希；新增即红，消失请重跑 --write",
   "tiers": {
-    "bareIife": 46,
+    "bareIife": 45,
     "thenOnly": 0
   },
   "files": {
@@ -132,10 +132,6 @@
       "thenOnly": 0
     },
     "test/scheduled-team-tools.test.mjs": {
-      "bareIife": 1,
-      "thenOnly": 0
-    },
-    "test/sidebar-nav-active.test.js": {
       "bareIife": 1,
       "thenOnly": 0
     },
@@ -353,11 +349,6 @@
       "line": 205,
       "text": "(async () => { // ── ① 引擎通告面：runParams 是否带 teamContext ────────────────────────── await check('声明了 t"
     },
-    "test/sidebar-nav-active.test.js#a3250e72edca": {
-      "tier": "bareIife",
-      "line": 44,
-      "text": "(async () => { const { activeNavOf } = await import('../renderer/src/lib/navState.ts'); // ── 行为：穷举 "
-    },
     "test/spawn-subagent-budget.test.mjs#e17f98f9c2fb": {
       "tier": "bareIife",
       "line": 66,
@@ -447,6 +438,21 @@
       "removed": 1,
       "net": 0,
       "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-10-26T00:36:00.465Z",
+      "added": 0,
+      "removed": 1,
+      "net": -1,
+      "files": [
+        {
+          "file": "test/sidebar-nav-active.test.js",
+          "added": 0,
+          "removed": 1,
+          "delta": -1
+        }
+      ],
       "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
     }
   ]

@@ -35,12 +35,25 @@ export interface DeskRunsCardProps {
   onOpenThread?: (threadId: string) => void;
 }
 
+/**
+ * 进行中卡是否应该出现 —— 纯函数，导出以便直接验（不必跑 effect）。
+ * 三个 Gates 缺一不可：
+ *   · 无活动会话 ⇒ 不出现（「开工前一屏」的进行中只回答「我这个会话在跑什么」）；
+ *   · 未取到（null）⇒ 不出现（不表态，避免先闪一帧"0 个任务组"）；
+ *   · 取到但为 0 ⇒ 不出现。
+ */
+export function runningCardVisible(threadId: string | null | undefined, running: TaskGroupRow[] | null): boolean {
+  return !!threadId && !!running && running.length > 0;
+}
+
 export default function DeskRunsCard({ variant, threadId = null, projectPath = '', onOpenThread }: DeskRunsCardProps) {
   const { t } = useI18n();
   const [running, setRunning] = useState<TaskGroupRow[] | null>(null);
 
   useEffect(() => {
     if (variant !== 'running') return undefined;
+    // 无活动会话 ⇒ 不取数（整卡卸载的理由见下方 return null 处）
+    if (!threadId) { setRunning([]); return undefined; }
     const mj = window.mjcode as unknown as { tasksList?: (o: unknown) => Promise<TasksListResult | undefined> } | undefined;
     if (!mj?.tasksList) { setRunning([]); return undefined; }
     let cancelled = false;
@@ -69,14 +82,20 @@ export default function DeskRunsCard({ variant, threadId = null, projectPath = '
     );
   }
 
-  if (!running || running.length === 0) return null;
-  const latest = running[0];
+  // 无会话 / 未取到 / 取到 0 ⇒ 整卡卸载（判据见 runningCardVisible 的注释）。
+  // 历史组（无 thread_id、靠 cwd 匹配）确实能匹配上，但那是「运行记录」面的内容：
+  // 塞进 desk 会让已结束的组混进「正在跑什么」，且此类组没有 thread_id ⇒ 卡上的
+  // 「查看对话」不渲染，用户看到「进行中」却无处可去。宁可不表态，也不给半截信息。
+  if (!runningCardVisible(threadId, running)) return null;
+  // 谓词无法让 TS 收窄（跨函数），故这里显式兜底一次；`?? []` 同时说明「空数组不渲染行」
+  const live = running ?? [];
+  const latest = live[0];
   return (
     <section className="rounded-xl border border-border bg-surface p-4" aria-label={t('desk.running.title')}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-caption text-text2">{t('desk.running.title')}</p>
-          <p className="mt-1 text-xs text-text">{t('desk.running.groups', { n: running.length })}</p>
+          <p className="mt-1 text-xs text-text">{t('desk.running.groups', { n: live.length })}</p>
         </div>
         <span className="inline-flex h-6 shrink-0 items-center gap-2 rounded-full border border-accent bg-accent-bg px-2 text-caption text-accent">
           <span className="h-1 w-1 rounded-full bg-accent animate-pulse" aria-hidden="true" />

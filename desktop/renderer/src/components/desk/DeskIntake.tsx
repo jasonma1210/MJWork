@@ -53,8 +53,12 @@ export default function DeskIntake({ policies = [], onPolicyClick, onDispatch }:
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
           {DESK_SCENARIOS.map((s) => {
             const Icon = s.Icon;
+            // hover 用 **fill-2**（7%）而不是 fill-1（4%）：三档 fill 的语义是
+            // 「1 档静置底 / 2 档 hover / 3 档选中」。实测 fill-1 在 dark 下合成 #272727
+            // 对 surface #1e1e1e 只有 1.116:1、light 下 1.083:1 —— 场景卡是这一屏的
+            // 主要交互元素，1.08 的反馈基本看不见。
             return (
-              <article key={s.id} className="rounded-lg border border-border p-3 transition-colors hover:bg-fill-1">
+              <article key={s.id} className="rounded-lg border border-border p-3 transition-colors hover:bg-fill-2">
                 <div className="flex items-center gap-2 text-text">
                   <Icon size={14} />
                   <b className="text-xs font-semibold truncate">{t(s.nameKey)}</b>
