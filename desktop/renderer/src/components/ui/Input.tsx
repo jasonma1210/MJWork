@@ -114,7 +114,7 @@ export function TextArea({
         aria-describedby={error ? errId : undefined}
         className={[
           FIELD_BASE,
-          'px-3 py-2 text-xs leading-relaxed resize-y font-mono',
+          'px-3 py-2 text-xs leading-relaxed resize-y',
           error ? 'border-danger' : 'border-border',
           disabled ? 'opacity-50' : '',
           className,

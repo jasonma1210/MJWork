@@ -19,7 +19,7 @@ const STATUS_META = {
   success: { labelKey: 'scheduled.statusSuccess', cls: 'text-success' },
   failed: { labelKey: 'scheduled.statusFailed', cls: 'text-danger' },
   running: { labelKey: 'scheduled.statusRunning', cls: 'text-accent' },
-  missed: { labelKey: 'scheduled.statusMissed', cls: 'text-danger' },
+  missed: { labelKey: 'scheduled.statusMissed', cls: 'text-warn' },
 };
 
 // Cron 解析 / 重复模板 / 下次运行 / 人话描述：**已抽到 lib/schedulePresets.ts**。

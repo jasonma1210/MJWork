@@ -308,7 +308,7 @@ function ThreadRow({ thread, active, onSelect, onDelete, onRename, assignMenu, o
   return (
     <div
       className={`px-2 py-2 rounded-lg cursor-pointer group flex items-center gap-2 ${
-        active ? 'bg-hover font-medium' : 'hover:bg-hover'
+        active ? 'bg-accent-bg text-accent font-medium' : 'hover:bg-hover'
       }`}
       onClick={() => onSelect(thread)}
       onDoubleClick={startEdit}

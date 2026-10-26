@@ -222,7 +222,7 @@ export default function ApprovalCard({ onPendingChange }) {
               {rememberable && (
                 <Button variant="secondary" size="md" onClick={() => resolve('conversation')}>{t('approval.allowConversation')}</Button>
               )}
-              <Button variant="secondary" size="md" onClick={() => resolve('deny')}>{t('approval.deny')}</Button>
+              <Button variant="danger-ghost" size="md" onClick={() => resolve('deny')}>{t('approval.deny')}</Button>
               {rememberable && (
                 <Button variant="secondary" size="md" onClick={() => resolve('always')}>{t('approval.allowAlways')}</Button>
               )}
