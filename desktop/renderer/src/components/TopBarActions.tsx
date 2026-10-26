@@ -10,6 +10,7 @@
 // 交通灯位（darwin 80px / 其余 12px），顶栏常驻全宽、不随左右栏开合移动。
 import { IconChart, IconPalette, IconPanelRight, IconSearch, IconSidebar } from './icons';
 import { useI18n } from '../i18n';
+import type { ReactNode } from 'react';
 
 export interface TopBarActionsProps {
   onToggleSidebar: () => void;   // 左栏开关（⌘B 同落点）
@@ -22,11 +23,13 @@ export interface TopBarActionsProps {
   localMode: boolean;            // 是否展示「本机模式」标记
   showDashboard: boolean;        // 「用量」页是否在当前视图（决定按钮选中态）
   onOpenDashboard: () => void;   // 互斥视图：调用方先 resetView 再落该视图
+  /** 顶栏左侧标题区（衬线 h1 + 面包屑），由调用方注入；原型 tb-left 签名 */
+  leadingTitle?: ReactNode;
 }
 
 export default function TopBarActions({
   onToggleSidebar, onOpenSearch, paneOpen, onTogglePane, hasActiveThread,
-  onCycleTheme, themeLabel, localMode, showDashboard, onOpenDashboard,
+  onCycleTheme, themeLabel, localMode, showDashboard, onOpenDashboard, leadingTitle,
 }: TopBarActionsProps) {
   const { t } = useI18n();
   return (
@@ -47,6 +50,7 @@ export default function TopBarActions({
       >
         <IconSearch size={16} />
       </button>
+      {leadingTitle}
       <div className="ml-auto flex items-center gap-2">
         {/* 右栏开关常驻（与左栏开关对称）：开/关都在，状态用高亮区分 */}
         <button

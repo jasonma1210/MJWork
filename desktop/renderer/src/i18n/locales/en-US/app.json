@@ -35,6 +35,7 @@
   "previewDisabledHint": "Open a thread to preview this task's files",
   "preview": "Preview",
   "data": "Insights",
+  "conversation": "Conversation",
   "noProjectSelected": "No project selected yet",
   "openProjectHint": "Press ⌘O to open or create a project",
   "noFileOpen": "No file open",

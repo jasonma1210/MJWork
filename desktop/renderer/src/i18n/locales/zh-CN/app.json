@@ -35,6 +35,7 @@
   "previewDisabledHint": "进入会话后可预览该任务的文件",
   "preview": "预览",
   "data": "数据",
+  "conversation": "对话",
   "noProjectSelected": "尚未选择项目",
   "openProjectHint": "按 ⌘O 打开或创建项目",
   "noFileOpen": "未打开文件",

@@ -23,7 +23,7 @@ import TaskSummaryPanel from './components/TaskSummaryPanel';
 import BrowserPanel from './components/BrowserPanel';
 import SideChatPanel from './components/SideChatPanel';
 import ArtifactPanel from './components/ArtifactPanel';
-import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions'; import DeskPage from './components/DeskPage';
+import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions'; import TopBarTitle from './components/TopBarTitle'; import DeskPage from './components/DeskPage';
 import { api, setLocalMode, isLocalMode } from './lib/api';
 import { restoreMcpTools } from './lib/mcpTools';
 import { loadAgentsMd } from './lib/agentsMd';
@@ -496,7 +496,9 @@ export default function App() {
     <div className="flex flex-col h-screen bg-bg text-text">
       {splash}
       <header className="flex items-center gap-2 pl-[var(--titlebar-inset)] pr-3 h-11 shrink-0 border-b border-border">
-        <TopBarActions onToggleSidebar={() => setSidebarOpen((v) => !v)} onOpenSearch={() => setPaletteOpen(true)} paneOpen={paneOpen} onTogglePane={() => { if (activeThreadRef.current) setPaneOpen((v) => !v); }} hasActiveThread={!!activeThread} onCycleTheme={cycleTheme} themeLabel={themeLabel()} localMode={localMode} showDashboard={showDashboard} onOpenDashboard={() => { resetView(); setShowDashboard(true); }} />
+        <TopBarActions onToggleSidebar={() => setSidebarOpen((v) => !v)} onOpenSearch={() => setPaletteOpen(true)} paneOpen={paneOpen} onTogglePane={() => { if (activeThreadRef.current) setPaneOpen((v) => !v); }} hasActiveThread={!!activeThread} onCycleTheme={cycleTheme} themeLabel={themeLabel()}         localMode={localMode} showDashboard={showDashboard} onOpenDashboard={() => { resetView(); setShowDashboard(true); }}
+        leadingTitle={<TopBarTitle view={{ showDesk, showDashboard, showEcosystem, showScheduled, showAssistant }} projectName={activeProject?.name} />}
+      />
       </header>
       <div className="flex flex-1 min-h-0 relative">
       {sidebarOpen && (
