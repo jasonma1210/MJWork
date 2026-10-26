@@ -89,6 +89,8 @@ export interface DeskPageProps {
   selectedModel?: DeskSelectedModel | null;
   /** 追加：切换模型（App 的 chooseModel，收 { provider, model } 而不是 id 字符串） */
   onPickModel?: (m: { provider: DeskProvider; model: DeskModel }) => void;
+  /** 追加：新建会话（接单区 + 号，同侧栏「新建任务」——退出 desk 回到新会话） */
+  onNewThread?: () => void;
 }
 
 /** token 数字格式化：与 Dashboard 同口径（≥1e6 → M，≥1e3 → K） */
@@ -154,13 +156,18 @@ function UsageCard({ threadId }: { threadId: string | null }) {
         </div>
       </dl>
       <p className="mt-2 text-caption leading-relaxed text-text2">{t('desk.usage.scopeNote')}</p>
+      {typeof quota.util === 'number' && quota.util >= 0 ? (
+        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-hover" role="img" aria-label={t('desk.usage.utilRow', { util: utilPct })}>
+          <div className="h-full rounded-full bg-accent" style={{ width: utilPct }} />
+        </div>
+      ) : null}
     </section>
   );
 }
 
 export default function DeskPage({
   threads, threadId, projectPath, onAutoRun, onOpenSettings, onOpenThread, onOpenArtifacts,
-  providers, selectedModel, onPickModel,
+  providers, selectedModel, onPickModel, onNewThread,
 }: DeskPageProps) {
   const { t, locale } = useI18n();
   // 档位只读回显的真实值（只在挂载时读一次）
@@ -194,6 +201,7 @@ export default function DeskPage({
             models={deskModelOptions(providers)}
             currentModel={deskModelKey(selectedModel)}
             onPickModel={(id) => { const hit = findDeskModel(providers, id); if (hit) onPickModel?.(hit); }}
+            onNewThread={onNewThread}
           />
 
           <div className="mt-4 grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">

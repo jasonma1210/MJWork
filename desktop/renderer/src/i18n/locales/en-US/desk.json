@@ -21,7 +21,7 @@
     "policyHint": "Read-only echo — click to change in Settings",
     "dispatch": "Dispatch",
     "model": "Model",
-    "sendHint": "↵ to dispatch"
+    "newThread": "New conversation"
   },
   "scenario": {
     "office": { "name": "Document Desk", "desc": "Organize materials you already have; originals untouched" },

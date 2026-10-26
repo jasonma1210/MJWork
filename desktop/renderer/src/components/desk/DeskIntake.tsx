@@ -11,7 +11,8 @@
 // 工具条里**只放真有落点的控件**：
 //   · 模型   → 原型同款原生 <select>，值来自 App 的 allProviders，选了就生效（下一次对话就用它）
 //   · 档位   → 只读回显 + 跳设置
-//   · ↵ 派单 → 真绑定 Enter（IME-safe），见 onKeyDown
+//   · ↵ 仍真绑定 Enter（IME-safe，见 onKeyDown）；冗余的「↵ 派单」视觉提示文本已移除（与派单按钮文案重复）
+//   · + 新建会话 → 同侧栏「新建任务」，退出 desk 回到新会话（onNewThread）
 // 原型还有「附件 / 怎么干这一单 / 预算 ¥」三个控件，**刻意不补**：
 //   · 附件与运行模式的真身都在 ChatArea 内部 state（attachments / runMode），desk 拿不到，
 //     复制一套会变成两处都能改、又都不生效 / 不唯一；
@@ -19,6 +20,7 @@
 import { useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import Button from '../ui/Button';
+import { IconPlus } from '../icons';
 import { useI18n } from '../../i18n';
 
 /** 档位回显的一行（label / value 都已由调用方解析成显示文案） */
@@ -46,10 +48,12 @@ export interface DeskIntakeProps {
   currentModel?: string;
   /** 切换模型 */
   onPickModel?: (id: string) => void;
+  /** 新建会话：同侧栏「新建任务」，退出 desk 回到新会话（与新建会话 + 同功能） */
+  onNewThread?: () => void;
 }
 
 export default function DeskIntake({
-  policies = [], onPolicyClick, onDispatch, models = [], currentModel, onPickModel,
+  policies = [], onPolicyClick, onDispatch, models = [], currentModel, onPickModel, onNewThread,
 }: DeskIntakeProps) {
   const { t } = useI18n();
   const [goal, setGoal] = useState('');
@@ -105,9 +109,16 @@ export default function DeskIntake({
           </label>
         ) : null}
 
-        <span className="text-caption text-text2" aria-hidden="true">{t('desk.intake.sendHint')}</span>
+        <button
+          onClick={() => onNewThread?.()}
+          title={t('desk.intake.newThread')}
+          aria-label={t('desk.intake.newThread')}
+          className="ml-auto inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text2 hover:bg-hover hover:text-text"
+        >
+          <IconPlus size={16} />
+        </button>
 
-        <Button variant="primary" size="md" className="ml-auto" disabled={!trimmed} onClick={dispatch}>
+        <Button variant="primary" size="md" disabled={!trimmed} onClick={dispatch}>
           {t('desk.intake.dispatch')}
         </Button>
       </div>

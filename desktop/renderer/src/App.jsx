@@ -581,6 +581,7 @@ export default function App() {
             onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }} onOpenFile={openFileInPane}
             onOpenSettings={() => setShowSettings(true)} onOpenArtifacts={() => { setPaneTab('artifact'); setPaneOpen(true); }}
             onOpenThread={(id) => { const th = threads.find((x) => String(x.id) === String(id)); if (th) selectThread(th); }}
+            onNewThread={() => { setActiveThread(null); resetView(); }}
           />
         )}
         {/* 任务编排已并入对话流（orchestrate_task 工具 + AgentDock 胶囊），不再有独立面板入口 */}
