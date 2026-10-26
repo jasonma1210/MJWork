@@ -12,6 +12,8 @@
   "addProject": "Add Project",
   "archived": "Archived",
   "settings": "Settings",
+  "groupOperations": "Operations",
+  "groupResources": "Resources",
   "collapseTitle": "Collapse sidebar (⌘B)",
   "collapse": "Collapse sidebar"
 }

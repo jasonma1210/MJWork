@@ -65,6 +65,7 @@ export default function Sidebar({
           选中态由 activeNavOf 计算（互斥且穷尽）；此前只有 New chat 传 active，
           且判据是 !activeThread —— 在定时任务页里没有打开会话，于是该亮的不亮。 */}
       <div className="px-2 space-y-1">
+        <div className="px-3 pb-1 text-caption text-text2">{t('sidebar.groupOperations')}</div>
         <NavItem icon={<IconList size={16} />} label={t('sidebar.desk')} onClick={onOpenDesk} active={activeNav === 'desk'} />
         <NavItem icon={<IconEdit size={16} />} label={t('sidebar.newChat')} onClick={onNew} active={activeNav === 'new'} />
         <NavItem icon={<IconUsers size={16} />} label={t('sidebar.assistant')} onClick={onOpenAssistant} active={activeNav === 'assistant'} />
@@ -97,6 +98,7 @@ export default function Sidebar({
 
       {/* 底部次级区：生态中心（D8：降级为弹层，但保留可达入口）/ 归档 / 设置 */}
       <div className="border-t border-border px-2 py-2 shrink-0">
+        <div className="px-3 pb-1 text-caption text-text2">{t('sidebar.groupResources')}</div>
         <NavItem icon={<IconPuzzle size={16} />} label={t('sidebar.ecosystem')} onClick={onOpenEcosystem} active={activeNav === 'ecosystem'} />
         {/* P1-E：归档管理仅本地模式可用（服务端归档 API 未实现）——在线模式隐藏入口，
             此前在线模式点击会直接弹「归档管理需离线模式或等待服务端支持」错误 */}

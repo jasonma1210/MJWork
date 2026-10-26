@@ -213,7 +213,7 @@ export default function TeamSpace({ spaceId = 'default' }) {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-4 gap-4">
           {BOARD_COLUMNS.map(col => {
             const inCol = cards.filter(c => c.column === col.key);
             return (

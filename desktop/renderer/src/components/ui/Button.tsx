@@ -31,12 +31,13 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
   'accent-ghost': 'border border-accent text-accent hover:bg-accent-bg bg-transparent',
 };
 
-// xs = 行内小按钮（h-6 / px-2 / rounded / gap-1）；sm = 列表行内小按钮（h-7 / px-3 / rounded-lg / gap-2）；
-// md = 表单主操作（h-8 / px-4 / rounded-lg / gap-2）。圆角与间隙按尺寸档区分，理由见文件头注释。
+// xs = 行内小按钮（h-6 / px-2 / rounded-md / gap-1）；sm = 列表行内小按钮（h-7 / px-3 / rounded-md / gap-2）；
+// md = 表单主操作（h-8 / px-4 / rounded-md / gap-2）。原型 r-1=8px 统一三档圆角（rounded-md → var(--radius-md)），
+// 与卡片 rounded-xl(14px) 形成原型的两档半径；圆角与间隙按尺寸档区分，理由见文件头注释。
 const SIZE_CLASS: Record<ButtonSize, string> = {
-  xs: 'h-6 px-2 text-xs rounded gap-1',
-  sm: 'h-7 px-3 text-xs rounded-lg gap-2',
-  md: 'h-8 px-4 text-xs rounded-lg gap-2',
+  xs: 'h-6 px-2 text-xs rounded-md gap-1',
+  sm: 'h-7 px-3 text-xs rounded-md gap-2',
+  md: 'h-8 px-4 text-xs rounded-md gap-2',
 };
 
 export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
@@ -67,7 +68,7 @@ export default function Button({
       aria-busy={loading || undefined}
       className={[
         'inline-flex items-center justify-center whitespace-nowrap',
-        'transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+        'transition-[color,transform] active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed',
         SIZE_CLASS[size],
         VARIANT_CLASS[variant],
         className,

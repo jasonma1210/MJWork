@@ -12,6 +12,8 @@
   "addProject": "添加项目",
   "archived": "已归档",
   "settings": "设置",
+  "groupOperations": "经营",
+  "groupResources": "资源",
   "collapseTitle": "收起左侧栏（⌘B）",
   "collapse": "收起左侧栏"
 }

@@ -11,7 +11,7 @@
 // 配色全部 token 化，组件内零十六进制。
 import { useId, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react';
 
-const FIELD_BASE = 'w-full rounded-lg border bg-input text-text outline-none transition-colors focus:border-accent';
+const FIELD_BASE = 'w-full rounded-lg border bg-input text-text outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/30';
 
 export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> {
   label?: ReactNode;
