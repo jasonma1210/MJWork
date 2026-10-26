@@ -24,6 +24,10 @@
 // 要的是 prj_<时间戳>_<hex>。传错类型不报错、静默返回 null。故本页只按 threadId 定位。
 import { useEffect, useState } from 'react';
 import DeskIntake, { type DeskPolicyEcho } from './desk/DeskIntake';
+import {
+  deskModelOptions, deskModelKey, findDeskModel,
+  type DeskProvider, type DeskModel, type DeskSelectedModel,
+} from '../lib/deskModels';
 import DeskRunsCard from './desk/DeskRunsCard';
 import DeskDeliveriesCard from './desk/DeskDeliveriesCard';
 import DeskDecisionsCard from './desk/DeskDecisionsCard';
@@ -78,6 +82,13 @@ export interface DeskPageProps {
   onOpenThread?: (threadId: string) => void;
   /** 追加：打开右栏工件面板（交付行 / 「全部工件」） */
   onOpenArtifacts?: () => void;
+  /** 追加：模型 providers 树（App 的 allProviders）。摊平与还原都在 lib/deskModels.ts 里做，
+      不把转换逻辑写进 App.jsx —— 那里已贴行数水位线（772/780）。 */
+  providers?: readonly DeskProvider[];
+  /** 追加：当前选中模型（App 的 selectedModel，形状是 { provider, model }） */
+  selectedModel?: DeskSelectedModel | null;
+  /** 追加：切换模型（App 的 chooseModel，收 { provider, model } 而不是 id 字符串） */
+  onPickModel?: (m: { provider: DeskProvider; model: DeskModel }) => void;
 }
 
 /** token 数字格式化：与 Dashboard 同口径（≥1e6 → M，≥1e3 → K） */
@@ -150,6 +161,7 @@ function UsageCard({ threadId }: { threadId: string | null }) {
 
 export default function DeskPage({
   threads, threadId, projectPath, onAutoRun, onOpenSettings, onOpenThread, onOpenArtifacts,
+  providers, selectedModel, onPickModel,
 }: DeskPageProps) {
   const { t, locale } = useI18n();
   // 档位只读回显的真实值（只在挂载时读一次）
@@ -180,6 +192,9 @@ export default function DeskPage({
             policies={policiesOf(t, approval)}
             onPolicyClick={onOpenSettings}
             onDispatch={onAutoRun}
+            models={deskModelOptions(providers)}
+            currentModel={deskModelKey(selectedModel)}
+            onPickModel={(id) => { const hit = findDeskModel(providers, id); if (hit) onPickModel?.(hit); }}
           />
 
           <div className="mt-4 grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">

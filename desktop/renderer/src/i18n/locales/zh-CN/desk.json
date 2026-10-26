@@ -19,7 +19,9 @@
     "policySandbox": "沙箱",
     "policyStyle": "粒度",
     "policyHint": "只读回显，点击到设置里修改",
-    "dispatch": "派单"
+    "dispatch": "派单",
+    "model": "模型",
+    "sendHint": "↵ 派单"
   },
   "scenario": {
     "office": { "name": "文档协作", "desc": "整理你已有的材料，默认不改原文件" },

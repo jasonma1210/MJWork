@@ -19,7 +19,9 @@
     "policySandbox": "Sandbox",
     "policyStyle": "Verbosity",
     "policyHint": "Read-only echo — click to change in Settings",
-    "dispatch": "Dispatch"
+    "dispatch": "Dispatch",
+    "model": "Model",
+    "sendHint": "↵ to dispatch"
   },
   "scenario": {
     "office": { "name": "Document Desk", "desc": "Organize materials you already have; originals untouched" },

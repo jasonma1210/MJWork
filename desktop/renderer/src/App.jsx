@@ -574,6 +574,7 @@ export default function App() {
         {showDesk && (
           <DeskPage
             threads={threads} threadId={activeThreadId} projectPath={activeProject?.path || ''}
+            providers={allProviders} selectedModel={selectedModel} onPickModel={chooseModel}
             onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }} onOpenFile={openFileInPane}
             onOpenSettings={() => setShowSettings(true)} onOpenArtifacts={() => { setPaneTab('artifact'); setPaneOpen(true); }}
             onOpenThread={(id) => { const th = threads.find((x) => String(x.id) === String(id)); if (th) selectThread(th); }}

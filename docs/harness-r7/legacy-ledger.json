@@ -121,8 +121,8 @@
     "rawButtons": {
       "source": "desktop/renderer/src（排除 components/ui/ 与 styles/，口径同 test/ui-conventions.test.js）",
       "unit": "button",
-      "total": 252,
-      "scannedFiles": 141,
+      "total": 251,
+      "scannedFiles": 143,
       "groups": [
         {
           "file": "components/Onboarding.jsx",
@@ -265,11 +265,6 @@
           "disposition": "pending"
         },
         {
-          "file": "components/WelcomePage.tsx",
-          "count": 3,
-          "disposition": "pending"
-        },
-        {
           "file": "components/WorktreeBar.jsx",
           "count": 3,
           "disposition": "pending"
@@ -306,6 +301,11 @@
         },
         {
           "file": "components/Sidebar.jsx",
+          "count": 2,
+          "disposition": "pending"
+        },
+        {
+          "file": "components/WelcomePage.tsx",
           "count": 2,
           "disposition": "pending"
         },

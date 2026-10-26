@@ -23,7 +23,7 @@ const BASELINE = {
   //   · 指标不匹配的表单按钮（px-3 py-2 text-sm / rounded-lg 或 rounded-xl，与 md 的 h-8 + text-xs 不符）。
   // 待决策项（暂不转换，避免引入可感知差异）：ScheduledTasks 恢复按钮（px-3 vs md 的 px-4、hover:bg-hover
   // vs danger-ghost 的 hover:bg-danger-bg）、WorktreeBar 移除按钮（rounded-lg vs xs 的 rounded、py-1 vs h-6）。
-  rawButton: 252,  // 2026-10-19 实测基线（首轮 ApprovalCard 4 + feedback 2；二轮 CodeView 2 + LocalMcpSection 1；三轮 RecordReplayPanel 4；四轮 xs 桶 AgentDock 5 + DiffReviewPanel 3；五轮 accent-ghost AgentDock 2；2026-10-21 顶栏按图2 移除筛选按钮与工作区名，App.jsx 裸 button 7→5；2026-10-22 实测 Composer 一处分组按钮收敛后 256→255；2026-10-24 FIX-P07 首启向导模型步重构：该步 3 个既有裸 button 与 4 个新增操作按钮统一收敛到 ui/Button，新选项卡用 label+radio，255→252）；每轮收敛后同步下调，禁止调高
+  rawButton: 251,  // 2026-10-19 实测基线（首轮 ApprovalCard 4 + feedback 2；二轮 CodeView 2 + LocalMcpSection 1；三轮 RecordReplayPanel 4；四轮 xs 桶 AgentDock 5 + DiffReviewPanel 3；五轮 accent-ghost AgentDock 2；2026-10-21 顶栏按图2 移除筛选按钮与工作区名，App.jsx 裸 button 7→5；2026-10-22 实测 Composer 一处分组按钮收敛后 256→255；2026-10-24 FIX-P07 首启向导模型步重构：该步 3 个既有裸 button 与 4 个新增操作按钮统一收敛到 ui/Button，新选项卡用 label+radio，255→252；2026-10-26 新建会话用场景卡替换 4 张快捷动作卡，WelcomePage 源内那处 `QUICK_ACTIONS.map` 的裸 button 字面量随之删除，252→251）；每轮收敛后同步下调，禁止调高
 };
 
 let pass = 0;

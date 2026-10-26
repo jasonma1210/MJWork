@@ -1,23 +1,36 @@
-// 工作台 · 接单输入区（目标文案 + 工作场景预设 + 档位只读回显）
+// 工作台 · 接单输入区（目标文案 + 模型 + 档位只读回显 + 派单）
 //
-// 职责边界（刻意收窄）：只做「收集目标文案 / 套用模板 / 回显当前档位」，
-// **不写入任何配置**。场景预设的团队、运行模式、沙箱、拆分粒度在原型里是配置项，
-// 但在本仓它们的事实来源是 Composer 控制台与设置页 —— 让 desk 也能改，等于制造
-// 第二条事实来源（两处都能改、又都不是唯一真相，用户会先怀疑数据坏了）。
-// 故这里只把 App 传进来的 policies 逐个回显，点击跳设置页改。
+// 形态对齐原型 desk 的 `.card.intake`：**一个输入框 + 一行工具条**。
+// 场景预设卡**不在这一屏**——原型没有，且四张卡会把下面六个状态板块推出首屏；
+// 它们已移到「新建会话」（components/desk/ScenarioCards.tsx）。
 //
-// 「套用模板」与「填入指令」都**只预填输入框**，不派单、不改运行态：
-// 占位符（{source} 等）刻意保留给用户自己替换 —— 模板的目标是省去「从空白开始」，
-// 不是替用户猜参数。故 goal.* / cmd.* 一律**无参调用** t()，不传 params。
+// 职责边界（刻意收窄）：只做「收集目标文案 / 选模型 / 回显当前档位」，
+// **不写入任何配置**。档位的事实来源是设置页，这里只逐个回显、点击跳过去改 ——
+// 让 desk 也能改，等于制造第二条事实来源（两处都能改、又都不是唯一真相，用户会先怀疑数据坏了）。
+//
+// 工具条里**只放真有落点的控件**：
+//   · 模型   → 原型同款原生 <select>，值来自 App 的 allProviders，选了就生效（下一次对话就用它）
+//   · 档位   → 只读回显 + 跳设置
+//   · ↵ 派单 → 真绑定 Enter（IME-safe），见 onKeyDown
+// 原型还有「附件 / 怎么干这一单 / 预算 ¥」三个控件，**刻意不补**：
+//   · 附件与运行模式的真身都在 ChatArea 内部 state（attachments / runMode），desk 拿不到，
+//     复制一套会变成两处都能改、又都不生效 / 不唯一；
+//   · 预算 ¥ 全仓无价格表，做了就是死控件（团队预算三元组在 teamStore，只在挂军团时才有意义）。
 import { useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import Button from '../ui/Button';
-import { DESK_SCENARIOS } from '../../lib/deskPresets';
 import { useI18n } from '../../i18n';
 
 /** 档位回显的一行（label / value 都已由调用方解析成显示文案） */
 export interface DeskPolicyEcho {
   label: string;
   value: string;
+}
+
+/** 模型下拉的一项（由 App 从 allProviders 摊平后传入） */
+export interface DeskModelOption {
+  id: string;
+  label: string;
 }
 
 export interface DeskIntakeProps {
@@ -27,12 +40,32 @@ export interface DeskIntakeProps {
   onPolicyClick?: () => void;
   /** 派单：把目标交回主链路，与 AssistantPage 的 onAutoRun 完全同构 */
   onDispatch?: (goal: string) => void;
+  /** 可选模型列表；为空则不渲染选择器（不显示一个空下拉） */
+  models?: readonly DeskModelOption[];
+  /** 当前模型 key */
+  currentModel?: string;
+  /** 切换模型 */
+  onPickModel?: (id: string) => void;
 }
 
-export default function DeskIntake({ policies = [], onPolicyClick, onDispatch }: DeskIntakeProps) {
+export default function DeskIntake({
+  policies = [], onPolicyClick, onDispatch, models = [], currentModel, onPickModel,
+}: DeskIntakeProps) {
   const { t } = useI18n();
   const [goal, setGoal] = useState('');
   const trimmed = goal.trim();
+  const dispatch = () => { if (trimmed) onDispatch?.(trimmed); };
+
+  // Enter 派单 / Shift+Enter 换行。
+  // isComposing 判断不可省：中文输入法下回车是「上屏候选词」，此时派单会把半截拼音当成目标发出去。
+  // 这也是原型那个 ⌘↵ 提示的正确落地方式 —— 提示存在的前提是它**真的能用**。
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return;
+    e.preventDefault();
+    dispatch();
+  };
+
   return (
     <section className="shrink-0 rounded-xl border border-border bg-surface p-4" aria-label={t('desk.intake.label')}>
       <label htmlFor="desk-intake-goal" className="block text-caption text-text2 mb-1">
@@ -45,68 +78,36 @@ export default function DeskIntake({ policies = [], onPolicyClick, onDispatch }:
         placeholder={t('desk.intake.placeholder')}
         value={goal}
         onChange={(e) => setGoal(e.target.value)}
+        onKeyDown={onKeyDown}
       />
 
-      <div className="mt-2 pt-3 border-t border-border">
-        <p className="text-xs text-text">{t('desk.intake.presetsLabel')}</p>
-        <p className="mt-1 text-caption text-text2">{t('desk.intake.presetsHint')}</p>
-        {/* gap-3（12px）而非 gap-2（8px）：四列在 1070px 内容区下每卡仅约 250px，
-            8px 间隙会让四张卡在视觉上黏成一片。断点保持 md 2 列 / xl 4 列不变——
-            指令是「点了就填进输入框」的快捷项，不要求先读全，靠 truncate + title 兜底。 */}
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {DESK_SCENARIOS.map((s) => {
-            const Icon = s.Icon;
-            // hover 用 **fill-2**（7%）而不是 fill-1（4%）：三档 fill 的语义是
-            // 「1 档静置底 / 2 档 hover / 3 档选中」。实测 fill-1 在 dark 下合成 #272727
-            // 对 surface #1e1e1e 只有 1.116:1、light 下 1.083:1 —— 场景卡是这一屏的
-            // 主要交互元素，1.08 的反馈基本看不见。
-            return (
-              // flex-col + grid stretch ⇒ 同排卡片等高，底部不再参差
-              <article key={s.id} className="flex flex-col rounded-lg border border-border p-3 transition-colors hover:bg-fill-2">
-                <div className="flex min-w-0 items-center gap-2 text-text">
-                  <span className="shrink-0"><Icon size={14} /></span>
-                  <b className="truncate text-xs font-semibold">{t(s.nameKey)}</b>
-                </div>
-                {/* desc 最多两行：四张卡描述长度不一，不限行会让下方的「套用模板」高度错位 */}
-                <p className="mt-1 line-clamp-2 text-caption text-text2">{t(s.descKey)}</p>
-                <Button variant="secondary" size="xs" className="mt-2 self-start" onClick={() => setGoal(t(s.goalKey))}>
-                  {t('desk.intake.applyTemplate')}
-                </Button>
-                {/* 指令区：与「套用模板」用上边框分组，避免四个元素在同一团白里堆叠。
-                    ⚠ 这里的 w-full / min-w-0 不是装饰：Button 基础类是 inline-flex + whitespace-nowrap，
-                    没有 w-full 时宽度由文字撑开，truncate 的 span 就失去宽度约束 ⇒ 文字直接冲出卡片
-                    （真机截图里串到相邻卡片的那个 bug）。title 给完整文案兜底。 */}
-                <ul className="mt-2 flex flex-col gap-1 border-t border-border pt-2">
-                  {s.cmdKeys.map((k) => (
-                    <li key={k} className="min-w-0">
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        className="w-full min-w-0 text-left"
-                        title={t(k)}
-                        onClick={() => setGoal((v) => (v ? `${v}\n${t(k)}` : t(k)))}
-                      >
-                        {/* 左对齐必须落在 span 上，不能只靠 className 传 justify-start：
-                            Button 基础类含 justify-center，同名工具类的胜负由**样式表顺序**决定，
-                            消费方在外层覆盖不掉（真机渲染出来是居中的，与卡内其它左对齐内容割裂）。 */}
-                        <span className="w-full truncate text-left">{t(k)}</span>
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </article>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-3">
         {policies.map((p) => (
           <Button key={p.label} variant="secondary" size="xs" title={t('desk.intake.policyHint')} onClick={() => onPolicyClick?.()}>
             {p.label} · {p.value}
           </Button>
         ))}
-        <Button variant="primary" size="md" className="ml-auto" disabled={!trimmed} onClick={() => { if (trimmed) onDispatch?.(trimmed); }}>
+
+        {models.length > 0 ? (
+          <label className="inline-flex items-center gap-1 text-caption text-text2">
+            <span className="shrink-0">{t('desk.intake.model')}</span>
+            {/* 原生 select 而非 ModelSelector：原型 desk 用的就是 <select>，
+                而 ModelSelector 是带思考档位能力门控的 500 行组件，这里只需「选一个模型」。 */}
+            <select
+              value={currentModel || ''}
+              onChange={(e) => onPickModel?.(e.target.value)}
+              className="h-6 max-w-[220px] rounded border border-border bg-transparent px-1 text-caption text-text outline-none"
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
+        <span className="text-caption text-text2" aria-hidden="true">{t('desk.intake.sendHint')}</span>
+
+        <Button variant="primary" size="md" className="ml-auto" disabled={!trimmed} onClick={dispatch}>
           {t('desk.intake.dispatch')}
         </Button>
       </div>
