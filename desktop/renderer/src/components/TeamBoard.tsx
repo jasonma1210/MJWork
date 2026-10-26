@@ -355,11 +355,13 @@ function TaskCard({ task, runId, teamId, lead, dependsText, waitingText, onOpenF
               <div className="text-caption text-text2 mb-1">{t('teams.streamTaskArtifacts')}</div>
               <div className="space-y-1">
                 {artifacts.map((p) => (onOpenFile && isPathLike(p) ? (
+                  // !justify-start：同 TeamRunStream —— 不加 ! 会被 Button 基础类的
+                  // justify-center 吃掉，导致图标与路径居中。
                   <Button
                     key={p}
                     variant="ghost"
                     size="xs"
-                    className="max-w-full justify-start px-1"
+                    className="max-w-full !justify-start px-1"
                     title={p}
                     onClick={() => onOpenFile(p)}
                   >

@@ -219,10 +219,13 @@ function PathChip({ path, onOpenFile }: { path: string; onOpenFile?: (p: string)
     return <span className="text-caption text-text2 break-all">{path}</span>;
   }
   return (
+    // !justify-start：Button 基础类含 justify-center，同名工具类按样式表顺序决胜，
+    // 不加 ! 的 justify-start 会被吃掉 ⇒ 图标与路径被居中，与周围左对齐文字割裂。
+    // 与 ArtifactPanel 的既有写法保持一致。
     <Button
       variant="ghost"
       size="xs"
-      className="max-w-full justify-start px-1"
+      className="max-w-full !justify-start px-1"
       title={path}
       onClick={() => onOpenFile(path)}
     >
