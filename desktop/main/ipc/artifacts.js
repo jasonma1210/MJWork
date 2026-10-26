@@ -49,15 +49,22 @@ function registerHandlers() {
         //   · 没传/没绑定  ⇒ 配置缺失，可引导（先在左侧选择或创建项目）
         //   · 传了 id 却查不到 ⇒ 数据不一致，需要排查（项目被删/库回滚）
         // 两者用不同 code，调用方与日志能分开统计。
+        // P1-B 修正（2026-10-26）：判据必须是「**传的是哪个**」，不是「两个是不是都空」。
+        // 原写法 `if (!byId && !byThread) NO_PROJECT` 把最常见的常态（有会话、未绑定项目）
+        // 送进了 NOT_FOUND，而 NOT_FOUND 在渲染层是「记录可能已被移除」的排查口气 ——
+        // 与本函数上方注释要修的那次真机事故（用户以为数据坏了去翻库）是同一个现象，
+        // 只是从「传了 id 查不到」扩散到了「没绑项目的普通会话」。
+        // 现在：传了 projectId 查不到 ⇒ 数据不一致 ⇒ NOT_FOUND（要排查）
+        //       只传 threadId 或都没传 ⇒ 未绑定项目 ⇒ NO_PROJECT（配置缺失，可引导）
         const byId = String(payload.projectId || '').trim();
         const byThread = String(payload.threadId || '').trim();
-        if (!byId && !byThread) {
-          return { ok: false, error: '当前会话未绑定项目（先在左侧选择或创建一个项目）', code: 'NO_PROJECT', artifacts: [] };
+        if (byId) {
+          return { ok: false, error: '项目不存在（该 id 在项目库里查不到）', code: 'NOT_FOUND', artifacts: [] };
         }
         return {
           ok: false,
-          error: byId ? '项目不存在（该 id 在项目库里查不到）' : '该会话尚未绑定项目',
-          code: 'NOT_FOUND',
+          error: byThread ? '该会话尚未绑定项目（先在左侧选择或创建一个项目）' : '当前还没有会话，先在左侧选择或创建一个项目',
+          code: 'NO_PROJECT',
           artifacts: [],
         };
       }
