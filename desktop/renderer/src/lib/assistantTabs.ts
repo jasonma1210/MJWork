@@ -10,15 +10,15 @@
 //   publish  —— **发布任务（默认）**：唯一发起面。一句话 + 选军团（不选=自动构建）
 //               + 类型（复杂任务 / 定时任务）；复杂任务下方有看板，定时任务就地展开
 //               重复/有效期/时间并给执行计划预览
-//   teams    —— 军团编制（原样搬入 TeamsPage，不改业务逻辑）
 //   aiTeam   —— AI 建团（草案卡片逐条采纳/编辑/否决）
+//   （原 teams 军团编制已于 2026-10-27 迁入工作室 Studio，见下方第四版说明）
 //
 // 为什么删掉 scheduled / complex 两个 Tab：
 //   · scheduled —— 用户明确要求「一级菜单下面还是要有定时任务」⇒ 它升回**一级入口**，
 //     不再藏在助理里（一个能力不该同时有两个并列入口，否则「在哪管理」会有两个答案）；
 //   · complex   —— 它就是「发布任务」的类型之一（复杂任务），独立成 Tab 会与 publish
 //     抢同一个职责，且用户在两个地方都能派活时，「默认走哪条」变得不可解释。
-export type AssistantTab = 'publish' | 'teams' | 'aiTeam';
+export type AssistantTab = 'publish' | 'aiTeam';
 
 export interface AssistantTabDef {
   id: AssistantTab;
@@ -26,9 +26,11 @@ export interface AssistantTabDef {
   labelKey: string;
 }
 
+// 2026-10-27 第四版：**军团编制迁出助理、归入工作室**。
+//   一个能力不该有两个并列入口（否则「在哪管理编制」有两个答案）——工作室已收编编制
+//   （见 lib/studioTabs.ts）后，助理页必须把它摘掉，否则就是双入口。
 export const ASSISTANT_TABS: readonly AssistantTabDef[] = [
   { id: 'publish', labelKey: 'assistant.tabPublish' },
-  { id: 'teams', labelKey: 'assistant.tabTeams' },
   { id: 'aiTeam', labelKey: 'assistant.tabAiTeam' },
 ];
 

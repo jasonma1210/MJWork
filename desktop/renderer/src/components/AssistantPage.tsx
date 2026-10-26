@@ -12,7 +12,6 @@
 // 按 tab **挂载**（不是同时挂载）：三个视图各自持有自己的滚动位置与表单状态，
 // 同时挂载会让三份列表同时发请求、也把三个页面的状态混在一个 DOM 里。
 import { useEffect, useState } from 'react';
-import TeamsPage from './TeamsPage';
 import AiTeamBuilder from './AiTeamBuilder';
 import PublishTaskPage from './PublishTaskPage';
 import InlineAlert from './InlineAlert';
@@ -24,7 +23,6 @@ import { ASSISTANT_TABS, type AssistantTab } from '../lib/assistantTabs';
 
 const TAB_ICON: Record<AssistantTab, typeof IconUsers> = {
   publish: IconZap,
-  teams: IconUsers,
   aiTeam: IconBot,
 };
 
@@ -67,7 +65,7 @@ export default function AssistantPage({
         {tab === 'publish' && (
           <PublishTaskPage threadId={threadId} projectPath={projectPath} onAutoRun={onAutoRun} />
         )}
-        {tab === 'teams' && <TeamsPage />}
+        {/* 军团编制已于 2026-10-27 迁入工作室（Studio），此处不再挂 TeamsPage —— 避免双入口 */}
         {tab === 'aiTeam' && <AiTeamBuilder />}
       </div>
     </div>

@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import TabBar from './ui/TabBar';
 import TeamSpace from './TeamSpace';
+import TeamsPage from './TeamsPage';
 import ArtifactPanel from './ArtifactPanel';
 import { STUDIO_TABS, DEFAULT_STUDIO_TAB, type StudioTab } from '../lib/studioTabs';
 import { useI18n } from '../i18n';
@@ -44,6 +45,8 @@ export default function StudioPage({ tab, onTab, threadId = null, onOpenFile, on
       <div className="min-h-0 flex-1 overflow-hidden">
         {active === 'space' ? (
           <TeamSpace spaceId="default" />
+        ) : active === 'roster' ? (
+          <TeamsPage />
         ) : (
           <ArtifactPanel threadId={threadId} onOpenFile={onOpenFile} onAutoOpen={onAutoOpen} />
         )}

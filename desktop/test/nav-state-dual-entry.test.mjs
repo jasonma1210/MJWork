@@ -35,6 +35,7 @@ const check = async (name, fn) => {
 
 const { activeNavOf } = await import('../renderer/src/lib/navState.ts');
 const { ASSISTANT_TABS, DEFAULT_ASSISTANT_TAB, isAssistantTab } = await import('../renderer/src/lib/assistantTabs.ts');
+const { STUDIO_TABS, DEFAULT_STUDIO_TAB, isStudioTab } = await import('../renderer/src/lib/studioTabs.ts');
 
 // ── 视图组合穷举器：7 个布尔标志（含两个兼容输入 + 接单台）⇒ 128 组 ──
 // 第三版（2026-10-25）：新增一级入口「工作台」⇒ 标志从 6 个变 7 个，组合数 64→128。
@@ -165,9 +166,11 @@ await check('A10 工作室（studio）优先于定时任务/助理/生态中心�
 
 // ── B. 助理子页目录与挂载方式 ──
 
-await check('B1 助理子页目录恰为三个 Tab：发布任务（默认）/ 军团 / AI 建团', () => {
+await check('B1 助理子页目录恰为两个 Tab：发布任务（默认）/ AI 建团（军团编制已迁工作室）', () => {
   const ids = ASSISTANT_TABS.map((x) => x.id);
-  assert.deepEqual(ids, ['publish', 'teams', 'aiTeam']);
+  // 第四版（2026-10-27）：编制 TeamsPage 迁入工作室，助理页必须摘掉它（禁双入口）
+  assert.deepEqual(ids, ['publish', 'aiTeam']);
+  assert.ok(!ids.includes('teams'), '军团编制不应再是助理子 Tab（已迁入工作室）');
   // 定时任务已升回一级入口 ⇒ 不得再作为助理 Tab（两个并列入口会让「在哪管理」有两个答案）
   assert.ok(!ids.includes('scheduled'), '定时任务不应再是助理子 Tab');
 });
@@ -182,8 +185,9 @@ await check('B2 每个 Tab 的文案键都存在且指向 assistant 模块（禁
 await check('B3 默认 Tab 是「发布任务」；isAssistantTab 对非法输入返回 false（防脏值进视图状态）', () => {
   assert.equal(DEFAULT_ASSISTANT_TAB, 'publish', `默认 Tab 应为 publish，实际 ${DEFAULT_ASSISTANT_TAB}`);
   assert.ok(isAssistantTab(DEFAULT_ASSISTANT_TAB), `默认 Tab 非法：${DEFAULT_ASSISTANT_TAB}`);
-  for (const ok of ['publish', 'teams', 'aiTeam']) assert.ok(isAssistantTab(ok), ok);
-  for (const bad of ['', null, undefined, 'teams ', 'Teams', 'unknown', 'scheduled', 'complex', 0]) {
+  for (const ok of ['publish', 'aiTeam']) assert.ok(isAssistantTab(ok), ok);
+  // 'teams' 现已**不是**助理 Tab（迁去工作室）⇒ 必须判为非法，防止脏值把编制塞回助理
+  for (const bad of ['', null, undefined, 'teams', 'teams ', 'Teams', 'unknown', 'scheduled', 'complex', 0]) {
     assert.equal(isAssistantTab(bad), false, String(bad));
   }
 });
@@ -208,11 +212,10 @@ await check('B5 App 把视图标志（含 showScheduled）传给 Sidebar，并�
   assert.ok(!/<TeamsPage\s*\/>/.test(app), 'App 仍直接挂载 <TeamsPage/>（应留在助理 Tab）');
 });
 
-await check('B6 AssistantPage 按 tab 条件挂载三个子视图，且不再有 scheduled/complex 分支', () => {
+await check('B6 AssistantPage 按 tab 条件挂载两个子视图，且不再有 scheduled/complex/teams 分支', () => {
   const page = stripComments(read('components/AssistantPage.tsx'));
   for (const pair of [
     ["tab === 'publish'", '<PublishTaskPage'],
-    ["tab === 'teams'", '<TeamsPage'],
     ["tab === 'aiTeam'", '<AiTeamBuilder'],
   ]) {
     const i = page.indexOf(pair[0]);
@@ -221,6 +224,38 @@ await check('B6 AssistantPage 按 tab 条件挂载三个子视图，且不再有
   }
   assert.ok(!page.includes("tab === 'scheduled'"), 'AssistantPage 不应再有 scheduled 分支（已升一级入口）');
   assert.ok(!page.includes('<ScheduledTasks'), 'AssistantPage 不应再挂 ScheduledTasks');
+  // 第四版（2026-10-27）：编制迁入工作室 ⇒ AssistantPage 不得再挂 TeamsPage（否则双入口）
+  assert.ok(!page.includes('<TeamsPage'), 'AssistantPage 仍挂 TeamsPage（编制已迁工作室，会形成双入口）');
+});
+
+// ── C. 工作室（Studio）子页目录与挂载方式 ──
+
+await check('C1 工作室子页目录恰为三个 Tab：项目空间（默认）/ 编制 / 工件', () => {
+  const ids = STUDIO_TABS.map((x) => x.id);
+  assert.deepEqual(ids, ['space', 'roster', 'artifacts']);
+  assert.equal(DEFAULT_STUDIO_TAB, 'space');
+  for (const ok of ['space', 'roster', 'artifacts']) assert.ok(isStudioTab(ok), ok);
+  for (const bad of ['', null, undefined, 'teams', 'board', 'unknown', 0]) {
+    assert.equal(isStudioTab(bad), false, String(bad));
+  }
+});
+
+await check('C2 工作室文案键双侧齐全，且指向 studio 模块（禁硬编码文案）', () => {
+  const zh = JSON.parse(fs.readFileSync(path.join(SRC, 'i18n/locales/zh-CN/studio.json'), 'utf8'));
+  const en = JSON.parse(fs.readFileSync(path.join(SRC, 'i18n/locales/en-US/studio.json'), 'utf8'));
+  for (const tab of STUDIO_TABS) {
+    assert.match(tab.labelKey, /^studio\./, `${tab.id} 的文案键不在 studio 模块：${tab.labelKey}`);
+    const leaf = tab.labelKey.replace(/^studio\./, '');
+    assert.equal(typeof zh[leaf], 'string', `zh-CN 缺 ${tab.labelKey}`);
+    assert.equal(typeof en[leaf], 'string', `en-US 缺 ${tab.labelKey}`);
+  }
+});
+
+await check('C3 编制由工作室挂载（助理已摘除）⇒ StudioPage 渲染 TeamsPage，且复用 ui/TabBar', () => {
+  const page = read('components/StudioPage.tsx');
+  assert.match(page, /<TeamsPage/, 'StudioPage 未挂载 TeamsPage（编制无落点）');
+  assert.match(page, /<TabBar/, 'StudioPage 未使用 ui/TabBar 原语');
+  assert.ok(!/<button/.test(stripComments(page)), 'StudioPage 仍含裸 <button>（应收敛到 ui/TabBar）');
 });
 
 await check('B7 Tab 条具备可访问性语义：tabs 原语提供 role/aria，助理页复用它（不再散落裸 button）', () => {

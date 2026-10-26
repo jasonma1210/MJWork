@@ -8,12 +8,12 @@
 //   artifacts —— 工件（ArtifactPanel，原型 tabIndex.artifacts；其内部已复用 TeamBoardBody
 //                渲染待办看板，见 ArtifactPanel.tsx:323，故**不单列看板 Tab**）
 //
-// 为什么此刻只有两个 Tab（编制不在这里）：
-//   团队编制（TeamsPage）按 2026-10-24 的既定决策归在**助理**页（navState.ts:14-19 有完整
-//   变更史，且 nav-state-dual-entry 套件的 B1/B5/B6 显式守护）。把它同时挂进工作室会造成
-//   「一个能力两个并列入口」——正是该套件要防的事。编制是否迁入工作室属 **IA 决策变更**，
-//   需先改那三处门禁语义再动，不在本批静默执行。
-export type StudioTab = 'space' | 'artifacts';
+// 编制的归属变更（2026-10-27，用户确认后执行）：
+//   此前团队编制（TeamsPage）按 2026-10-24 的既定决策归在**助理**页。但它与工作室的
+//   「编制」是同一件事，两处并列会让「在哪管理编制」有两个答案。现已**迁入工作室**，
+//   并**同步从助理页摘除**（见 lib/assistantTabs.ts 第四版说明）——先改门禁判据再动代码，
+//   不静默执行：nav-state-dual-entry 的 B1/B6 已按新语义改写。
+export type StudioTab = 'space' | 'roster' | 'artifacts';
 
 export interface StudioTabDef {
   id: StudioTab;
@@ -23,6 +23,7 @@ export interface StudioTabDef {
 
 export const STUDIO_TABS: readonly StudioTabDef[] = [
   { id: 'space', labelKey: 'studio.tabSpace' },
+  { id: 'roster', labelKey: 'studio.tabRoster' },
   { id: 'artifacts', labelKey: 'studio.tabArtifacts' },
 ];
 
