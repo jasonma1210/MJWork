@@ -497,9 +497,9 @@ export default function PlusMenu({
                         </>
                       )}
                       {c.install?.auth_command && (
-                        <div className="rounded-lg border border-border bg-surface2 px-2 py-2">
+                        <div className="rounded-lg border border-border bg-input px-2 py-2">
                           <div className="text-caption text-text2 leading-relaxed">{tr('plusMenu.cliAuthRequired')}</div>
-                          <code className="block mt-1 text-caption text-text1 break-all select-all">{c.install.auth_command}</code>
+                          <code className="block mt-1 text-caption text-text break-all select-all">{c.install.auth_command}</code>
                         </div>
                       )}
                       {plan.kind === 'manual' && !configured && (

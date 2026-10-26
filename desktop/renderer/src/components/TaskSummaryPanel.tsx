@@ -106,18 +106,20 @@ export default function TaskSummaryPanel({ threadId = null, cwd = '', events = [
   const hasEvents = Array.isArray(events) && events.length > 0;
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto">
-      {/* 任务组快照 */}
-      <div className="px-2 py-2 border-b border-border">
-        <div className="flex items-center gap-2 mb-1">
-          <IconBot size={12} className="text-text2 shrink-0" />
-          <span className="text-caption text-text2">{t('rightPane.taskGroups')}</span>
-          {groups.length > 0 && <span className="text-caption text-text2">{groups.length}</span>}
-        </div>
+    <div className="flex-1 min-h-0 flex flex-col">
+      {/* 任务组快照 头（shrink-0，与右栏其他面板头对齐 G-1；此前该头随内容滚走） */}
+      <div className="px-2 h-9 border-b border-border flex items-center gap-2 shrink-0">
+        <IconBot size={12} className="text-text2 shrink-0" />
+        <span className="text-xs text-text2">{t('rightPane.taskGroups')}</span>
+        {groups.length > 0 && <span className="text-xs text-text2">{groups.length}</span>}
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {/* 任务组卡片 */}
         {groups.length === 0 && (
-          <div className="text-xs text-text2 py-1">{loaded ? t('rightPane.noTaskGroup') : t('rightPane.loading')}</div>
+          <div className="text-xs text-text2 px-2 py-2">{loaded ? t('rightPane.noTaskGroup') : t('rightPane.loading')}</div>
         )}
-        <div className="space-y-1">
+        <div className="space-y-1 p-2">
           {groups.map((g) => (
             <div key={g.group_id} className="rounded-lg border border-border bg-bg px-2 py-2">
               <div className="flex items-center gap-2">
@@ -141,13 +143,13 @@ export default function TaskSummaryPanel({ threadId = null, cwd = '', events = [
             </div>
           ))}
         </div>
-      </div>
 
-      {/* 子代理 DAG / 单代理卡片 */}
-      <div className="min-h-0">
-        {hasEvents
-          ? <SubtaskTree events={events} />
-          : <PanelEmpty icon={IconBot} title={t('rightPane.noSubtask')} hint={t('rightPane.noSubtaskHint')} />}
+        {/* 子代理 DAG / 单代理卡片 */}
+        <div className="min-h-0">
+          {hasEvents
+            ? <SubtaskTree events={events} />
+            : <PanelEmpty icon={IconBot} title={t('rightPane.noSubtask')} hint={t('rightPane.noSubtaskHint')} />}
+        </div>
       </div>
     </div>
   );

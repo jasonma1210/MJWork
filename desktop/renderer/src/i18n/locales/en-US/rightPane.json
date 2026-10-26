@@ -26,6 +26,8 @@
   "browserReload": "Reload",
   "browserOpenExternal": "Open in system browser",
   "browserUrlPlaceholder": "Enter a URL and press Enter",
+  "browserLoadFailedTitle": "Failed to load page",
+  "browserRetry": "Retry",
   "sideChatHint": "Lightweight Q&A independent of the main thread",
   "sideChatClear": "Clear chat",
   "sideChatEmpty": "Ask the model anything — kept separate from the main thread so it won't pollute the task context.",

@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import { useI18n } from '../i18n';
 import { confirm } from './feedback';
 import Button from './ui/Button'; // G7：新增动作按钮一律走 ui/Button 原语（裸 <button> 基线只降不升）
+import Switch from './ui/Switch'; // P3-3：记忆三处开关统一到 ui/Switch 原语（消除手写 pill / Button 双向两套形态）
 
 // 与 SettingsModal 内部 Section 同款卡片容器（该组件为文件私有，此处独立复刻避免循环依赖）
 const Section = ({ title, children }: { title: string; children: ReactNode }) => (
@@ -280,10 +281,7 @@ export default function MemorySection({ projectPath = '' }: { projectPath?: stri
               <div className="text-sm font-medium">{t('settings.memoryAutoCaptureLabel')}</div>
               <p className="text-xs text-text2 mt-1">{t('settings.memoryAutoCaptureDesc')}</p>
             </div>
-            <button onClick={toggleAutoCapture}
-              className={`text-xs px-3 py-2 rounded-lg border shrink-0 ${autoCapture ? 'bg-accent-solid text-on-accent border-accent' : 'border-border hover:bg-hover'}`}>
-              {autoCapture ? t('settings.memoryAutoOn') : t('settings.memoryAutoOff')}
-            </button>
+            <Switch checked={autoCapture} onChange={toggleAutoCapture} label={t('settings.memoryAutoCaptureLabel')} />
           </div>
 
           {/* ② 团队记忆沉淀开关（D-806 / B-12：与上面那把总闸**解耦**，默认开） */}
@@ -292,10 +290,7 @@ export default function MemorySection({ projectPath = '' }: { projectPath?: stri
               <div className="text-sm font-medium">{t('settings.memoryTeamAutoLabel')}</div>
               <p className="text-xs text-text2 mt-1">{t('settings.memoryTeamAutoDesc')}</p>
             </div>
-            <Button variant={teamAutoCapture ? 'primary' : 'secondary'} size="sm"
-              onClick={toggleTeamAutoCapture} className="shrink-0">
-              {teamAutoCapture ? t('settings.memoryAutoOn') : t('settings.memoryAutoOff')}
-            </Button>
+            <Switch checked={teamAutoCapture} onChange={toggleTeamAutoCapture} label={t('settings.memoryTeamAutoLabel')} />
           </div>
 
           {/* ③ 统计 + 后台任务（接上零消费的 memory:stats / memory:bgTasks） */}
@@ -435,10 +430,7 @@ export default function MemorySection({ projectPath = '' }: { projectPath?: stri
                 <div className="text-sm font-medium">{t('settings.memoryTeamSharingLabel')}</div>
                 <p className="text-xs text-text2 mt-1">{t('settings.memoryTeamSharingDesc')}</p>
               </div>
-              <Button size="sm" variant={teamSharing ? 'primary' : 'secondary'} onClick={toggleTeamSharing}
-                className="shrink-0">
-                {teamSharing ? t('settings.memoryTeamSharingOn') : t('settings.memoryTeamSharingOff')}
-              </Button>
+              <Switch checked={teamSharing} onChange={toggleTeamSharing} label={t('settings.memoryTeamSharingLabel')} />
             </div>
             <div className="py-2">
               <p className="text-xs text-text2 mb-2">{t('settings.memoryResetScopeHint')}</p>

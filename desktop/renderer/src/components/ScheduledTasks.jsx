@@ -579,6 +579,7 @@ export default function ScheduledTasks() {
                     <span className="font-mono opacity-60">{t('scheduled.cronParens', { cron: task.schedule })}</span>
                   )}
                   {task.last_run_at && <span className="ml-2">{t('scheduled.lastRun', { time: new Date(task.last_run_at).toLocaleString('zh-CN') })}</span>}
+                  {task.trigger_type !== 'event' && (() => { try { const d = nextCronRun(task.schedule); return d ? <span className="ml-2">{t('scheduled.nextRun', { time: d.toLocaleString('zh-CN') })}</span> : null; } catch { return null; } })()}
                 </div>
                 {/* 任务级模型：已建任务也能改（此前只有新建表单能选，改一次得删了重建）
                     选中即保存，下一轮执行按新模型跑 */}

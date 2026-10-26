@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { IconChevronLeft, IconChevronRight, IconExternalLink, IconRefresh } from './icons';
+import { IconChevronLeft, IconChevronRight, IconExternalLink, IconRefresh, IconAlert } from './icons';
 import { useI18n } from '../i18n';
+import Button from './ui/Button';
 
 // 内置浏览器（对标 WorkBuddy 预览栏「浏览器」 / Codex Review Pane 网页视图）。
 //
@@ -30,6 +31,12 @@ interface WebviewUrlEvent extends Event {
   url: string;
 }
 
+// webview 加载失败事件：断网/域名不可达/证书错都会触发
+interface WebviewFailEvent extends Event {
+  errorCode?: number;
+  errorDescription?: string;
+}
+
 export default function BrowserPanel() {
   const { t } = useI18n();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -39,6 +46,7 @@ export default function BrowserPanel() {
   const [loading, setLoading] = useState(false);
   const [canBack, setCanBack] = useState(false);
   const [canFwd, setCanFwd] = useState(false);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -62,9 +70,14 @@ export default function BrowserPanel() {
     };
     el.addEventListener('did-navigate', onNavigate);
     el.addEventListener('did-navigate-in-page', onNavigate);
-    el.addEventListener('did-start-loading', () => setLoading(true));
+    el.addEventListener('did-start-loading', () => { setLoading(true); setLoadErr(null); });
     el.addEventListener('did-stop-loading', () => { setLoading(false); refreshNav(); });
     el.addEventListener('dom-ready', refreshNav);
+    // 断网/域名不可达/证书错：纯白遮罩改失败态提示，避免「整块纯白分不清加载/失败/坏了」（P2-17）
+    el.addEventListener('did-fail-load', (e: Event) => {
+      const f = e as WebviewFailEvent;
+      setLoadErr(f.errorDescription || String(f.errorCode ?? ''));
+    });
     // 应用内浏览：新窗口（target=_blank / window.open）落在同一 guest，不跳出到系统浏览器
     el.addEventListener('new-window', (e: Event) => {
       const u = (e as WebviewUrlEvent).url;
@@ -136,7 +149,17 @@ export default function BrowserPanel() {
         </button>
       </div>
       {/* webview 挂载点：命令式创建，避免 JSX 对 webview 元素的类型排斥 */}
-      <div ref={hostRef} className="flex-1 min-h-0 bg-white" />
+      <div className="relative flex-1 min-h-0">
+        <div ref={hostRef} className="absolute inset-0 bg-surface" />
+        {loadErr && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface text-center p-4">
+            <IconAlert size={28} className="text-warn" />
+            <div className="text-sm text-text">{t('rightPane.browserLoadFailedTitle')}</div>
+            <div className="text-xs text-text2 break-all max-w-[80%]">{loadErr}</div>
+            <Button variant="secondary" size="sm" onClick={() => { setLoadErr(null); navigate(); }}>{t('rightPane.browserRetry')}</Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

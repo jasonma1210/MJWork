@@ -314,7 +314,7 @@ export default function PublishTaskPage({
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm truncate" title={r.goal}>{r.goal || t('assistant.publish.boardUntitled')}</span>
                 <span className={`text-caption shrink-0 ${r.status === 'failed' ? 'text-danger' : 'text-text2'}`}>
-                  {t(STATUS_KEY[r.status] || 'publish.statusUnknown', { status: r.status })}
+                  {t(STATUS_KEY[r.status] || 'assistant.publish.statusUnknown', { status: r.status })}
                 </span>
               </div>
               <div className="text-caption text-text2 flex flex-wrap items-center gap-2">

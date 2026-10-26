@@ -210,7 +210,7 @@ export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen }: Arti
 
   return (
     <div className="flex flex-col min-h-0 h-full">
-      <div className="px-3 py-2 border-b border-border shrink-0 space-y-1">
+      <div className="px-2 py-2 border-b border-border shrink-0 space-y-1">
         <div className="flex items-center gap-2">
           <span className="text-xs truncate flex-1" title={artifacts[0].title}>{artifacts[0].title}</span>
           <span className="text-caption text-text2 shrink-0 tabular-nums">

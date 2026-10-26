@@ -308,6 +308,7 @@ export default function ConnectorConfigDialog({ connector, onClose, onConnected 
                       )}
                     </div>
                     <input
+                      type={/key|token|secret|password|credential|passwd/i.test(f.name || '') ? 'password' : 'text'}
                       value={values[f.name] || ''}
                       onChange={(e) => { setVal(f.name, e.target.value); setSaved(false); }}
                       placeholder={f.name}

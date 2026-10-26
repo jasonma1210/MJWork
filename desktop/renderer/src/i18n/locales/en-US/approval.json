@@ -16,7 +16,7 @@
   "dangerTitle": "Dangerous command",
   "fileWriteTitle": "File write",
   "mcpTitle": "MCP tool",
-  "queuePosition": "1/{total} pending",
+  "queuePosition": "Total {total} pending",
   "expand": "Expand",
   "collapse": "Collapse",
   "noDetail": "(no details)",

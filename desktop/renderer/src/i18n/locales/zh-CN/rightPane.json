@@ -26,6 +26,8 @@
   "browserReload": "刷新",
   "browserOpenExternal": "在系统浏览器中打开",
   "browserUrlPlaceholder": "输入网址并回车",
+  "browserLoadFailedTitle": "页面加载失败",
+  "browserRetry": "重试",
   "sideChatHint": "独立于主线会话的轻量问答",
   "sideChatClear": "清空对话",
   "sideChatEmpty": "向模型提问，独立于一旁的主会话，不污染任务上下文。",

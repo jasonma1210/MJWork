@@ -147,7 +147,6 @@ function UsageCard({ threadId }: { threadId: string | null }) {
       <dl className="mt-2 flex flex-col gap-1 text-caption text-text2">
         <div className="flex justify-between gap-3">
           <dt>{t('desk.usage.summaryRow', { used: fmt(quota.used), available: fmt(quota.available) })}</dt>
-          <dd className="shrink-0 font-mono">{utilPct}</dd>
         </div>
         <div className="flex justify-between gap-3">
           <dt>{t('desk.usage.limitRow', { totalLimit: fmt(quota.totalLimit) })}</dt>
