@@ -1,0 +1,82 @@
+{
+  "hero": {
+    "greetingMorning": "早上好。",
+    "greetingAfternoon": "下午好。",
+    "greetingEvening": "晚上好。",
+    "greetingLate": "还没休息？",
+    "today": "{date}",
+    "decideLine": "今天有 {n} 个会话等你决定",
+    "allClear": "今天没有等你决定的事"
+  },
+  "intake": {
+    "label": "接一单",
+    "placeholder": "说清楚目标、约束和交付时间，剩下的交给团队。",
+    "presetsLabel": "工作场景预设",
+    "presetsHint": "点一下把模板套进输入框，再把花括号里的占位换成你自己的内容。",
+    "applyTemplate": "套用模板",
+    "insertCommand": "填入指令",
+    "policyApproval": "审批",
+    "policySandbox": "沙箱",
+    "policyStyle": "粒度",
+    "policyHint": "只读回显，点击到设置里修改",
+    "dispatch": "派单"
+  },
+  "scenario": {
+    "office": { "name": "文档协作", "desc": "整理你已有的材料，默认不改原文件" },
+    "dev": { "name": "软件开发", "desc": "改在隔离副本里，可回滚、可验证" },
+    "write": { "name": "内容创作", "desc": "从零起草，先大纲后正文" },
+    "research": { "name": "数据调研", "desc": "查清楚再决定，结论必须带出处" }
+  },
+  "goal": {
+    "office": "把 {source} 整理成 {output}，给 {audience} 用。\n要求：保留原文里的事实与数字，不确定的地方显式标成「待确认」；篇幅 {length}；交付时间 {deadline}。\n不要改动 {source} 里的原始文件，产出另写一份。",
+    "dev": "在 {repo} 里完成 {task}。\n约束：改动限定在 {scope}；不得触碰 {forbidden}；以「{verify}」通过为完成判据。\n完成后汇总：改了哪些文件、为什么这么改、还剩什么没做。",
+    "write": "围绕 {topic} 写一篇 {genre}，给 {reader} 看。\n要求：讲清楚 {claim}；调性 {tone}；篇幅 {length}；引用必须给出处。\n先只给大纲，我确认后再写正文。",
+    "research": "调研 {target}，回答 {question}。\n要求：每条结论附出处（链接或文件路径）；严格区分「查到的事实」与「推断」；覆盖 {range}；最后给 3 条可执行的下一步建议。\n不需要改写任何文件，先把结论说清楚。"
+  },
+  "cmd": {
+    "office1": "把这份材料压成 300 字摘要，保留所有数字与结论",
+    "office2": "找出这份稿子里的事实错误、口径不一致与待确认项",
+    "office3": "按 {audience} 的阅读习惯重写一遍，不要改原文件",
+    "dev1": "先用 /plan 出计划，我确认后再动手",
+    "dev2": "定位这个报错的根因，给出最小改动方案，不要顺手重构",
+    "dev3": "跑 {verify}，把失败项按根因分组列出",
+    "write1": "先给三个标题方向，每个配一句主张",
+    "write2": "按上面的大纲写正文第一段，我先定调",
+    "write3": "把这篇改成 {tone}，事实一处都不要动",
+    "research1": "先列出这个问题的三个关键假设，再逐条去找证据",
+    "research2": "把结论按「事实 / 推断 / 待确认」分三栏列出",
+    "research3": "给 3 条下一步建议，每条写清成本与风险"
+  },
+  "running": {
+    "title": "进行中",
+    "live": "运行中",
+    "groups": "{n} 个任务组进行中",
+    "latest": "最近目标",
+    "viewChat": "查看对话",
+    "empty": "这个会话里没有正在执行的任务组"
+  },
+  "deliveries": {
+    "title": "最近交付",
+    "subtitle": "共 {n} 件",
+    "version": "版本 {version}",
+    "openAll": "全部工件",
+    "empty": "这个项目下还没有交付物。让团队先跑一单。",
+    "noProject": "这个会话还没绑定项目空间，先在左侧选择或创建一个项目",
+    "notFound": "找不到这条项目记录，它可能已被移除。换一个项目试试"
+  },
+  "runs": {
+    "title": "最近运行",
+    "empty": "尚未接线：本机不提供跨会话的运行记录"
+  },
+  "usage": {
+    "title": "用量",
+    "summaryRow": "已用 {used} · 可用 {available}",
+    "limitRow": "上限 {totalLimit}",
+    "utilRow": "水位 {util}",
+    "stateOk": "正常",
+    "stateWarn": "接近上限",
+    "stateThrottle": "已限流",
+    "stateSuspended": "额度用尽",
+    "scopeNote": "本地优先运行，金额在服务商侧结算，这里只统计用量"
+  }
+}

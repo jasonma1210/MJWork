@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import ThreadList from './ThreadList';
-import { IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock } from './icons';
+import { IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock, IconList } from './icons';
 import { activeNavOf } from '../lib/navState';
 import logo from '../assets/logo.png';
 import { useI18n } from '../i18n';
 
-// 左侧栏（2026-10-24 二次调整后）：一级导航 3 项 ——「新建任务」+「助理」+「定时任务」。
+// 左侧栏（2026-10-25 三次调整后）：一级导航 4 项 ——「工作台」+「新建任务」+「助理」+「定时任务」。
 //
 // 取舍说明（第一版把定时任务并进助理，用户实测后要求恢复，故本版加回）：
+//   · 「工作台」（desk，2026-10-25 新增）是**开工前一屏**：今天要决定什么、正在跑什么、
+//     最近交了什么、额度还剩多少。它与「新建任务」不是一回事 —— 后者是「什么都没选」的
+//     兜底态，前者是用户主动点开的一屏概览，故用独立标志驱动、且优先级最高。
 //   · 「定时任务」是**一级入口**：「什么时候跑」是与「做什么」并列的运行维度，
 //     藏进助理子 Tab 后用户找不到（用户原话：「一级菜单下面还是要有定时任务」）；
 //   · 「团队编制」仍是助理的子 Tab（它是编制管理，不是并列的运行维度）⇒ 侧栏不单列；
@@ -18,7 +21,7 @@ import { useI18n } from '../i18n';
 //     删掉就断了「招募数字员工 → 组成军团」这条主链路。
 export default function Sidebar({
   threads, activeThread, onSelect, onNew, onDelete, onRenameThread, onAssignThread, onOpenArchive,
-  onOpenAssistant, onOpenScheduled, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
+  onOpenAssistant, onOpenScheduled, onOpenDesk, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
   projects, activeProject, onSelectProject, onRemoveProject, onRenameProject,
   onNewThread, filter, view,
 }) {
@@ -29,6 +32,8 @@ export default function Sidebar({
     assistantTab: view?.assistantTab,
     showDashboard: !!view?.showDashboard,
     showEcosystem: !!view?.showEcosystem,
+    // 接单台（desk）：一级入口，优先级最高（在场时其它入口一律不亮）
+    showDesk: !!view?.showDesk,
     // 定时任务：一级入口（2026-10-24 第二次调整恢复）
     showScheduled: !!view?.showScheduled,
     // 兼容输入：团队编制仍是助理的子 Tab
@@ -60,6 +65,7 @@ export default function Sidebar({
           选中态由 activeNavOf 计算（互斥且穷尽）；此前只有 New chat 传 active，
           且判据是 !activeThread —— 在定时任务页里没有打开会话，于是该亮的不亮。 */}
       <div className="px-2 space-y-1">
+        <NavItem icon={<IconList size={16} />} label={t('sidebar.desk')} onClick={onOpenDesk} active={activeNav === 'desk'} />
         <NavItem icon={<IconEdit size={16} />} label={t('sidebar.newChat')} onClick={onNew} active={activeNav === 'new'} />
         <NavItem icon={<IconUsers size={16} />} label={t('sidebar.assistant')} onClick={onOpenAssistant} active={activeNav === 'assistant'} />
         <NavItem icon={<IconClock size={16} />} label={t('sidebar.scheduled')} onClick={onOpenScheduled} active={activeNav === 'scheduled'} />

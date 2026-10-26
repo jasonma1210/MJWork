@@ -43,6 +43,7 @@
   "cmdOpenProject": "打开项目",
   "cmdOpenSettings": "打开设置",
   "cmdUsage": "查看用量概览",
+  "cmdDesk": "打开工作台",
   "cmdChanges": "打开变更面板",
   "cmdFiles": "打开文件树",
   "cmdToggleSidebar": "显示/隐藏左侧栏",

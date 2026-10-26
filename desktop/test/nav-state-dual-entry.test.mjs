@@ -36,8 +36,10 @@ const check = async (name, fn) => {
 const { activeNavOf } = await import('../renderer/src/lib/navState.ts');
 const { ASSISTANT_TABS, DEFAULT_ASSISTANT_TAB, isAssistantTab } = await import('../renderer/src/lib/assistantTabs.ts');
 
-// ── 视图组合穷举器：6 个布尔标志（含两个兼容输入）⇒ 64 组 ──
-const FLAGS = ['showAssistant', 'showScheduled', 'showDashboard', 'showEcosystem', 'showTeams', 'hasActiveThread'];
+// ── 视图组合穷举器：7 个布尔标志（含两个兼容输入 + 接单台）⇒ 128 组 ──
+// 第三版（2026-10-25）：新增一级入口「工作台」⇒ 标志从 6 个变 7 个，组合数 64→128。
+// 语义变了就先让旧断言红，再显式改成新语义 —— 这是本套件存在的意义（见文件头）。
+const FLAGS = ['showAssistant', 'showScheduled', 'showDashboard', 'showEcosystem', 'showTeams', 'showDesk', 'hasActiveThread'];
 function allCombos() {
   const out = [];
   for (let mask = 0; mask < (1 << FLAGS.length); mask++) {
@@ -49,12 +51,13 @@ function allCombos() {
 }
 const COMBOS = allCombos();
 // 第二版：'scheduled' 是**合法**返回值（一级入口），'teams' 仍不返回（它是助理子 Tab）
-const ALLOWED = new Set(['new', 'assistant', 'scheduled', 'ecosystem', '']);
+// 第三版（2026-10-25）：'desk' 也是合法返回值（工作台/接单台，优先级最高）
+const ALLOWED = new Set(['new', 'assistant', 'scheduled', 'ecosystem', 'desk', '']);
 
 // ── A. 一级选中态：行为断言 ──
 
-await check('A1 穷举 64 种视图组合：返回值域收敛为 5 个字面量（穷尽）', () => {
-  assert.equal(COMBOS.length, 64, `组合数应为 64，实际 ${COMBOS.length}`);
+await check('A1 穷举 128 种视图组合：返回值域收敛为 6 个字面量（穷尽）', () => {
+  assert.equal(COMBOS.length, 128, `组合数应为 128，实际 ${COMBOS.length}`);
   for (const c of COMBOS) {
     const got = activeNavOf(c);
     assert.ok(ALLOWED.has(got), `未定义返回值：${JSON.stringify(c)} → ${got}`);
@@ -74,7 +77,7 @@ await check('A2 兼容别名不泄漏：teams 永不被返回（它是助理子 
 await check('A3 互斥：被点亮的一级入口恒不超过一个（含兼容输入）', () => {
   for (const c of COMBOS) {
     const got = activeNavOf(c);
-    const lit = ['new', 'assistant', 'scheduled', 'ecosystem'].filter((k) => k === got);
+    const lit = ['new', 'assistant', 'scheduled', 'ecosystem', 'desk'].filter((k) => k === got);
     assert.ok(lit.length <= 1, `多个入口同时点亮：${JSON.stringify(c)} → ${got}`);
   }
 });
@@ -83,6 +86,7 @@ await check('A4 助理及团队编制收敛到 assistant；定时任务**不**�
   for (const c of COMBOS) {
     const shouldAssistant = c.showAssistant || c.showTeams;
     if (!shouldAssistant) continue;
+    if (c.showDesk) continue;      // 接单台优先级最高，见 A9
     if (c.showScheduled) continue; // 定时任务优先，见 A8
     assert.equal(activeNavOf(c), 'assistant', `助理子态未收敛：${JSON.stringify(c)}`);
   }
@@ -113,6 +117,16 @@ await check('A7 工作台与会话中不点亮一级导航；空白新建任务�
 await check('A8 定时任务优先于助理（两者同时为真时更具体的那个点亮，避免「点了却亮在别处」）', () => {
   const v = { showAssistant: true, showScheduled: true, showDashboard: false, showEcosystem: false, showTeams: false, hasActiveThread: false };
   assert.equal(activeNavOf(v), 'scheduled');
+});
+
+await check('A9 接单台（desk）优先于一切：showDesk 为真时恒返回 desk，且优先于 assistant/scheduled/ecosystem', () => {
+  for (const c of COMBOS.filter((x) => x.showDesk)) {
+    assert.equal(activeNavOf(c), 'desk', `desk 未优先：${JSON.stringify(c)}`);
+  }
+  // 反向：desk 不在场时永不返回 desk（否则「什么都没开」会莫名点亮工作台）
+  for (const c of COMBOS.filter((x) => !x.showDesk)) {
+    assert.notEqual(activeNavOf(c), 'desk', `未开工作台却返回 desk：${JSON.stringify(c)}`);
+  }
 });
 
 // ── B. 助理子页目录与挂载方式 ──

@@ -44,40 +44,48 @@ const sidebar = blankComments(SIDEBAR);
 (async () => {
   const { activeNavOf } = await import('../renderer/src/lib/navState.ts');
 
-  // ── 行为：穷举 64 种组合（5 个视图标志 + 1 个会话标志）──
+  // ── 行为：穷举 128 种组合（5 个视图标志 + 1 个会话标志 + 接单台标志）──
   const combos = [];
   for (const showAssistant of [false, true])
     for (const showScheduled of [false, true]) // 兼容输入（助理子态）
       for (const showDashboard of [false, true])
         for (const showEcosystem of [false, true])
           for (const showTeams of [false, true]) // 兼容输入（助理子态）
-            for (const hasActiveThread of [false, true])
-              combos.push({ showAssistant, showScheduled, showDashboard, showEcosystem, showTeams, hasActiveThread });
+            for (const showDesk of [false, true]) // 2026-10-25 新增一级入口「工作台」
+              for (const hasActiveThread of [false, true])
+                combos.push({ showAssistant, showScheduled, showDashboard, showEcosystem, showTeams, showDesk, hasActiveThread });
 
-  await check('穷举 64 种视图组合：返回值只可能是五个已定义字面量', () => {
+  await check('穷举 128 种视图组合：返回值只可能是六个已定义字面量', () => {
     // 第二版（2026-10-24 用户要求）：定时任务升回一级入口 ⇒ 'scheduled' 是合法返回值；
-    // 'teams' 仍不返回（它是助理子 Tab）。
-    const allowed = new Set(['new', 'assistant', 'scheduled', 'ecosystem', '']);
+    // 第三版（2026-10-25）：新增接单台 ⇒ 'desk' 是合法返回值；'teams' 仍不返回（它是助理子 Tab）。
+    const allowed = new Set(['new', 'assistant', 'scheduled', 'ecosystem', 'desk', '']);
     for (const c of combos) {
       const got = activeNavOf(c);
       assert.ok(allowed.has(got), `${JSON.stringify(c)} → ${got}`);
     }
   });
 
+  await check('接单台（desk）在前台时选中「工作台」，且优先级高于定时任务/助理/生态中心', () => {
+    for (const c of combos.filter((x) => x.showDesk)) {
+      assert.equal(activeNavOf(c), 'desk', JSON.stringify(c));
+    }
+  });
+
   await check('定时任务页在前台时选中「定时任务」（一级入口）', () => {
-    for (const c of combos.filter((x) => x.showScheduled)) {
+    // desk 在场时优先级最高（见上一条断言），故本节判据排除 showDesk 组合
+    for (const c of combos.filter((x) => x.showScheduled && !x.showDesk)) {
       assert.equal(activeNavOf(c), 'scheduled', JSON.stringify(c));
     }
   });
 
   await check('兼容输入：showTeams=true 时返回「助理」（团队编制是助理子 Tab，不是独立入口）', () => {
-    for (const c of combos.filter((x) => !x.showScheduled && x.showTeams)) {
+    for (const c of combos.filter((x) => !x.showScheduled && x.showTeams && !x.showDesk)) {
       assert.equal(activeNavOf(c), 'assistant', JSON.stringify(c));
     }
   });
 
   await check('助理工作台在前台时选中「助理」（唯一二级入口）', () => {
-    for (const c of combos.filter((x) => x.showAssistant && !x.showScheduled && !x.showTeams)) {
+    for (const c of combos.filter((x) => x.showAssistant && !x.showScheduled && !x.showTeams && !x.showDesk)) {
       assert.equal(activeNavOf(c), 'assistant', JSON.stringify(c));
     }
   });
@@ -90,7 +98,7 @@ const sidebar = blankComments(SIDEBAR);
   });
 
   await check('生态中心弹层打开时选中「生态中心」（助理优先——弹层盖在助理之上）', () => {
-    for (const c of combos.filter((x) => !x.showAssistant && !x.showScheduled && !x.showTeams && x.showEcosystem)) {
+    for (const c of combos.filter((x) => !x.showAssistant && !x.showScheduled && !x.showTeams && x.showEcosystem && !x.showDesk)) {
       assert.equal(activeNavOf(c), 'ecosystem', JSON.stringify(c));
     }
   });
@@ -108,15 +116,18 @@ const sidebar = blankComments(SIDEBAR);
   await check('互斥：任一组合下被选中的一级入口不超过一个', () => {
     for (const c of combos) {
       const got = activeNavOf(c);
-      const lit = ['new', 'assistant', 'scheduled', 'ecosystem'].filter((k) => k === got);
+      const lit = ['new', 'assistant', 'scheduled', 'ecosystem', 'desk'].filter((k) => k === got);
       assert.ok(lit.length <= 1, `${JSON.stringify(c)} → ${got}`);
     }
   });
 
   // ── 连线契约：组件必须真的用上这个判定 ──
-  await check('App 把视图标志（含定时任务页）作为 view 传给 Sidebar', () => {
-    assert.match(app, /view=\{\{\s*showAssistant,\s*assistantTab,\s*showScheduled,\s*showDashboard,\s*showEcosystem\s*\}\}/,
-      '缺少 view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem }}');
+  await check('App 把视图标志（含定时任务页/接单台）作为 view 传给 Sidebar', () => {
+    // 2026-10-25：入口增加后改为宽松式——只锁「这五个标志必须出现且顺序稳定」，
+    // 不再把整个对象形状钉死（钉死会让每次加一个视图标志都变成改测试）。
+    assert.match(app, /view=\{\{\s*showAssistant,\s*assistantTab,\s*showScheduled,\s*showDashboard,\s*showEcosystem[^}]*\}\}/,
+      '缺少 view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, … }}');
+    assert.match(app, /showEcosystem,\s*showDesk\s*\}\}/, 'view 未把 showDesk 传给 Sidebar');
   });
 
   await check('Sidebar 用 activeNavOf 计算，且入口各自绑定字面量', () => {
@@ -125,8 +136,11 @@ const sidebar = blankComments(SIDEBAR);
     // 助理及其兼容子态都必须喂进判定（兼容字段丢失会让旧调用方静默不亮）
     assert.match(sidebar, /showScheduled: !!view\?\.showScheduled/, '缺少兼容输入 showScheduled');
     assert.match(sidebar, /showTeams: !!view\?\.showTeams/, '缺少兼容输入 showTeams');
+    // 第三版：接单台标志必须喂进判定（丢了 ⇒ 进了工作台侧栏不亮）
+    assert.match(sidebar, /showDesk: !!view\?\.showDesk/, '缺少 showDesk 输入');
     // 第二版：一级导航三项都必须是真实绑定（scheduled 已升回入口）
-    for (const key of ['new', 'assistant', 'scheduled']) {
+    // 第三版（2026-10-25）：新增「工作台」一级入口，同样必须有真实绑定
+    for (const key of ['desk', 'new', 'assistant', 'scheduled']) {
       assert.match(sidebar, new RegExp(`active=\\{activeNav === '${key}'\\}`),
         `NavItem「${key}」缺少 active={activeNav === '${key}'}`);
     }

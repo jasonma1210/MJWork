@@ -144,7 +144,7 @@ export default function MessageStream({
         )}
         {streamingText && (
           <div className="mb-4 max-w-3xl">
-            <div className="text-xs text-text2 mb-1">MJ Coder <span className="animate-pulse">▋</span></div>
+            <div className="text-xs text-text2 mb-1">MJ Nexus <span className="animate-pulse">▋</span></div>
             <div className="msg-prose"><ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingText}</ReactMarkdown></div>
           </div>
         )}
@@ -576,7 +576,7 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
             return (
               <div key={m.id ?? `a-${k}`} className="mb-4 max-w-3xl">
                 <div className="text-xs text-text2 mb-1 flex items-center gap-2">
-                  MJ Coder
+                  MJ Nexus
                   <CopyButton text={m.content} />
                   <ForkButton messageId={m.id} />
                 </div>

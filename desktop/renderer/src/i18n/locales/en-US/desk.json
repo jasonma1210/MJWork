@@ -1,0 +1,82 @@
+{
+  "hero": {
+    "greetingMorning": "Good morning.",
+    "greetingAfternoon": "Good afternoon.",
+    "greetingEvening": "Good evening.",
+    "greetingLate": "Still up?",
+    "today": "{date}",
+    "decideLine": "{n} conversations waiting on you today",
+    "allClear": "Nothing waiting on you today"
+  },
+  "intake": {
+    "label": "New order",
+    "placeholder": "State the goal, the constraints and the deadline. The team takes it from here.",
+    "presetsLabel": "Work presets",
+    "presetsHint": "Click to load a template, then swap the braces placeholders for your own.",
+    "applyTemplate": "Use template",
+    "insertCommand": "Insert",
+    "policyApproval": "Approval",
+    "policySandbox": "Sandbox",
+    "policyStyle": "Verbosity",
+    "policyHint": "Read-only echo — click to change in Settings",
+    "dispatch": "Dispatch"
+  },
+  "scenario": {
+    "office": { "name": "Document Desk", "desc": "Organize materials you already have; originals untouched" },
+    "dev": { "name": "Software Delivery", "desc": "Work in an isolated copy: rollback-ready, verifiable" },
+    "write": { "name": "Content Studio", "desc": "Draft from scratch: outline first, body after" },
+    "research": { "name": "Research", "desc": "Nail the facts first; every claim sourced" }
+  },
+  "goal": {
+    "office": "Turn {source} into {output} for {audience}.\nKeep every fact and number from the original; mark anything uncertain as TBC; length: {length}; due: {deadline}.\nDo not modify the original files under {source} — write the result to a new file.",
+    "dev": "Do {task} in {repo}.\nLimits: keep changes within {scope}; do not touch {forbidden}; done means \"{verify}\" passes.\nWhen finished, summarize: files changed, why those changes, and what is left undone.",
+    "write": "Write a {genre} about {topic} for {reader}.\nMust land one point: {claim}; tone: {tone}; length: {length}; every claim needs a source link.\nOutline first — I will confirm before you draft the body.",
+    "research": "Research {target} to answer {question}.\nEvery conclusion needs a source (link or file path); separate verified fact from inference; cover {range}; end with 3 actionable next steps.\nNo file edits needed — get the answer right first."
+  },
+  "cmd": {
+    "office1": "Summarize this down to 300 words: keep every number and conclusion",
+    "office2": "Find factual errors, inconsistent metrics and open questions in this draft",
+    "office3": "Rewrite it for {audience} — do not modify the original files",
+    "dev1": "Run /plan first — wait for my confirmation before changing anything",
+    "dev2": "Find the root cause of this error; propose the smallest fix; no opportunistic refactoring",
+    "dev3": "Run {verify} and group the failures by root cause",
+    "write1": "Give three headline directions, each with a one-line claim",
+    "write2": "Draft the opening paragraph from that outline — I want to set the tone first",
+    "write3": "Rewrite this in a {tone} voice; change no facts",
+    "research1": "List the three key assumptions first, then find evidence for each",
+    "research2": "Split the findings into three columns: verified fact / inference / needs checking",
+    "research3": "Give three next steps, each with its cost and risk"
+  },
+  "running": {
+    "title": "In progress",
+    "live": "Running",
+    "groups": "{n} task groups running",
+    "latest": "Latest goal",
+    "viewChat": "View conversation",
+    "empty": "No task groups running in this conversation"
+  },
+  "deliveries": {
+    "title": "Recent deliveries",
+    "subtitle": "{n} total",
+    "version": "Version {version}",
+    "openAll": "All artifacts",
+    "empty": "No deliverables under this project yet. Hand the team an order first.",
+    "noProject": "This conversation has no project space bound — pick or create a project on the left",
+    "notFound": "That project record is missing; it may have been removed. Try another project"
+  },
+  "runs": {
+    "title": "Recent runs",
+    "empty": "Not wired up yet: no cross-session run history in this build"
+  },
+  "usage": {
+    "title": "Usage",
+    "summaryRow": "Used {used} · Available {available}",
+    "limitRow": "Limit {totalLimit}",
+    "utilRow": "Utilization {util}",
+    "stateOk": "Normal",
+    "stateWarn": "Near limit",
+    "stateThrottle": "Throttled",
+    "stateSuspended": "Suspended",
+    "scopeNote": "Runs on your machine and bills at your provider, so this tracks usage, not spend"
+  }
+}

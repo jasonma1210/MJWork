@@ -43,6 +43,7 @@
   "cmdOpenProject": "Open project",
   "cmdOpenSettings": "Open settings",
   "cmdUsage": "View usage overview",
+  "cmdDesk": "Open workspace",
   "cmdChanges": "Open changes panel",
   "cmdFiles": "Open file tree",
   "cmdToggleSidebar": "Show/hide sidebar",

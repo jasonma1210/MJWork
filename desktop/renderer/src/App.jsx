@@ -22,7 +22,7 @@ import TaskSummaryPanel from './components/TaskSummaryPanel';
 import BrowserPanel from './components/BrowserPanel';
 import SideChatPanel from './components/SideChatPanel';
 import ArtifactPanel from './components/ArtifactPanel';
-import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions';
+import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions'; import DeskPage from './components/DeskPage';
 import { api, setLocalMode, isLocalMode } from './lib/api';
 import { restoreMcpTools } from './lib/mcpTools';
 import { loadAgentsMd } from './lib/agentsMd';
@@ -59,6 +59,8 @@ export default function App() {
   });
   const [showSettings, setShowSettings] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
+  // 接单台（desk）：开工前一屏。**默认 false**（不抢 ChatArea 的落地位），由侧栏/命令面板进入。
+  const [showDesk, setShowDesk] = useState(false);
   // 双入口重组（2026-10-24）：一级导航 2 项 ——「新建任务」+「助理」；
   // assistantTab = 助理内部子页（子页清单见 lib/assistantTabs.ts）。
   const [showAssistant, setShowAssistant] = useState(false);
@@ -416,7 +418,7 @@ export default function App() {
 
   function resetView() {
     setShowDashboard(false);
-    setShowScheduled(false); setShowAssistant(false);
+    setShowScheduled(false); setShowAssistant(false); setShowDesk(false);
   }
 
   // 选择/切换项目：写入最近项目列表（去重，最多保留 10 个）
@@ -502,7 +504,7 @@ export default function App() {
       <Sidebar
         threads={threads}
         activeThread={activeThread}
-        view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem }}
+        view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, showDesk }}
         onSelect={selectThread}
         onNew={() => { setActiveThread(null); resetView(); }}
         onNewThread={newThreadInProject}
@@ -551,7 +553,7 @@ export default function App() {
           if (r?.ok) loadData();
         }}
         onOpenArchive={localMode ? () => setArchiveOpen(true) : undefined}
-        onOpenAssistant={() => { resetView(); setShowAssistant(true); }} onOpenScheduled={() => { resetView(); setShowScheduled(true); }} onOpenEcosystem={() => setShowEcosystem(true)}
+        onOpenAssistant={() => { resetView(); setShowAssistant(true); }} onOpenScheduled={() => { resetView(); setShowScheduled(true); }} onOpenDesk={() => { resetView(); setShowDesk(true); }} onOpenEcosystem={() => setShowEcosystem(true)}
         onOpenProjectPicker={() => setShowProjectPicker(true)}
         onOpenSettings={() => setShowSettings(true)}
         projects={projects}
@@ -566,10 +568,21 @@ export default function App() {
         <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => { resetView(); setShowAssistant(true); if (a === 'open_assistant_scheduled') setAssistantTab('scheduled'); }} />
         {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}
         {showAssistant && <AssistantPage tab={assistantTab} onTab={setAssistantTab} threadId={activeThreadId} projectPath={activeProject?.path} onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }} />}{showScheduled && <ScheduledTasks />}
+        {/* 接单台（desk）：默认不落地（showDesk 初值 false），仅由侧栏入口/命令面板进入。
+            派单与 AssistantPage.onAutoRun 完全同构 —— 只把目标交回主链路（setInitialPrompt），
+            不新增任何派活分支；「打开工件」复用右栏既有的 paneTab/paneOpen 两态。 */}
+        {showDesk && (
+          <DeskPage
+            threads={threads} threadId={activeThreadId} projectPath={activeProject?.path || ''}
+            onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }} onOpenFile={openFileInPane}
+            onOpenSettings={() => setShowSettings(true)} onOpenArtifacts={() => { setPaneTab('artifact'); setPaneOpen(true); }}
+            onOpenThread={(id) => { const th = threads.find((x) => String(x.id) === String(id)); if (th) selectThread(th); }}
+          />
+        )}
         {/* 任务编排已并入对话流（orchestrate_task 工具 + AgentDock 胶囊），不再有独立面板入口 */}
         {/* E4：ChatArea 常驻挂载（数据/助理视图下用 hidden 隐藏而非卸载）——
             条件渲染会卸载 ChatArea，导致生态中心「在当前会话启用」事件静默丢失，也避免重挂载带来的消息重拉。 */}
-        <div className={showDashboard || showAssistant || showScheduled ? 'hidden' : 'contents'}>
+        <div className={showDashboard || showAssistant || showScheduled || showDesk ? 'hidden' : 'contents'}>
           <ChatArea
             thread={activeThread}
             agentsMd={agentsMd}
@@ -722,6 +735,7 @@ export default function App() {
           { label: tr('app.cmdNewThread'), hint: '⌘N', run: () => { setActiveThread(null); resetView(); } },
           { label: tr('app.cmdOpenProject'), hint: '⌘O', run: () => setShowProjectPicker(true) },
           { label: tr('app.cmdOpenSettings'), hint: '⌘,', run: () => setShowSettings(true) },
+          { label: tr('app.cmdDesk'), run: () => { resetView(); setShowDesk(true); } },
           { label: tr('app.cmdUsage'), run: () => { resetView(); setShowDashboard(true); } },
           { label: tr('app.cmdChanges'), hint: '⌘⌥B', run: () => { if (activeThread) { setPaneTab('diff'); setPaneOpen(true); } } },
           { label: tr('app.cmdFiles'), run: () => { if (activeThread) { setPaneTab('files'); setPaneOpen(true); } } },

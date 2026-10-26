@@ -63,7 +63,7 @@ export default function SplashScreen({ onDone, duration = 2400 }: Props) {
       className={`fixed inset-0 z-splash flex flex-col items-center justify-center bg-bg transition-opacity duration-200 ${leaving ? 'opacity-0' : 'opacity-100'}`}
     >
       <img src={logo} alt="" className="w-14 h-14 rounded-2xl object-cover shrink-0" draggable={false} />
-      <div className="mt-4 text-xl font-semibold tracking-tight text-text">MJ Code</div>
+      <div className="mt-4 text-xl font-semibold tracking-tight text-text">MJ Nexus</div>
       <div className="mt-1 text-caption text-text2">
         {version ? `v${version}` : ''}{version ? ' · ' : ''}{t('splash.tagline')}
       </div>
