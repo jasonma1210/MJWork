@@ -38,6 +38,7 @@
   "membersTitle": "Roster",
   "noMembers": "No members yet. Recruit or define an AI teammate.",
   "recruit": "Recruit",
+  "inRoster": "In roster",
   "customCreate": "Custom role",
   "leadTag": "Orchestrator",
   "sourceTemplate": "Recruited",

@@ -360,14 +360,14 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex items-center justify-between px-2 h-9 border-b border-border shrink-0">
-        <h3 className="font-semibold text-xs flex items-center gap-2">
+      <div className="flex items-center gap-2 px-2 h-9 border-b border-border shrink-0">
+        <h3 className="font-semibold text-xs flex items-center gap-2 min-w-0 flex-1 truncate">
           <IconFileDiff size={14} />
           {t('diff.changesHeader', { n: visible.length })}
           <span className="text-success text-xs">+{totalAdd}</span>
           <span className="text-danger text-xs">−{totalDel}</span>
         </h3>
-        <span className="flex items-center gap-1">
+        <span className="flex items-center gap-1 shrink-0">
           {/* 视图切换：接受后的块落在「已暂存」，不切过去就看不到（也确认不了） */}
           {[['unstaged', t('diff.scopeUnstaged')], ['staged', t('diff.scopeStaged')]].map(([key, label]) => (
             <button
@@ -379,14 +379,14 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
             </button>
           ))}
         </span>
-        <button onClick={load} className="text-text2 hover:text-text p-1" title={t('diff.refresh')} aria-label={t('diff.refreshAria')}>
+        <button onClick={load} className="text-text2 hover:text-text p-1 shrink-0" title={t('diff.refresh')} aria-label={t('diff.refreshAria')}>
           <IconRefresh size={14} />
         </button>
         <button
           onClick={() => setLastTurnOnly((v) => !v)}
           disabled={agentSet.size === 0}
           title={agentSet.size === 0 ? t('diff.noAgentChanges') : t('diff.lastTurnTitle')}
-          className={`text-xs px-2 py-1 rounded-lg ${lastTurnOnly ? 'bg-accent-solid text-on-accent' : 'text-text2 hover:text-text'} disabled:opacity-40`}
+          className={`text-xs px-2 py-1 rounded-lg shrink-0 ${lastTurnOnly ? 'bg-accent-solid text-on-accent' : 'text-text2 hover:text-text'} disabled:opacity-40`}
         >
           {t('diff.lastTurn')}
         </button>

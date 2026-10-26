@@ -313,15 +313,19 @@ export default function MemberModal(props: {
           />
           {empLoading && <div className="text-xs text-text2 py-3">{t('teams.recruiting')}</div>}
           {!empLoading && filtered.length === 0 && <div className="text-xs text-text2 py-3">{t('teams.noEmployee')}</div>}
-          {!empLoading && filtered.map((e) => (
+          {!empLoading && filtered.map((e) => {
+            // P1-12（2026-10-26）：招募列表区分已在编制成员，避免重复点才报红「招募失败」让用户误判功能坏了
+            const inRoster = roster.some((m) => m.id === e.id);
+            return (
             <div key={e.id} className="flex items-center justify-between gap-3 border-t border-border py-2">
               <div className="min-w-0">
                 <div className="text-sm truncate">{e.title_cn || e.name}</div>
                 <div className="text-caption text-text2 truncate">{e.category || ''}</div>
               </div>
-              <Button size="xs" loading={busy === e.id} disabled={full} onClick={() => recruit(e.id)}>{t('teams.recruit')}</Button>
+              <Button size="xs" loading={busy === e.id} disabled={full || inRoster} onClick={() => recruit(e.id)}>{inRoster ? t('teams.inRoster') : t('teams.recruit')}</Button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
