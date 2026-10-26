@@ -22,7 +22,7 @@
 //   它与「新建任务」不同：desk 是主动点开的一屏概览，不是「什么都没选」的兜底态，
 //   故必须由独立的 showDesk 标志驱动，且**优先级最高**（它在场时其它入口一律不亮，
 //   否则会出现「停在 desk 却亮着助理」这类自相矛盾的选中态）。
-export type NavKey = 'new' | 'desk' | 'assistant' | 'scheduled' | 'ecosystem' | '' | 'teams';
+export type NavKey = 'new' | 'desk' | 'studio' | 'assistant' | 'scheduled' | 'ecosystem' | '' | 'teams';
 
 /** 助理工作台的子 Tab（见 lib/assistantTabs.ts；此处只做类型引用，避免循环依赖） */
 export type NavAssistantTab = 'publish' | 'teams' | 'aiTeam';
@@ -48,6 +48,11 @@ export interface NavViewState {
    */
   showDesk?: boolean;
   /**
+   * 工作室是否在前台 —— 一级入口（2026-10-26 新增，对齐原型 studio.js）。
+   * 与 showDesk 不同：desk 是「开工前一屏」概览，studio 是「项目空间 + 工件」的常驻管理面。
+   */
+  showStudio?: boolean;
+  /**
    * MJ 军团（团队编制页）是否在前台 —— **兼容输入**：
    * 它是助理 Tab，不再是独立入口，故仍返回 'assistant'。
    */
@@ -59,6 +64,8 @@ export interface NavViewState {
 export function activeNavOf(view: NavViewState): NavKey {
   // 接单台（desk）优先级最高：它是用户主动点开的一屏，在场时其它入口一律不亮。
   if (view.showDesk) return 'desk';
+  // 工作室是一级入口（2026-10-26）：优先级仅次于接单台，保证「点了工作室就一定点亮它」。
+  if (view.showStudio) return 'studio';
   // 定时任务是一级入口：排在最前，保证「点了定时任务就一定点亮它」。
   if (view.showScheduled) return 'scheduled';
   // 助理及其兼容子态（团队编制）统一收敛为一个一级入口。

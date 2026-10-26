@@ -14,6 +14,8 @@ export interface TopBarTitleProps {
     showEcosystem?: boolean;
     showScheduled?: boolean;
     showAssistant?: boolean;
+    /** 工作室（2026-10-26 新增一级入口） */
+    showStudio?: boolean;
   };
   /** 面包屑：当前项目名（真实数据）；为空则不显示次级行 */
   projectName?: string;
@@ -29,6 +31,7 @@ export default function TopBarTitle({ view, projectName, conversationTitle }: To
   else if (view.showEcosystem) title = t('sidebar.ecosystem');
   else if (view.showScheduled) title = t('sidebar.scheduled');
   else if (view.showAssistant) title = t('sidebar.assistant');
+  else if (view.showStudio) title = t('sidebar.studio');
   else title = conversationTitle || t('app.conversation');
 
   return (

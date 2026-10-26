@@ -58,7 +58,8 @@ const sidebar = blankComments(SIDEBAR);
   await check('穷举 128 种视图组合：返回值只可能是六个已定义字面量', () => {
     // 第二版（2026-10-24 用户要求）：定时任务升回一级入口 ⇒ 'scheduled' 是合法返回值；
     // 第三版（2026-10-25）：新增接单台 ⇒ 'desk' 是合法返回值；'teams' 仍不返回（它是助理子 Tab）。
-    const allowed = new Set(['new', 'assistant', 'scheduled', 'ecosystem', 'desk', '']);
+    // 第四版（2026-10-26）：新增一级入口「工作室」⇒ 'studio' 是合法返回值
+    const allowed = new Set(['new', 'assistant', 'scheduled', 'ecosystem', 'desk', 'studio', '']);
     for (const c of combos) {
       const got = activeNavOf(c);
       assert.ok(allowed.has(got), `${JSON.stringify(c)} → ${got}`);
@@ -144,7 +145,8 @@ const sidebar = blankComments(SIDEBAR);
     // 不再把整个对象形状钉死（钉死会让每次加一个视图标志都变成改测试）。
     assert.match(app, /view=\{\{\s*showAssistant,\s*assistantTab,\s*showScheduled,\s*showDashboard,\s*showEcosystem[^}]*\}\}/,
       '缺少 view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, … }}');
-    assert.match(app, /showEcosystem,\s*showDesk\s*\}\}/, 'view 未把 showDesk 传给 Sidebar');
+    // 第四版（2026-10-26）：工作室标志也必须喂进判定，故末尾字段变为 showDesk, showStudio
+    assert.match(app, /showEcosystem,\s*showDesk,\s*showStudio\s*\}\}/, 'view 未把 showDesk/showStudio 传给 Sidebar');
   });
 
   await check('Sidebar 用 activeNavOf 计算，且入口各自绑定字面量', () => {
@@ -157,7 +159,7 @@ const sidebar = blankComments(SIDEBAR);
     assert.match(sidebar, /showDesk: !!view\?\.showDesk/, '缺少 showDesk 输入');
     // 第二版：一级导航三项都必须是真实绑定（scheduled 已升回入口）
     // 第三版（2026-10-25）：新增「工作台」一级入口，同样必须有真实绑定
-    for (const key of ['desk', 'new', 'assistant', 'scheduled']) {
+    for (const key of ['desk', 'new', 'assistant', 'scheduled', 'studio']) {
       assert.match(sidebar, new RegExp(`active=\\{activeNav === '${key}'\\}`),
         `NavItem「${key}」缺少 active={activeNav === '${key}'}`);
     }

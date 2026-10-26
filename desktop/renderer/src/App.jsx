@@ -23,7 +23,7 @@ import TaskSummaryPanel from './components/TaskSummaryPanel';
 import BrowserPanel from './components/BrowserPanel';
 import SideChatPanel from './components/SideChatPanel';
 import ArtifactPanel from './components/ArtifactPanel';
-import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions'; import TopBarTitle from './components/TopBarTitle'; import DeskPage from './components/DeskPage';
+import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions'; import TopBarTitle from './components/TopBarTitle'; import DeskPage from './components/DeskPage'; import StudioPage from './components/StudioPage';
 import { api, setLocalMode, isLocalMode } from './lib/api';
 import { restoreMcpTools } from './lib/mcpTools';
 import { loadAgentsMd } from './lib/agentsMd';
@@ -66,6 +66,7 @@ export default function App() {
   // assistantTab = 助理内部子页（子页清单见 lib/assistantTabs.ts）。
   const [showAssistant, setShowAssistant] = useState(false);
   const [showScheduled, setShowScheduled] = useState(false); // 定时任务：一级入口（2026-10-24 用户要求恢复）
+  const [showStudio, setShowStudio] = useState(false); // 工作室：一级入口（2026-10-26，对齐原型 studio.js）
   const [assistantTab, setAssistantTab] = useState(DEFAULT_ASSISTANT_TAB);
   const [showEcosystem, setShowEcosystem] = useState(false); // 生态中心（D8：降级为弹层，入口在侧栏底部次级区）
   const [showProjectPicker, setShowProjectPicker] = useState(false);
@@ -419,7 +420,7 @@ export default function App() {
 
   function resetView() {
     setShowDashboard(false);
-    setShowScheduled(false); setShowAssistant(false); setShowDesk(false);
+    setShowScheduled(false); setShowAssistant(false); setShowDesk(false); setShowStudio(false);
   }
 
   // 选择/切换项目：写入最近项目列表（去重，最多保留 10 个）
@@ -497,7 +498,7 @@ export default function App() {
       {splash}
       <header className="flex items-center gap-2 pl-[var(--titlebar-inset)] pr-3 h-11 shrink-0 border-b border-border">
         <TopBarActions onToggleSidebar={() => setSidebarOpen((v) => !v)} onOpenSearch={() => setPaletteOpen(true)} paneOpen={paneOpen} onTogglePane={() => { if (activeThreadRef.current) setPaneOpen((v) => !v); }} hasActiveThread={!!activeThread} onCycleTheme={cycleTheme} themeLabel={themeLabel()}         localMode={localMode} showDashboard={showDashboard} onOpenDashboard={() => { resetView(); setShowDashboard(true); }}
-        leadingTitle={<TopBarTitle view={{ showDesk, showDashboard, showEcosystem, showScheduled, showAssistant }} projectName={activeProject?.name} />}
+        leadingTitle={<TopBarTitle view={{ showDesk, showDashboard, showEcosystem, showScheduled, showAssistant, showStudio }} projectName={activeProject?.name} />}
       />
       </header>
       <div className="flex flex-1 min-h-0 relative">
@@ -507,7 +508,7 @@ export default function App() {
       <Sidebar
         threads={threads}
         activeThread={activeThread}
-        view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, showDesk }}
+        view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, showDesk, showStudio }}
         onSelect={selectThread}
         onNew={() => { setActiveThread(null); resetView(); }}
         onNewThread={newThreadInProject}
@@ -556,7 +557,7 @@ export default function App() {
           if (r?.ok) loadData();
         }}
         onOpenArchive={localMode ? () => setArchiveOpen(true) : undefined}
-        onOpenAssistant={() => { resetView(); setShowAssistant(true); }} onOpenScheduled={() => { resetView(); setShowScheduled(true); }} onOpenDesk={() => { resetView(); setShowDesk(true); }} onOpenEcosystem={() => setShowEcosystem(true)}
+        onOpenAssistant={() => { resetView(); setShowAssistant(true); }} onOpenScheduled={() => { resetView(); setShowScheduled(true); }} onOpenDesk={() => { resetView(); setShowDesk(true); }} onOpenStudio={() => { resetView(); setShowStudio(true); }} onOpenEcosystem={() => setShowEcosystem(true)}
         onOpenProjectPicker={() => setShowProjectPicker(true)}
         onOpenSettings={() => setShowSettings(true)}
         projects={projects}
@@ -570,7 +571,7 @@ export default function App() {
         {showDashboard && <Dashboard />}
         <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => { resetView(); setShowAssistant(true); if (a === 'open_assistant_scheduled') setAssistantTab('scheduled'); }} />
         {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}
-        {showAssistant && <AssistantPage tab={assistantTab} onTab={setAssistantTab} threadId={activeThreadId} projectPath={activeProject?.path} onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }} />}{showScheduled && <ScheduledTasks />}
+        {showAssistant && <AssistantPage tab={assistantTab} onTab={setAssistantTab} threadId={activeThreadId} projectPath={activeProject?.path} onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }} />}{showScheduled && <ScheduledTasks />}{showStudio && <StudioPage threadId={activeThreadId} onOpenFile={openFileInPane} />}
         {/* 接单台（desk）：默认不落地（showDesk 初值 false），仅由侧栏入口/命令面板进入。
             派单与 AssistantPage.onAutoRun 完全同构 —— 只把目标交回主链路（setInitialPrompt），
             不新增任何派活分支；「打开工件」复用右栏既有的 paneTab/paneOpen 两态。 */}
@@ -587,7 +588,7 @@ export default function App() {
         {/* 任务编排已并入对话流（orchestrate_task 工具 + AgentDock 胶囊），不再有独立面板入口 */}
         {/* E4：ChatArea 常驻挂载（数据/助理视图下用 hidden 隐藏而非卸载）——
             条件渲染会卸载 ChatArea，导致生态中心「在当前会话启用」事件静默丢失，也避免重挂载带来的消息重拉。 */}
-        <div className={showDashboard || showAssistant || showScheduled || showDesk ? 'hidden' : 'contents'}>
+        <div className={showDashboard || showAssistant || showScheduled || showDesk || showStudio ? 'hidden' : 'contents'}>
           <ChatArea
             thread={activeThread}
             agentsMd={agentsMd}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import ThreadList from './ThreadList';
-import { IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock, IconList } from './icons';
+import { IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock, IconList, IconFolder } from './icons';
 import { activeNavOf } from '../lib/navState';
 import logo from '../assets/logo.png';
 import { useI18n } from '../i18n';
@@ -21,7 +21,7 @@ import { useI18n } from '../i18n';
 //     删掉就断了「招募数字员工 → 组成军团」这条主链路。
 export default function Sidebar({
   threads, activeThread, onSelect, onNew, onDelete, onRenameThread, onAssignThread, onOpenArchive,
-  onOpenAssistant, onOpenScheduled, onOpenDesk, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
+  onOpenAssistant, onOpenScheduled, onOpenDesk, onOpenStudio, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
   projects, activeProject, onSelectProject, onRemoveProject, onRenameProject,
   onNewThread, filter, view,
 }) {
@@ -36,6 +36,8 @@ export default function Sidebar({
     showDesk: !!view?.showDesk,
     // 定时任务：一级入口（2026-10-24 第二次调整恢复）
     showScheduled: !!view?.showScheduled,
+    // 工作室：一级入口（2026-10-26 新增，对齐原型 studio.js：项目空间 + 工件）
+    showStudio: !!view?.showStudio,
     // 兼容输入：团队编制仍是助理的子 Tab
     showTeams: !!view?.showTeams,
     hasActiveThread: !!activeThread,
@@ -70,6 +72,7 @@ export default function Sidebar({
         <NavItem icon={<IconEdit size={16} />} label={t('sidebar.newChat')} onClick={onNew} active={activeNav === 'new'} />
         <NavItem icon={<IconUsers size={16} />} label={t('sidebar.assistant')} onClick={onOpenAssistant} active={activeNav === 'assistant'} />
         <NavItem icon={<IconClock size={16} />} label={t('sidebar.scheduled')} onClick={onOpenScheduled} active={activeNav === 'scheduled'} />
+        <NavItem icon={<IconFolder size={16} />} label={t('sidebar.studio')} onClick={onOpenStudio} active={activeNav === 'studio'} />
       </div>
 
       {/* 会话（项目 → 会话 二级结构） */}

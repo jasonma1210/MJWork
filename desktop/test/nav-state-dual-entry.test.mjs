@@ -39,7 +39,7 @@ const { ASSISTANT_TABS, DEFAULT_ASSISTANT_TAB, isAssistantTab } = await import('
 // ── 视图组合穷举器：7 个布尔标志（含两个兼容输入 + 接单台）⇒ 128 组 ──
 // 第三版（2026-10-25）：新增一级入口「工作台」⇒ 标志从 6 个变 7 个，组合数 64→128。
 // 语义变了就先让旧断言红，再显式改成新语义 —— 这是本套件存在的意义（见文件头）。
-const FLAGS = ['showAssistant', 'showScheduled', 'showDashboard', 'showEcosystem', 'showTeams', 'showDesk', 'hasActiveThread'];
+const FLAGS = ['showAssistant', 'showScheduled', 'showDashboard', 'showEcosystem', 'showTeams', 'showDesk', 'showStudio', 'hasActiveThread'];
 function allCombos() {
   const out = [];
   for (let mask = 0; mask < (1 << FLAGS.length); mask++) {
@@ -52,12 +52,13 @@ function allCombos() {
 const COMBOS = allCombos();
 // 第二版：'scheduled' 是**合法**返回值（一级入口），'teams' 仍不返回（它是助理子 Tab）
 // 第三版（2026-10-25）：'desk' 也是合法返回值（工作台/接单台，优先级最高）
-const ALLOWED = new Set(['new', 'assistant', 'scheduled', 'ecosystem', 'desk', '']);
+// 第四版（2026-10-26）：新增一级入口「工作室」⇒ 'studio' 也是合法返回值
+const ALLOWED = new Set(['new', 'assistant', 'scheduled', 'ecosystem', 'desk', 'studio', '']);
 
 // ── A. 一级选中态：行为断言 ──
 
-await check('A1 穷举 128 种视图组合：返回值域收敛为 6 个字面量（穷尽）', () => {
-  assert.equal(COMBOS.length, 128, `组合数应为 128，实际 ${COMBOS.length}`);
+await check('A1 穷举 256 种视图组合：返回值域收敛为 7 个字面量（穷尽）', () => {
+  assert.equal(COMBOS.length, 256, `组合数应为 256，实际 ${COMBOS.length}`);
   for (const c of COMBOS) {
     const got = activeNavOf(c);
     assert.ok(ALLOWED.has(got), `未定义返回值：${JSON.stringify(c)} → ${got}`);
@@ -104,6 +105,7 @@ await check('A4 助理及团队编制收敛到 assistant；定时任务**不**�
     const shouldAssistant = c.showAssistant || c.showTeams;
     if (!shouldAssistant) continue;
     if (c.showDesk) continue;      // 接单台优先级最高，见 A9
+    if (c.showStudio) continue;    // 工作室优先（一级入口），见 A10
     if (c.showScheduled) continue; // 定时任务优先，见 A8
     assert.equal(activeNavOf(c), 'assistant', `助理子态未收敛：${JSON.stringify(c)}`);
   }
@@ -144,6 +146,21 @@ await check('A9 接单台（desk）优先于一切：showDesk 为真时恒返回
   for (const c of COMBOS.filter((x) => !x.showDesk)) {
     assert.notEqual(activeNavOf(c), 'desk', `未开工作台却返回 desk：${JSON.stringify(c)}`);
   }
+});
+
+await check('A10 工作室（studio）优先于定时任务/助理/生态中心，但低于接单台（desk）', () => {
+  for (const c of COMBOS.filter((x) => x.showStudio && !x.showDesk)) {
+    assert.equal(activeNavOf(c), 'studio', `studio 未优先：${JSON.stringify(c)}`);
+  }
+  // 反向：studio 不在场时永不返回 studio（否则「什么都没开」会莫名点亮工作室）
+  for (const c of COMBOS.filter((x) => !x.showStudio)) {
+    assert.notEqual(activeNavOf(c), 'studio', `未开工作室却返回 studio：${JSON.stringify(c)}`);
+  }
+  // desk 仍压过 studio（接单台优先级最高的语义不能被新入口破坏）
+  assert.equal(
+    activeNavOf({ showDesk: true, showStudio: true, showScheduled: true, showAssistant: true }),
+    'desk',
+  );
 });
 
 // ── B. 助理子页目录与挂载方式 ──
