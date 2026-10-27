@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const kbParse = require('./kbParse');
 
 // 2MB（文本类与 PDF/DOCX 同限）。**这不是拍脑袋的保守值，是性能验收量出来的**：
 // sql.js 是内存库，倒排条数≈正文字符数（中文 bigram，每个字一条 posting）。本机实测
@@ -21,105 +22,16 @@ const crypto = require('crypto');
 // 「索引预算」还没触发 —— 说明瓶颈在内存库本身，不在索引条数。
 // 因此把文件上限压到实测可用的 2MB，并在超限时明确报 FILE_TOO_LARGE（提示拆分），
 // 而不是让主进程 OOM（用户只会看到应用闪退、且不知道为什么）。
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
-// 索引预算（2026-10-27 性能验收的结论，不是拍脑袋）：
-// sql.js 是**内存库**，倒排条数 ≈ 正文字符数（中文按 bigram，每个字产生 1 条 posting）。
-// 实测（本机 darwin/M4，node 22）：1MB 高熵中文 → 9.6 万 posting / 271MB RSS / 0.6s；
-// 2MB → 19.2 万 / 390MB / 1.2s；**5MB 直接被系统杀掉（exit 137）**。
-// 所以「文件 5MB 上限」不能等同于「一定能索引」：给一条显式的倒排预算，
-// 超限返回 INDEX_TOO_LARGE（附建议），而不是让主进程 OOM —— 后者用户只会看到应用闪退。
+// 20MB（文本类 / PDF / DOCX / 图片同限）。
+// 为什么是 20MB：图片型 PDF 的字节数主要来自图像，抽出的正文往往很小 —— 用字节数卡它没有道理。
+// 真正的内存瓶颈是「倒排条数 ≈ 正文字符数」（sql.js 是内存库），只跟**抽出来的文本**有关，
+// 所以内存约束单独用下面两条预算管，超预算**不再拒绝文件**，而是转成 partial（部分索引）。
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
+// 内存安全阀（实测：1MB 高熵中文 ≈ 9.6 万倒排 / 271MB RSS；2MB ≈ 19.2 万 / 390MB；
+// 3MB 起旧实现会被系统杀掉——现在到预算即停，峰值钉在 ~20 万条，不再随文档线性上涨）。
 const MAX_INDEX_POSTINGS = 200000;
-const TEXT_EXT = new Set(['.txt', '.md', '.markdown', '.json', '.csv', '.log', '.text']);
-const SUPPORTED_EXT = new Set([...TEXT_EXT, '.pdf', '.docx']);
-const SUPPORTED_MIME = new Set([
-  'text/plain', 'text/markdown', 'application/json', 'text/csv',
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-]);
-const EXT_MIME = {
-  '.md': 'text/markdown', '.markdown': 'text/markdown', '.json': 'application/json',
-  '.csv': 'text/csv', '.pdf': 'application/pdf',
-  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-};
-
-/**
- * 按扩展名解析出可索引正文。
- * 失败一律返回**明确错误码**（ENCRYPTED / EMPTY_CONTENT / UNSUPPORTED_ENCODING / PARSE_FAILED），
- * 绝不返回「空字符串 + ok」——那会把「解析不了」伪装成「已索引但没内容」（§8.2 明令禁止）。
- */
-function parseContent(ext, buf) {
-  if (TEXT_EXT.has(ext)) {
-    // 文本类：带 BOM 的按 UTF-8 去 BOM；不做智能编码猜测（猜错比报错更坏）
-    let text = buf.toString('utf8');
-    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-    return { ok: true, text };
-  }
-  if (ext === '.docx') return require('./kbDocx').parseDocx(buf);
-  if (ext === '.pdf') return require('./kbPdf').parsePdf(buf);
-  return { ok: false, code: 'UNSUPPORTED_TYPE', reason: `不支持的扩展名 ${ext}` };
-}
-
-function sha1(s) {
-  return crypto.createHash('sha1').update(String(s)).digest('hex');
-}
-function randomId(prefix) {
-  return `${prefix}_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
-}
-
-// 驱动适配层：sqljsDb 暴露的是 prepare().run/get/all，没有顶层 run/get/all。
-// 这里包一层，让查询核用统一语法调用（与 ledgerQuery 同一底座）。
-// 注意：shim 的 prepare().run(...params) 期望「逐参」传入，故此处把第二参（参数数组）展开，
-// 不能把整个数组当一个参数塞进去（否则 sql.js 只绑第一个 ?）。
-function q(db) {
-  const bind = (params) => (Array.isArray(params) ? params : (params === undefined ? [] : [params]));
-  return {
-    run: (sql, params) => db.prepare(sql).run(...bind(params)),
-    get: (sql, params) => db.prepare(sql).get(...bind(params)),
-    all: (sql, params) => db.prepare(sql).all(...bind(params)),
-    exec: (sql) => db.exec(sql),
-  };
-}
-
-// ── 分词：中文 bigram + 英文/数字 词元（小写） ──
-function isCjk(ch) {
-  return /[㐀-鿿豈-﫿぀-ヿ가-힯]/.test(ch);
-}
-function tokenize(text) {
-  const tokens = [];
-  if (!text) return tokens;
-  const lower = String(text).toLowerCase();
-  const latin = lower.match(/[a-z0-9]+/g) || [];
-  for (const w of latin) tokens.push(w);
-  const cjk = [];
-  for (const ch of lower) if (isCjk(ch)) cjk.push(ch);
-  for (let i = 0; i + 1 < cjk.length; i++) tokens.push(cjk[i] + cjk[i + 1]);
-  return tokens;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
-function makeSnippet(text, terms, radius = 80) {
-  const lower = text.toLowerCase();
-  let pos = -1;
-  for (const t of terms) {
-    const i = lower.indexOf(t);
-    if (i >= 0 && (pos < 0 || i < pos)) pos = i;
-  }
-  if (pos < 0) pos = 0;
-  const start = Math.max(0, pos - radius);
-  const end = Math.min(text.length, pos + radius * 2);
-  let snip = text.slice(start, end);
-  if (start > 0) snip = '…' + snip;
-  if (end < text.length) snip = snip + '…';
-  return escapeHtml(snip);
-}
-function safeParse(s, fallback) {
-  try { return JSON.parse(s); } catch { return fallback; }
-}
-
+// 正文预算：比倒排预算更早触发，避免为超大文本白做分块与 tokenize（中日韩约 1 倒排/字）。
+const MAX_TEXT_CHARS = 220000;
 // ── 分块 ──
 function chunkText(text, maxChars = 1000, overlap = 200) {
   const chunks = [];
@@ -218,19 +130,27 @@ async function importDocument({
   if (!stat.isFile()) return { ok: false, code: 'NOT_A_FILE' };
   if (stat.size > MAX_FILE_BYTES) return { ok: false, code: 'FILE_TOO_LARGE', size: stat.size, max: MAX_FILE_BYTES };
   const ext = path.extname(filePath).toLowerCase();
-  if (!SUPPORTED_EXT.has(ext)) return { ok: false, code: 'UNSUPPORTED_TYPE', ext };
-  const mime = EXT_MIME[ext] || 'text/plain';
+  if (!kbParse.supportedExt().has(ext)) return { ok: false, code: 'UNSUPPORTED_TYPE', ext };
+  const mime = kbParse.EXT_MIME[ext] || 'text/plain';
 
   stage('parsing');
   let parsed;
   try {
-    parsed = parseContent(ext, fs.readFileSync(filePath));
+    parsed = await kbParse.parseContent(ext, fs.readFileSync(filePath), { filePath, onStage, shouldCancel });
   } catch (e) {
     return { ok: false, code: 'READ_FAILED', error: e.message };
   }
   if (!parsed.ok) return { ok: false, code: parsed.code || 'PARSE_FAILED', reason: parsed.reason };
-  const content = String(parsed.text || '');
+  let content = String(parsed.text || '');
   if (!content.trim()) return { ok: false, code: 'EMPTY_CONTENT' };
+  // 正文与 OCR 页数都可能超限：两者都要记下来，后面统一折算成 partial。
+  // 只截断不标记 = 让用户以为整篇都进了库（搜不到时他会以为文档里没有）。
+  let textTruncated = false;
+  const ocrTruncated = !!parsed.ocrTruncated;
+  if (content.length > MAX_TEXT_CHARS) {
+    content = content.slice(0, MAX_TEXT_CHARS);
+    textTruncated = true;
+  }
   if (cancelled()) return { ok: false, code: 'CANCELED' };
 
   const hash = sha1(content);
@@ -266,6 +186,8 @@ async function importDocument({
   const pausePersist = typeof db.suspendPersist === 'function';
   if (pausePersist) db.suspendPersist();
   let postings = 0;
+  let indexTruncated = false;
+  let stoppedAtChunk = 0;
   try {
     for (let i = 0; i < chunks.length; i += 1) {
       const c = chunks[i];
@@ -277,15 +199,11 @@ async function importDocument({
       );
       postings += indexChunk(db, chunkId, c.text);
       if (postings > MAX_INDEX_POSTINGS) {
-        // 先清理再报错：留下半份索引比没有更糟（检索命中一半，用户以为文件就是这样）
-        deleteSource({ db, sourceId });
-        if (copiedNow && !q(db).get('SELECT id FROM knowledge_sources WHERE stored_path = ?', [storedPath])) {
-          try { fs.unlinkSync(storedPath); } catch { /* 副本删除失败不影响结果判定 */ }
-        }
-        return {
-          ok: false, code: 'INDEX_TOO_LARGE', postings, max: MAX_INDEX_POSTINGS,
-          reason: `文档索引规模超出上限（约 ${MAX_INDEX_POSTINGS} 条倒排），请拆分后再导入`,
-        };
+        // 到预算即停：**保留**已索引部分并标记 partial，不再整篇丢弃。
+        // 拒绝整篇对用户没有意义（他不知道自己该拆到多细），而「部分可搜」+ 显式标注才有用。
+        indexTruncated = true;
+        stoppedAtChunk = i;
+        break;
       }
       if (yieldEvery > 0 && (i + 1) % yieldEvery === 0) {
         await tick();
@@ -302,9 +220,22 @@ async function importDocument({
   } finally {
     if (pausePersist) db.resumePersist();
   }
-  q(db).run("UPDATE knowledge_sources SET status = 'ready', updated_at = ? WHERE id = ?", [Date.now(), sourceId]);
-  stage('ready');
-  return { ok: true, sourceId, title, chunks: chunks.length, contentHash: hash, status: 'ready' };
+  const truncated = textTruncated || indexTruncated || ocrTruncated;
+  const status = truncated ? 'partial' : 'ready';
+  const reasonCode = textTruncated ? 'TEXT_TRUNCATED'
+    : (indexTruncated ? 'INDEX_TRUNCATED' : (ocrTruncated ? 'OCR_TRUNCATED' : null));
+  q(db).run('UPDATE knowledge_sources SET status = ?, error_code = ?, updated_at = ? WHERE id = ?',
+    [status, reasonCode, Date.now(), sourceId]);
+  stage(truncated ? 'partial' : 'ready');
+  return {
+    ok: true, sourceId, title, chunks: chunks.length, contentHash: hash, status,
+    // 截断事实原样返回（界面必须显示，不许只写日志）
+    truncated: truncated ? {
+      text: textTruncated, index: indexTruncated, ocr: ocrTruncated,
+      stoppedAtChunk, postings, maxPostings: MAX_INDEX_POSTINGS, maxTextChars: MAX_TEXT_CHARS,
+      ocrPages: parsed.ocrPages || 0, ocrCandidates: parsed.ocrCandidates || 0,
+    } : null,
+  };
 }
 
 // ── 搜索（§8.5/§8.8） ──
@@ -320,15 +251,15 @@ function search({ db, projectId, query, limit = 20, scope = 'project', actorId: 
   if (scope === 'project' && projectId) {
     authSql = `SELECT ks.id FROM knowledge_sources ks
                JOIN knowledge_source_projects sp ON sp.source_id = ks.id
-               WHERE sp.project_id = ? AND ks.status = 'ready'`;
+               WHERE sp.project_id = ? AND ks.status IN ('ready', 'partial')`;
     authParams = [projectId];
   } else if (scope === 'unassigned') {
     authSql = `SELECT ks.id FROM knowledge_sources ks
-               WHERE ks.status = 'ready'
+               WHERE ks.status IN ('ready', 'partial')
                  AND NOT EXISTS (SELECT 1 FROM knowledge_source_projects sp WHERE sp.source_id = ks.id)`;
     authParams = [];
   } else {
-    authSql = `SELECT ks.id FROM knowledge_sources ks WHERE ks.status = 'ready'`;
+    authSql = `SELECT ks.id FROM knowledge_sources ks WHERE ks.status IN ('ready', 'partial')`;
     authParams = [];
   }
   const authSources = (q(db).all(authSql, authParams) || []).map((r) => r.id);
@@ -593,18 +524,22 @@ function deleteSource({ db, sourceId }) {
   return { ok: true, deleted: true };
 }
 
-function listSources({ db, scope = 'project', projectId = null, status = 'ready', limit = 50, offset = 0 }) {
-  let where = 'status = ?';
-  let params = [status];
+function listSources({ db, scope = 'project', projectId = null, status = null, limit = 50, offset = 0 }) {
+  // 默认把 ready 与 partial 一并列出：partial = 「已索引一部分，可用但不完整」，
+  // 过滤掉它等于让用户导入完却看不到这条记录（更糟：不知道自己导入过）。
+  const statuses = status ? [status] : ['ready', 'partial'];
+  const statusSql = `status IN (${statuses.map(() => '?').join(',')})`;
+  let where = statusSql;
+  let params = [...statuses];
   if (scope === 'project' && projectId) {
-    where = 'status = ? AND id IN (SELECT source_id FROM knowledge_source_projects WHERE project_id = ?)';
-    params = [status, projectId];
+    where = `${statusSql} AND id IN (SELECT source_id FROM knowledge_source_projects WHERE project_id = ?)`;
+    params = [...statuses, projectId];
   } else if (scope === 'unassigned') {
-    where = 'status = ? AND id NOT IN (SELECT source_id FROM knowledge_source_projects)';
-    params = [status];
+    where = `${statusSql} AND id NOT IN (SELECT source_id FROM knowledge_source_projects)`;
+    params = [...statuses];
   }
   const rows = q(db).all(
-    `SELECT id, title, original_name, content_hash, current_source_version, mime_type, size_bytes, created_at
+    `SELECT id, title, original_name, content_hash, current_source_version, mime_type, size_bytes, created_at, status, error_code
      FROM knowledge_sources WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     [...params, limit, offset],
   );
@@ -612,27 +547,39 @@ function listSources({ db, scope = 'project', projectId = null, status = 'ready'
 }
 
 function capabilities() {
+  const ocr = kbParse.ocrStatus();
   return {
-    supportedExtensions: [...SUPPORTED_EXT],
-    supportedMimeTypes: [...SUPPORTED_MIME],
+    supportedExtensions: [...kbParse.supportedExt()],
+    supportedMimeTypes: [...kbParse.SUPPORTED_MIME],
+    // 「能传多大」与「能索引多少」分开声明：文件 20MB；正文/倒排各有预算，超预算转 partial。
     maxFileBytes: MAX_FILE_BYTES,
-    // 「文件多大」与「能不能索引」是两件事：sql.js 是内存库，倒排条数≈正文字符数，
-    // 5MB 高熵中文会直接撑爆进程。超限返回 INDEX_TOO_LARGE，界面据此提示拆分。
     maxIndexPostings: MAX_INDEX_POSTINGS,
+    maxTextChars: MAX_TEXT_CHARS,
+    partialIndexSupported: true,
     hasFts5: false,
     indexKind: 'bigram-inverted',
-    // 解析能力的诚实边界（§8.2「具体格式以主进程 capabilities 返回为准」）：
-    // PDF 需要 ToUnicode 或纯 ASCII，扫描件/加密件/缺映射的会明确失败而不是产出乱码。
+    // 解析能力的诚实边界（§8.2「具体格式以主进程 capabilities 返回为准」）
     parsers: {
       text: { ok: true },
       docx: { ok: true, note: 'word/document.xml 正文；不含页眉页脚/批注' },
-      pdf: { ok: true, note: '需未加密且有文本层；复合字体需 ToUnicode' },
+      pdf: { ok: true, note: '未加密；有文本层直接抽取，无文本层抽内嵌页面图做 OCR' },
+      image: {
+        ok: ocr.available,
+        note: ocr.available ? '图片经 OCR 转文本后入库' : `需要 OCR 引擎：${ocr.reason || '未安装'}`,
+      },
     },
-    importStages: ['parsing', 'chunking', 'indexing', 'ready'],
+    ocr: {
+      available: ocr.available,
+      engine: ocr.engine,
+      languages: ocr.languages || [],
+      reason: ocr.reason || null,
+    },
+    importStages: ['parsing', 'ocr', 'chunking', 'indexing', 'ready', 'partial'],
     cancellable: true,
-    version: 'v2',
+    version: 'v3',
   };
 }
+
 
 const KB_SCHEMA = `
   CREATE TABLE IF NOT EXISTS knowledge_sources (
@@ -723,6 +670,66 @@ const KB_SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_kb_plan_uses_plan ON kb_plan_uses(plan_id);
   CREATE INDEX IF NOT EXISTS idx_kb_plan_uses_time ON kb_plan_uses(created_at);
 `;
+
+function q(db) {
+  const bind = (params) => (Array.isArray(params) ? params : (params === undefined ? [] : [params]));
+  return {
+    run: (sql, params) => db.prepare(sql).run(...bind(params)),
+    get: (sql, params) => db.prepare(sql).get(...bind(params)),
+    all: (sql, params) => db.prepare(sql).all(...bind(params)),
+    exec: (sql) => db.exec(sql),
+  };
+}
+
+function sha1(s) {
+  return crypto.createHash('sha1').update(String(s)).digest('hex');
+}
+
+function randomId(prefix) {
+  return `${prefix}_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+}
+
+function tokenize(text) {
+  const tokens = [];
+  if (!text) return tokens;
+  const lower = String(text).toLowerCase();
+  const latin = lower.match(/[a-z0-9]+/g) || [];
+  for (const w of latin) tokens.push(w);
+  const cjk = [];
+  for (const ch of lower) if (isCjk(ch)) cjk.push(ch);
+  for (let i = 0; i + 1 < cjk.length; i++) tokens.push(cjk[i] + cjk[i + 1]);
+  return tokens;
+}
+
+function makeSnippet(text, terms, radius = 80) {
+  const lower = text.toLowerCase();
+  let pos = -1;
+  for (const t of terms) {
+    const i = lower.indexOf(t);
+    if (i >= 0 && (pos < 0 || i < pos)) pos = i;
+  }
+  if (pos < 0) pos = 0;
+  const start = Math.max(0, pos - radius);
+  const end = Math.min(text.length, pos + radius * 2);
+  let snip = text.slice(start, end);
+  if (start > 0) snip = '…' + snip;
+  if (end < text.length) snip = snip + '…';
+  return escapeHtml(snip);
+}
+
+function safeParse(s, fallback) {
+  try { return JSON.parse(s); } catch { return fallback; }
+}
+
+function isCjk(ch) {
+  return /[㐀-鿿豈-﫿぀-ヿ가-힯]/.test(ch);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
 
 module.exports = {
   KB_SCHEMA,

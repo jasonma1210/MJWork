@@ -109,11 +109,13 @@ await check('② 超出文件上限：立即拒绝（FILE_TOO_LARGE），不解�
   assert.equal(after, before, '超限文件不应产生 source 行');
 });
 
-await check('② 上限是「实测可用值」，且同时声明了索引规模上限', () => {
-  // 防「嫌 2MB 太小又调回 5MB」：5MB 在本机实测会把进程打爆（exit 137）。
-  // 真要调大，必须先有新的实测证据（换驱动/换存储），而不是改个数字。
-  assert.ok(MAX_FILE_BYTES <= 2 * 1024 * 1024, `上限被调大到 ${MAX_FILE_BYTES}，需先补 5MB 级别的实测证据`);
-  assert.ok(caps.maxIndexPostings > 0, '缺少索引规模上限声明（内存库必须有第二道闸）');
+await check('② 「能传多大」与「能索引多少」是两条独立声明，且都写明', () => {
+  // 上一轮把文件上限压到 2MB 是错的解法：图片型 PDF 的字节主要来自图像，
+  // 用字节数卡它没有道理。现在文件 20MB、正文/倒排各有预算，超预算转 partial。
+  assert.ok(MAX_FILE_BYTES >= 15 * 1024 * 1024, `文件上限应放宽到 15MB 以上，实际 ${MAX_FILE_BYTES}`);
+  assert.ok(caps.maxIndexPostings > 0, '缺少倒排预算（内存库必须有第二道闸）');
+  assert.ok(caps.maxTextChars > 0, '缺少正文字符预算');
+  assert.equal(caps.partialIndexSupported, true, '必须声明支持部分索引（否则超预算只能拒绝）');
 });
 
 await check('③ 重复导入同内容：耗时同量级（无 O(n²) 退化）', async () => {
@@ -126,6 +128,38 @@ await check('③ 重复导入同内容：耗时同量级（无 O(n²) 退化）'
   const second = Date.now() - t1;
   console.log(`   [perf] 128KB 首次 ${first}ms，第二次 ${second}ms`);
   assert.ok(second < Math.max(first * 5, 5000), `第二次导入异常变慢：${first}ms → ${second}ms`);
+});
+
+await check('④ 超过正文/倒排预算 → partial（部分索引），不拒绝、不 OOM、仍可检索', async () => {
+  // 1MB 中文 ≈ 35 万字符，超过 MAX_TEXT_CHARS(22 万) 且倒排会撞 20 万预算 —— 正是「大文档」的真实形态。
+  const f = write('big-cn.txt', entropyText(1024 * 1024));
+  const t0 = Date.now();
+  const r = await kb.importDocument({ db, storageDir, projectId: 'P', filePath: f, actorId: 'owner' });
+  const ms = Date.now() - t0;
+  const rss = Math.round(process.memoryUsage().rss / 1048576);
+  console.log(`   [perf] 1MB 中文超预算：${ms}ms，状态 ${r.status}，RSS ${rss}MB，截断=${JSON.stringify(r.truncated)}`);
+  assert.equal(r.ok, true, r.code || r.reason);
+  assert.equal(r.status, 'partial', '超预算必须标记 partial，不能伪装成完整索引');
+  assert.ok(r.truncated && (r.truncated.text || r.truncated.index), '截断事实必须返回给上层');
+  // partial 的已索引部分必须可检索（否则「部分索引」没有意义）
+  const s2 = kb.search({ db, projectId: 'P', query: '中文' });
+  assert.ok(Array.isArray(s2.items));
+  // 内存必须被钉住：不能随文档线性上涨到被系统杀掉
+  assert.ok(rss < 1200, `内存过高（${rss}MB），预算未生效`);
+});
+
+await check('⑤ 20MB 文件被接受（不再按「索引预算」卡上传），超预算转 partial', async () => {
+  // 这条守的是用户提出的真实诉求：图片型 PDF 的字节主要来自图像，20MB 不该被拒。
+  // 用 ASCII 填满 20MB 只是为了让「大小闸门」被测到（正文预算会把它截成 partial）。
+  const f = write('max-size.txt', 'A'.repeat(Math.max(0, MAX_FILE_BYTES - 1024)));
+  const t0 = Date.now();
+  const r = await kb.importDocument({ db, storageDir, projectId: 'P', filePath: f, actorId: 'owner' });
+  const ms = Date.now() - t0;
+  console.log(`   [perf] 20MB 文件：${ms}ms，状态 ${r.status}，chunks ${r.chunks}，截断=${JSON.stringify(r.truncated && { text: r.truncated.text })}`);
+  assert.equal(r.ok, true, `20MB 文件被拒绝：${r.code || r.reason}`);
+  assert.equal(r.status, 'partial');
+  assert.ok(r.truncated && r.truncated.text, '正文超预算必须标记 text 截断');
+  assert.ok(ms < 30000, `20MB 处理过慢：${ms}ms`);
 });
 
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* 忽略 */ }

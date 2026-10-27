@@ -86,5 +86,17 @@
   "errorParseFailed": "文件解析失败（可能已损坏或格式不符）",
   "errorCanceled": "已取消",
   "importFailLine": "{file}：{reason}",
-  "errorIndexTooLarge": "文档索引规模超出上限，请拆分后再导入"
+  "errorIndexTooLarge": "文档索引规模超出上限，请拆分后再导入",
+  "stageOcr": "OCR 识别",
+  "stagePartial": "部分索引",
+  "ocrAvailable": "OCR 可用（{engine} · {langs}）",
+  "ocrUnavailable": "本机未启用 OCR：{reason}",
+  "partialBadge": "部分索引",
+  "partialHint": "该文档超出索引预算，只索引了前面一部分；搜索可能漏掉后段内容。",
+  "errorNeedsOcr": "这是扫描版 PDF（无文本层），本机没有 OCR 引擎：{reason}",
+  "errorOcrUnavailable": "本机未安装 OCR 引擎，无法解析图片",
+  "errorOcrFailed": "OCR 执行失败（可重试或换一张更清晰的图）",
+  "errorOcrTimeout": "OCR 超时（图片过大或引擎无响应）",
+  "capsLine": "支持 {exts}，单个文件 ≤ {size}；超预算会做部分索引",
+  "importPartial": "{file}：已部分索引（超出预算）"
 }

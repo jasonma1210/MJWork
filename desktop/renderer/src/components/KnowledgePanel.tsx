@@ -19,6 +19,7 @@ type Scope = 'project' | 'all' | 'unassigned';
 type Status = 'loading' | 'ready' | 'empty' | 'error';
 
 interface KbSource {
+  status?: string;
   id: string;
   title: string;
   original_name: string;
@@ -47,6 +48,10 @@ interface KbPlan {
 interface KbCaps {
   supportedExtensions: string[];
   maxFileBytes: number;
+  maxTextChars?: number;
+  maxIndexPostings?: number;
+  partialIndexSupported?: boolean;
+  ocr?: { available: boolean; engine?: string | null; languages?: string[]; reason?: string | null };
   /** §17.2 特性开关：默认关闭，直到运行期注入与性能验收通过 */
   enabled?: boolean;
   indexKind?: string;
@@ -154,6 +159,11 @@ export default function KnowledgePanel({ projectId = null }: KnowledgePanelProps
       UNSUPPORTED_ENCODING: 'knowledge.errorUnsupportedEncoding',
       PARSE_FAILED: 'knowledge.errorParseFailed',
       CANCELED: 'knowledge.errorCanceled',
+      // OCR 相关失败必须区分「没装引擎」「引擎跑挂了」「超时」——三者的下一步动作完全不同
+      NEEDS_OCR: 'knowledge.errorNeedsOcr',
+      OCR_UNAVAILABLE: 'knowledge.errorOcrUnavailable',
+      OCR_FAILED: 'knowledge.errorOcrFailed',
+      OCR_TIMEOUT: 'knowledge.errorOcrTimeout',
     };
     const key = map[code || ''];
     return key ? t(key) : t('knowledge.errorGeneric');
@@ -163,6 +173,7 @@ export default function KnowledgePanel({ projectId = null }: KnowledgePanelProps
     const map: Record<string, string> = {
       parsing: 'knowledge.stageParsing', chunking: 'knowledge.stageChunking',
       indexing: 'knowledge.stageIndexing', ready: 'knowledge.stageReady',
+      ocr: 'knowledge.stageOcr', partial: 'knowledge.stagePartial',
     };
     const key = map[stage || ''];
     return key ? t(key) : (stage || '');
@@ -318,10 +329,22 @@ export default function KnowledgePanel({ projectId = null }: KnowledgePanelProps
 
       {caps && (
         <div className="mb-2 text-caption text-text2">
-          {t('knowledge.capsHint', {
-            ext: caps.supportedExtensions.join(' '),
-            size: fmtBytes(caps.maxFileBytes),
-          })}
+          <div>
+            {t('knowledge.capsHint', {
+              ext: caps.supportedExtensions.join(' '),
+              size: fmtBytes(caps.maxFileBytes),
+            })}
+          </div>
+          {/* OCR 是否可用必须显式告诉用户：它决定了「图片/扫描件能不能导入」，
+              也决定了扫描版 PDF 的失败原因该怪文件还是怪本机没装引擎 */}
+          <div>
+            {caps.ocr?.available
+              ? t('knowledge.ocrAvailable', {
+                engine: caps.ocr.engine || 'ocr',
+                langs: (caps.ocr.languages || []).join('+') || '-',
+              })
+              : t('knowledge.ocrUnavailable', { reason: caps.ocr?.reason || '-' })}
+          </div>
         </div>
       )}
 
@@ -488,8 +511,15 @@ export default function KnowledgePanel({ projectId = null }: KnowledgePanelProps
             <tbody>
               {items.map((s) => (
                 <tr key={s.id} className="border-t border-border">
-                  <td className="max-w-[22rem] truncate py-1" title={s.original_name || s.title}>
-                    {s.title || s.original_name}
+                  <td className="max-w-[22rem] py-1" title={s.original_name || s.title}>
+                    <span className="truncate">{s.title || s.original_name}</span>
+                    {/* 「部分索引」必须出现在列表里：用户搜不到后段内容时，要能在这里找到原因 */}
+                    {s.status === 'partial' && (
+                      <span className="ml-2 rounded border border-warn px-1 text-caption text-warn"
+                        title={t('knowledge.partialHint')}>
+                        {t('knowledge.partialBadge')}
+                      </span>
+                    )}
                   </td>
                   <td className="py-1 tabular-nums text-text2">{fmtBytes(s.size_bytes)}</td>
                   <td className="py-1 text-text2">

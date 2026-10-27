@@ -86,5 +86,17 @@
   "errorParseFailed": "Failed to parse the file (corrupted or unsupported layout)",
   "errorCanceled": "Cancelled",
   "importFailLine": "{file}: {reason}",
-  "errorIndexTooLarge": "The document index is too large; please split it before importing"
+  "errorIndexTooLarge": "The document index is too large; please split it before importing",
+  "stageOcr": "OCR",
+  "stagePartial": "Partially indexed",
+  "ocrAvailable": "OCR available ({engine} · {langs})",
+  "ocrUnavailable": "OCR unavailable: {reason}",
+  "partialBadge": "Partial",
+  "partialHint": "This document exceeded the index budget; only the earlier part is indexed, later content may be missing from search results.",
+  "errorNeedsOcr": "Scanned PDF without a text layer, and no OCR engine on this machine: {reason}",
+  "errorOcrUnavailable": "No OCR engine installed; images cannot be parsed",
+  "errorOcrFailed": "OCR failed (retry or use a clearer image)",
+  "errorOcrTimeout": "OCR timed out (image too large or engine stalled)",
+  "capsLine": "Supports {exts}, up to {size} per file; oversized docs are partially indexed",
+  "importPartial": "{file}: partially indexed (budget exceeded)"
 }
