@@ -32,7 +32,7 @@
 //   新增一级入口「账本」（ledger）即按此序插在 studio 之后、scheduled 之前。
 //   新代码请直接消费 navRoute；本文件不新增语义，只在过渡期保持行为一致。
 export type NavKey =
-  | 'new' | 'desk' | 'studio' | 'assistant' | 'scheduled' | 'ledger' | 'ecosystem' | '' | 'teams';
+  | 'desk' | 'studio' | 'assistant' | 'scheduled' | 'ledger' | 'ecosystem' | '' | 'teams';
 
 /** 助理工作台的子 Tab（见 lib/assistantTabs.ts；此处只做类型引用，避免循环依赖） */
 export type NavAssistantTab = 'publish' | 'teams' | 'aiTeam';
@@ -92,5 +92,9 @@ export function activeNavOf(view: NavViewState): NavKey {
   // 但用户关注点已切到生态中心，故让它优先于 assistant 以下的判定（与调整前一致）。
   if (view.showEcosystem) return 'ecosystem';
   if (view.showDashboard || view.hasActiveThread) return '';
-  return 'new';
+  // 2026-10-27：'new'（新建任务落地页）下线后，这里不再有「兜底一级入口」。
+  // 落地页是工作台，但它是**由 showDesk 驱动的真实页面**（routeToLegacyView: page==='desk' ⇒ showDesk=true），
+  // 不是靠这个兜底分支点亮的 —— 兜底再返回 desk 就等于「没开工作台也亮工作台」，
+  // 那是本文件 2026-10-18 要修的那个 bug 的镜像。故空白态返回 ''（一个都不亮）。
+  return '';
 }

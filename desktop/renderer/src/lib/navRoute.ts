@@ -25,7 +25,7 @@ import { DEFAULT_STUDIO_TAB, isStudioTab, type StudioTab } from './studioTabs.ts
 
 /** 一级主页面。`thread` = 对话/运行（不点亮任何一级入口，属设计：§4.3 的 dashboard/thread） */
 export type NavPage =
-  | 'new' | 'desk' | 'assistant' | 'studio' | 'scheduled' | 'ledger' | 'dashboard' | 'thread';
+  | 'desk' | 'assistant' | 'studio' | 'scheduled' | 'ledger' | 'dashboard' | 'thread';
 
 /** 覆盖层：与主页面正交，关闭后回到原页面（§4.4） */
 export type NavOverlay = 'none' | 'ecosystem' | 'settings';
@@ -44,16 +44,16 @@ export interface NavRoute {
 }
 
 export const NAV_PAGES: readonly NavPage[] = [
-  'new', 'desk', 'assistant', 'studio', 'scheduled', 'ledger', 'dashboard', 'thread',
+  'desk', 'assistant', 'studio', 'scheduled', 'ledger', 'dashboard', 'thread',
 ];
 
 /** 会点亮一级导航的页面（`dashboard`/`thread` 不点亮，与 activeNavOf 返回 '' 同义） */
 export const HIGHLIGHTABLE_PAGES: readonly NavPage[] = [
-  'new', 'desk', 'assistant', 'studio', 'scheduled', 'ledger',
+  'desk', 'assistant', 'studio', 'scheduled', 'ledger',
 ];
 
 export const INITIAL_ROUTE: NavRoute = {
-  page: 'new',
+  page: 'desk',
   assistantTab: DEFAULT_ASSISTANT_TAB,
   studioTab: DEFAULT_STUDIO_TAB,
   projectId: null,
@@ -126,7 +126,7 @@ export function navReducer(state: NavRoute, action: NavAction): NavRoute {
 
 /** 当前是否处在「无主页面」的对话态（用于 ChatArea 的 hidden 判定） */
 export function isThreadRoute(route: NavRoute): boolean {
-  return route.page === 'thread' || route.page === 'new';
+  return route.page === 'thread';
 }
 
 /**
@@ -158,8 +158,7 @@ export function legacyViewToRoute(view: Record<string, unknown> = {}): NavRoute 
         : view.showScheduled ? 'scheduled'
           : view.showAssistant || view.showTeams ? 'assistant'
             : view.showDashboard ? 'dashboard'
-              : view.hasActiveThread ? 'thread'
-                : 'new';
+              : 'thread';
   return {
     ...INITIAL_ROUTE,
     page,

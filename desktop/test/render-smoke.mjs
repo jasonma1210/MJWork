@@ -216,8 +216,13 @@ check('渲染冒烟：App 首帧可渲染（启动白屏防线）', () => {
   assert.ok(html.length > 200, `渲染结果过短（${html.length} 字符），疑似未渲染出界面`);
   // 覆盖度自证：必须真的渲染到了 Composer（输入框）。
   // 否则 App 一旦退化成「探测中」占位页，这道门禁会静默失效 —— 两次白屏都出在深层组件。
+  // 2026-10-27：落地页由 'new'（新建任务）改为工作台 ⇒ 首帧**可见**的是工作台接单区。
+  // ChatArea 仍是常驻挂载（hidden 隐藏），所以 Composer 依然在 HTML 里；两条都要断言：
+  //   ① 可见首帧 = 工作台（否则等于改回空白落地页，用户看到的还是一片没内容）；
+  //   ② 深层组件（Composer）确实挂上了（覆盖度自证，避免冒烟退化成只渲染外壳）。
+  assert.ok(html.includes('接一单'), '首帧未渲染到工作台接单区（落地页应为工作台）');
   assert.ok(html.includes('输入你想做什么'), '首帧未渲染到 Composer 输入框，冒烟覆盖面不足');
-  console.log(`       首帧 HTML ${html.length} 字符（含 Composer 输入框）`);
+  console.log(`       首帧 HTML ${html.length} 字符（工作台接单区 + 常驻 Composer）`);
 });
 
 check('渲染冒烟：侧栏 / 工作区条 / 审批卡可独立渲染', () => {

@@ -21,11 +21,14 @@ const check = (name, fn) => {
 };
 
 check('R1 page 集合含 ledger/desk/studio/scheduled/assistant，且不含 teams', () => {
-  for (const p of ['ledger', 'desk', 'studio', 'scheduled', 'assistant', 'dashboard', 'thread', 'new']) {
+  for (const p of ['ledger', 'desk', 'studio', 'scheduled', 'assistant', 'dashboard', 'thread']) {
     assert.ok(NAV_PAGES.includes(p), `NAV_PAGES 应含 ${p}`);
   }
   assert.ok(!NAV_PAGES.includes('teams'), 'teams 不应是独立 page（已迁入 Studio）');
   assert.ok(NAV_PAGES.includes('ledger'), '2026-10-27 新增的账本必须是一级 page');
+  // 2026-10-27：'new'（新建任务落地页）已下线 —— 它的输入框与工作台「接一单」是同一个
+  // 输入框出现在两处。落地页改为工作台，新会话直接建真实会话并进对话页。
+  assert.ok(!NAV_PAGES.includes('new'), 'new 已下线，不应再是合法 page');
 });
 
 check('R2 isNavPage：合法 page 为 true，teams/未知为 false', () => {
@@ -79,10 +82,11 @@ check('R8 reset ⇒ INITIAL_ROUTE', () => {
   assert.deepEqual(s, INITIAL_ROUTE, 'reset 必须回到初始路由（含清空 overlay）');
 });
 
-check('R9 isThreadRoute：thread/new 视为对话态', () => {
-  assert.equal(isThreadRoute({ ...INITIAL_ROUTE, page: 'new' }), true);
+check('R9 isThreadRoute：只有 thread 是对话态（new 已下线）', () => {
   assert.equal(isThreadRoute({ ...INITIAL_ROUTE, page: 'thread' }), true);
   assert.equal(isThreadRoute({ ...INITIAL_ROUTE, page: 'ledger' }), false);
+  assert.equal(isThreadRoute({ ...INITIAL_ROUTE, page: 'desk' }), false, '工作台是独立一屏，不是对话态');
+  assert.equal(INITIAL_ROUTE.page, 'desk', '落地页必须是工作台');
 });
 
 check('R10 routeToLegacyView：page=ledger ⇒ showLedger=true，其余 page 互斥', () => {

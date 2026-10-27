@@ -186,7 +186,7 @@ export default function App() {
       if (!mod) return;
       const k = e.key.toLowerCase();
       if (k === 'k') { e.preventDefault(); setPaletteOpen((v) => !v); }
-      else if (k === 'n') { e.preventDefault(); setActiveThread(null); resetView(); }
+      else if (k === 'n') { e.preventDefault(); newThreadInProject(null); }
       else if (k === 'o') { e.preventDefault(); setShowProjectPicker(true); }
       else if (k === ',') { e.preventDefault(); setShowSettings(true); }
       else if (k === 'b') {
@@ -207,6 +207,9 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  // 快捷键监听只注册一次：⌘N 走当前闭包里的 activeProject 即可，
+  // 把 newThreadInProject 列进依赖会让监听器每次渲染重注册（与文件里 window 事件走 ref 同一理由）。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 窗口事件总线（P0 配套，2026-10-22）：本轮把 5 个「一个事件一个 useEffect」的样板
@@ -227,7 +230,7 @@ export default function App() {
     const recruit = (e) => {
       if (!e.detail) return;
       setActiveThread(null);
-      resetView();
+      goConversation();
       setShowSettings(false);
       setShowEcosystem(false);
       const detail = e.detail;
@@ -239,6 +242,8 @@ export default function App() {
     };
     window.addEventListener('mjcode:recruit-expert', recruit);
     return () => window.removeEventListener('mjcode:recruit-expert', recruit);
+  // 招募事件只注册一次（同上：goConversation 只是派发一次页面切换，不需要进依赖）。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // B3：右侧面板任务作用域 —— 无任务自动收起；切任务清空上一任务的文件视图与改动列表。
@@ -291,7 +296,7 @@ export default function App() {
   // 会话归属哪个项目，右侧文件树/Diff 就显示哪个项目；不跟随上次手动选的项目
   function selectThread(t) {
     setActiveThread(t);
-    resetView();
+    goConversation();
     const path = t?.project_path || t?.projectPath || '';
     if (path && path !== activeProject?.path) {
       const known = projects.find((p) => p.path === path);
@@ -416,8 +421,9 @@ export default function App() {
     );
   }
 
-  function resetView() {
-    setRoute(INITIAL_ROUTE);
+  /** 回到对话视图（不再回到「新建任务」落地页——那个页面已下线，见 navRoute 注释） */
+  function goConversation() {
+    navDispatch({ type: 'page', page: 'thread' });
   }
 
   // 选择/切换项目：写入最近项目列表（去重，最多保留 10 个）
@@ -430,7 +436,7 @@ export default function App() {
     // 且 relPath 以新项目根目录为前缀计算，会显示错误的相对路径
     closeAllFiles();
     setAgentFiles([]);
-    resetView();
+    goConversation();
     if (project.path) {
       setProjects((prev) => [project, ...prev.filter((x) => x.path !== project.path)].slice(0, 10));
       // B1：同步落本机项目表（失败不影响 UI）
@@ -469,19 +475,21 @@ export default function App() {
     });
   }
 
-  // 「+」在指定项目中真正创建一条新会话（此前只切换项目，无可见会话产生）
-  async function newThreadInProject(p) {
-    selectProject(p);
+  // 新建会话：**直接落成一条真实会话**并进入对话页。
+  // 2026-10-27：原来的「新建任务」落地页（欢迎页 + 输入框）与工作台「接一单」是同一个输入框
+  // 出现在两处，已下线。现在 p 为空即「在工作台/任意处新建」，p 有值即侧栏项目的「+」。
+  // prefill：派单时把目标带进对话页的输入框（不再需要一个单独的欢迎页来承接）。
+  async function newThreadInProject(p, prefill = '') {
+    if (p) selectProject(p);
+    const cwd = (p && p.path) || activeProject?.path || '';
     try {
-      const t = await api.createThread({
-        title: tr('app.newThread'),
-        cwd: p.path || '',
-        project_path: p.path || '',
-      });
+      const t = await api.createThread({ title: tr('app.newThread'), cwd, project_path: cwd });
       setActiveThread(t);
+      navDispatch({ type: 'page', page: 'thread' });
+      if (prefill) setInitialPrompt(String(prefill));
       loadData();
     } catch (err) {
-      console.warn('[app] failed to create thread in project:', err);
+      console.warn('[app] failed to create thread:', err);
     }
   }
 
@@ -507,7 +515,6 @@ export default function App() {
         activeThread={activeThread}
         view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, showDesk, showStudio, showLedger }}
         onSelect={selectThread}
-        onNew={() => { setActiveThread(null); resetView(); }}
         onNewThread={newThreadInProject}
         onDelete={async (t) => {
           // A2：删除前确认；本地模式语义为归档，提供 5s 撤销（A3）
@@ -570,7 +577,7 @@ export default function App() {
         {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}
         {showAssistant && <AssistantPage
   tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path}
-  onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }}
+  onAutoRun={(goal) => { newThreadInProject(null, goal); }}
   onDispatchEmployee={({ employee, runtime, goal }) => {
     // 复用生态中心「用此角色开会话」的既有链路（mjcode:recruit-expert），
     // 不在助理页另起第二条派活实现；rolePreset 由主进程返回，渲染层不构造。
@@ -588,10 +595,10 @@ export default function App() {
           <DeskPage
             threads={threads} threadId={activeThreadId} projectPath={activeProject?.path || ''}
             providers={allProviders} selectedModel={selectedModel} onPickModel={chooseModel}
-            onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }} onOpenFile={openFileInPane}
+            onAutoRun={(goal) => { newThreadInProject(null, goal); }} onOpenFile={openFileInPane}
             onOpenSettings={() => setShowSettings(true)} onOpenArtifacts={() => { setPaneTab('artifact'); setPaneOpen(true); }}
             onOpenThread={(id) => { const th = threads.find((x) => String(x.id) === String(id)); if (th) selectThread(th); }}
-            onNewThread={() => { setActiveThread(null); resetView(); }}
+            onNewThread={() => { newThreadInProject(null); }}
           />
         )}
         {/* 任务编排已并入对话流（orchestrate_task 工具 + AgentDock 胶囊），不再有独立面板入口 */}
@@ -714,7 +721,7 @@ export default function App() {
         projects={projects}
         onCreated={async (r) => {
           const thread = r?.thread;
-          if (!thread) { setActiveThread(null); resetView(); loadData(); return; }
+          if (!thread) { setActiveThread(null); goConversation(); loadData(); return; }
           const threadId = String(thread.id);
           const objective = String(r?.project?.objective || '').trim();
           const teamId = String(r?.team?.id || '');
@@ -751,7 +758,7 @@ export default function App() {
         projectPath={activeProject?.path || ''}
         onOpenFile={openFileInPane}
         commands={[
-          { label: tr('app.cmdNewThread'), hint: '⌘N', run: () => { setActiveThread(null); resetView(); } },
+          { label: tr('app.cmdNewThread'), hint: '⌘N', run: () => { newThreadInProject(null); } },
           { label: tr('app.cmdOpenProject'), hint: '⌘O', run: () => setShowProjectPicker(true) },
           { label: tr('app.cmdOpenSettings'), hint: '⌘,', run: () => setShowSettings(true) },
           { label: tr('app.cmdDesk'), run: () => navDispatch({ type: 'page', page: 'desk' }) },

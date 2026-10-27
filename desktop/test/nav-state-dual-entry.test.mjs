@@ -57,7 +57,8 @@ const COMBOS = allCombos();
 // 第三版（2026-10-25）：'desk' 也是合法返回值（工作台/接单台，优先级最高）
 // 第四版（2026-10-26）：新增一级入口「工作室」⇒ 'studio' 也是合法返回值
 // 第五版（2026-10-27）：新增一级入口「账本」⇒ 'ledger' 也是合法返回值
-const ALLOWED = new Set(['new', 'assistant', 'scheduled', 'ecosystem', 'desk', 'studio', 'ledger', '']);
+// 第六版（2026-10-27）：'new' 下线（落地页改为 desk），故不再是合法返回值
+const ALLOWED = new Set(['assistant', 'scheduled', 'ecosystem', 'desk', 'studio', 'ledger', '']);
 
 // ── A. 一级选中态：行为断言 ──
 
@@ -79,7 +80,7 @@ await check('A2 兼容别名不泄漏：teams 永不被返回（它是助理子 
   }
 });
 
-await check('A3 互斥（渲染侧）：多视图条件同时为真时，侧栏实际点亮的一级入口恒为 1 个', async () => {
+await check('A3 互斥（渲染侧）：多视图条件同时为真时，侧栏实际点亮的一级入口非空白态恒为 1、空白态为 0', async () => {
   // ⚠ 原断言是**恒真式**：`['new',…].filter((k) => k === got).length <= 1` ——
   // `activeNavOf` 返回**单值**，命中数恒 ≤ 1，证明不了「不会两个入口同时亮」。
   // 改为真渲染 Sidebar、数 aria-current="page"（这是唯一能证伪的形态）。
@@ -94,7 +95,8 @@ await check('A3 互斥（渲染侧）：多视图条件同时为真时，侧栏�
     { view: { showDesk: true, showScheduled: true }, expect: 1 },
     { view: { showDesk: false, showScheduled: true, showAssistant: true, showTeams: true }, expect: 1 },
     { view: { showAssistant: true, showEcosystem: true }, expect: 1 },
-    { view: {}, expect: 1 },
+    // 2026-10-27：'new' 下线后空白态无一级入口可点亮（理由同 sidebar-nav-active 同名用例）
+  { view: {}, expect: 0 },
     { view: { showDashboard: true }, expect: 0 },
   ];
   for (const c of cases) {
@@ -130,12 +132,12 @@ await check('A6 助理优先于生态中心（弹层盖在助理之上，底层�
   assert.equal(activeNavOf(w), 'ecosystem');
 });
 
-await check('A7 工作台与会话中不点亮一级导航；空白新建任务页点亮 new', () => {
+await check('A7 工作台与会话中不点亮一级导航；空白态一个都不亮（new 已下线）', () => {
   const base = { showAssistant: false, showScheduled: false, showEcosystem: false, showTeams: false, hasActiveThread: false };
   assert.equal(activeNavOf({ ...base, showDashboard: true }), '');
   assert.equal(activeNavOf({ ...base, hasActiveThread: true }), '');
   assert.equal(activeNavOf({ ...base, showDashboard: true, hasActiveThread: true }), '');
-  assert.equal(activeNavOf(base), 'new');
+  assert.equal(activeNavOf(base), '', '空白态不得点亮任何一级入口（落地页靠 showDesk 驱动，不靠兜底）');
 });
 
 await check('A8 定时任务优先于助理（两者同时为真时更具体的那个点亮，避免「点了却亮在别处」）', () => {

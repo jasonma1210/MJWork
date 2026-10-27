@@ -59,7 +59,8 @@ const sidebar = blankComments(SIDEBAR);
     // 第二版（2026-10-24 用户要求）：定时任务升回一级入口 ⇒ 'scheduled' 是合法返回值；
     // 第三版（2026-10-25）：新增接单台 ⇒ 'desk' 是合法返回值；'teams' 仍不返回（它是助理子 Tab）。
     // 第四版（2026-10-26）：新增一级入口「工作室」⇒ 'studio' 是合法返回值
-    const allowed = new Set(['new', 'assistant', 'scheduled', 'ecosystem', 'desk', 'studio', '']);
+    // 第五版（2026-10-27）：'new' 下线（落地页改为 desk）
+    const allowed = new Set(['assistant', 'scheduled', 'ecosystem', 'desk', 'studio', '']);
     for (const c of combos) {
       const got = activeNavOf(c);
       assert.ok(allowed.has(got), `${JSON.stringify(c)} → ${got}`);
@@ -110,14 +111,14 @@ const sidebar = blankComments(SIDEBAR);
     assert.equal(activeNavOf({ ...back, showAssistant: false, showDashboard: false, hasActiveThread: true }), '');
   });
 
-  await check('新建任务页（什么都没有打开）才选中「新建任务」', () => {
-    assert.equal(activeNavOf({ showAssistant: false, showDashboard: false, showEcosystem: false, hasActiveThread: false }), 'new');
+  await check('空白态不点亮任何一级入口（new 下线后不再有兜底入口）', () => {
+    assert.equal(activeNavOf({ showAssistant: false, showDashboard: false, showEcosystem: false, hasActiveThread: false }), '');
   });
 
   // ⚠ 原断言是**恒真式**：`['new',…].filter((k) => k === got).length <= 1` ——
   // `activeNavOf` 返回**单值**，`k === got` 的命中数恒 ≤ 1，它证明不了「不会两个入口同时亮」。
   // 改为**渲染侧计数**：真渲染 Sidebar，数 NavItem 实际输出的 aria-current="page"。
-  await check('互斥（渲染侧）：多视图条件同时为真时，侧栏被点亮的一级入口恒为 1 个', async () => {
+  await check('互斥（渲染侧）：多视图条件同时为真时，非空白态恒为 1 个、空白态为 0 个', async () => {
     const { renderHtml, countAriaCurrent } = await import('./helpers/render-html.mjs');
     const base = { threads: [], projects: [], activeThread: null, activeProject: null, onSelect: () => {} };
     //     // 期望值写死，两个方向都验：冲突组合必须**恰好亮 1 个**（0 个＝点了没亮，也是缺陷）；
@@ -129,7 +130,10 @@ const sidebar = blankComments(SIDEBAR);
       { view: { showDesk: true, showScheduled: true }, expect: 1 },
       { view: { showDesk: false, showScheduled: true, showAssistant: true }, expect: 1 },
       { view: { showAssistant: true, showEcosystem: true }, expect: 1 },
-      { view: {}, expect: 1 },
+      // 2026-10-27：'new'（新建任务）下线后，空白态**没有**一级入口可点亮。
+      // 这里从 1 改成 0 不是放宽，而是判据跟着真实设计走：0 个＝空白态（合理），
+      // 空白态若亮着某个入口，反而是「没在那个页面却亮着它」的旧 bug。
+      { view: {}, expect: 0 },
       { view: { showDashboard: true }, expect: 0 },
     ];
     for (const c of cases) {
@@ -161,7 +165,7 @@ const sidebar = blankComments(SIDEBAR);
     assert.match(sidebar, /showDesk: !!view\?\.showDesk/, '缺少 showDesk 输入');
     // 第二版：一级导航三项都必须是真实绑定（scheduled 已升回入口）
     // 第三版（2026-10-25）：新增「工作台」一级入口，同样必须有真实绑定
-    for (const key of ['desk', 'new', 'assistant', 'scheduled', 'studio']) {
+    for (const key of ['desk', 'assistant', 'scheduled', 'studio', 'ledger']) {
       assert.match(sidebar, new RegExp(`active=\\{activeNav === '${key}'\\}`),
         `NavItem「${key}」缺少 active={activeNav === '${key}'}`);
     }

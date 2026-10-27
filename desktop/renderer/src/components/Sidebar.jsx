@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import ThreadList from './ThreadList';
-import { IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock, IconList, IconFolder, IconChart } from './icons';
+import { IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock, IconList, IconFolder, IconChart } from './icons';
 import { activeNavOf } from '../lib/navState';
 import logo from '../assets/logo.png';
 import { useI18n } from '../i18n';
@@ -20,7 +20,7 @@ import { useI18n } from '../i18n';
 //     为什么不彻底删掉：生态中心是数字员工/技能/连接器的唯一浏览入口，
 //     删掉就断了「招募数字员工 → 组成军团」这条主链路。
 export default function Sidebar({
-  threads, activeThread, onSelect, onNew, onDelete, onRenameThread, onAssignThread, onOpenArchive,
+  threads, activeThread, onSelect, onDelete, onRenameThread, onAssignThread, onOpenArchive,
   onOpenAssistant, onOpenScheduled, onOpenDesk, onOpenStudio, onOpenLedger, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
   projects, activeProject, onSelectProject, onRemoveProject, onRenameProject,
   onNewThread, filter, view,
@@ -69,7 +69,6 @@ export default function Sidebar({
       <div className="px-2 space-y-1">
         <div className="px-3 pb-1 text-caption text-text2">{t('sidebar.groupOperations')}</div>
         <NavItem icon={<IconList size={16} />} label={t('sidebar.desk')} onClick={onOpenDesk} active={activeNav === 'desk'} />
-        <NavItem icon={<IconEdit size={16} />} label={t('sidebar.newChat')} onClick={onNew} active={activeNav === 'new'} />
         <NavItem icon={<IconUsers size={16} />} label={t('sidebar.assistant')} onClick={onOpenAssistant} active={activeNav === 'assistant'} />
         <NavItem icon={<IconClock size={16} />} label={t('sidebar.scheduled')} onClick={onOpenScheduled} active={activeNav === 'scheduled'} />
         <NavItem icon={<IconFolder size={16} />} label={t('sidebar.studio')} onClick={onOpenStudio} active={activeNav === 'studio'} />
