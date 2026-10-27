@@ -370,5 +370,32 @@ await check('D3 运行条件不猜 ready：通道失败/员工缺失一律 unava
   assert.match(dir, /disabled=\{dispatching \|\| rt === 'unavailable'\}/, 'runtime 不可用时未禁用提交');
 });
 
+await check('D4 列表项必须是块级卡片，不许被 Button 的行内基础类压成一段文字', () => {
+  const dir = stripComments(read('components/AssistantDirectory.tsx'));
+
+  /**
+   * 判据抽成谓词，是为了能对「旧实现」再跑一遍做反向自检 ——
+   * 只对新代码断言 true 的写法无法证明「这条断言真的会红」。
+   */
+  const isBlockCard = (src) => {
+    const block = src.slice(src.indexOf('filtered.map'), src.indexOf('filtered.map') + 2200);
+    if (block.length < 200) return false; // 片段都没截到 ⇒ 判 false，避免空过
+    const must = ['!block', '!h-auto', '!whitespace-normal', '!bg-surface', '!border-border'];
+    return must.every((c) => block.includes(c));
+  };
+
+  assert.ok(isBlockCard(dir), '目录列表项缺少块级卡片类（!block/!h-auto/!whitespace-normal/!bg-surface/!border-border）——'
+    + 'Button 的基础类是 inline-flex + items-center + whitespace-nowrap + 固定 h-7，'
+    + '直接拿去当卡片会把多行内容压成没有边界的一段文字');
+
+  // 反向自检：2026-10-27 用户截图里的那版实现（行内按钮硬当卡片）必须判 false
+  const oldShape = `
+    filtered.map((e) => (
+      <Button variant={e.id === selectedId ? 'accent-ghost' : 'ghost'}
+        className="w-full !justify-start !items-start !h-auto !text-left" />
+    ))`;
+  assert.equal(isBlockCard(oldShape), false, '反向自检失败：旧实现也通过了这条断言，说明判据是空转');
+});
+
 console.log(`\nnav-state-dual-entry: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);

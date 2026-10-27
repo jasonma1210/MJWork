@@ -178,7 +178,12 @@ export default function AssistantDirectory({
 
   return (
     <div className="flex h-full min-h-0">
-      {/* 左：目录（搜索/筛选/列表）。点击卡片只**选中**，不执行 */}
+      {/* 左：目录（搜索/筛选/列表）。点击卡片只**选中**，不执行。
+          ⚠ 卡片外观必须逐条覆盖 Button 的基础类：Button 是为「一行文字的行内按钮」设计的
+          （inline-flex / items-center / whitespace-nowrap / 固定 h-7 / text-xs），直接拿它当卡片用，
+          多行内容会被 nowrap 与固定行高压成一段没有边界、没有留白、三段同色小字糊在一起的墙
+          —— 这就是 2026-10-27 用户截图里「一塌糊涂」的真实成因，不是数据问题。
+          故这里显式 `!block !h-auto !whitespace-normal` + 卡片自己的圆角/内边距/边框态。 */}
       <div className="flex w-1/2 min-w-0 flex-col border-r border-border">
         <div className="flex items-center gap-2 p-3 shrink-0">
           <input
@@ -201,12 +206,15 @@ export default function AssistantDirectory({
             </select>
           )}
         </div>
-        <div className="px-3 pb-1 text-caption text-text2 shrink-0">
-          {query || category ? t('assistant.directory.filteredCount', { n: filtered.length }) : ''}
+        {/* 计数行常显：原来无筛选时渲染空字符串，会留下一条无意义的空白把列表压低 */}
+        <div className="px-3 pb-2 text-caption text-text2 shrink-0">
+          {query || category
+            ? t('assistant.directory.filteredCount', { n: filtered.length })
+            : t('assistant.directory.countLabel', { n: filtered.length })}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-2 space-y-1">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 space-y-2">
           {filtered.length === 0 ? (
-            <div className="p-3 space-y-1">
+            <div className="rounded-xl border border-border bg-surface p-3 space-y-1">
               <div className="text-sm">{t('assistant.directory.noMatch')}</div>
               <div className="text-caption text-text2">{t('assistant.directory.noMatchHint')}</div>
               {(query || category) && (
@@ -215,61 +223,95 @@ export default function AssistantDirectory({
                 </Button>
               )}
             </div>
-          ) : filtered.map((e) => (
-            <Button
-              key={e.id}
-              size="sm"
-              variant={e.id === selectedId ? 'accent-ghost' : 'ghost'}
-              className="w-full !justify-start !items-start !h-auto !text-left"
-              onClick={() => setSelectedId(e.id)}
-              aria-label={t('assistant.directory.cardAria', { name: e.title_cn || e.name || e.id })}
-            >
-              <span className="min-w-0">
-                <span className="block truncate text-text">{e.title_cn || e.name || e.id}</span>
-                {e.mission && <span className="block text-caption text-text2 line-clamp-2">{e.mission}</span>}
-                {!!(e.core_skills || []).length && (
-                  <span className="block text-caption text-text2 truncate">
-                    {(e.core_skills || []).join(t('assistant.listSep'))}
+          ) : filtered.map((e) => {
+            const active = e.id === selectedId;
+            const skills = e.core_skills || [];
+            return (
+              <Button
+                key={e.id}
+                size="sm"
+                variant="ghost"
+                className={[
+                  // 布局：从「行内按钮」改回「块级卡片」
+                  '!block w-full !h-auto !whitespace-normal !text-left !px-3 !py-2 !rounded-xl !border',
+                  // 三态：默认是**实心卡片**（bg-surface + 描边，浅色主题下白卡压在暖灰底上），
+                  // hover 加深描边，选中主色描边 + 淡底。
+                  // ⚠ 默认态必须自带描边与底色：只给 hover/selected 上色的话，静止时整列仍是
+                  // 「没有边界的文字块」——这正是用户截图里的观感。
+                  active
+                    ? '!border-accent !bg-accent-bg'
+                    : '!border-border !bg-surface hover:!border-border-strong',
+                ].join(' ')}
+                onClick={() => setSelectedId(e.id)}
+                aria-pressed={active}
+                aria-label={t('assistant.directory.cardAria', { name: e.title_cn || e.name || e.id })}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className={`truncate text-sm font-medium ${active ? 'text-accent' : 'text-text'}`}>
+                    {e.title_cn || e.name || e.id}
+                  </span>
+                  {e.category && (
+                    <span className="shrink-0 rounded-full bg-fill-2 px-2 py-1 text-caption text-text2">
+                      {e.category}
+                    </span>
+                  )}
+                </span>
+                {e.mission && (
+                  <span className="mt-1 line-clamp-2 text-caption leading-relaxed text-text2">{e.mission}</span>
+                )}
+                {skills.length > 0 && (
+                  <span className="mt-2 flex flex-wrap gap-1">
+                    {skills.slice(0, 4).map((s) => (
+                      <span key={s} className="rounded-full bg-fill-1 px-2 py-1 text-caption text-text2">{s}</span>
+                    ))}
+                    {skills.length > 4 && (
+                      <span className="px-1 py-1 text-caption text-text2">+{skills.length - 4}</span>
+                    )}
                   </span>
                 )}
-              </span>
-            </Button>
-          ))}
+              </Button>
+            );
+          })}
         </div>
       </div>
 
       {/* 右：详情与派单。只有这里才有「提交任务」这一个执行出口 */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-3">
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto p-4">
         {!selected ? (
-          <div className="text-caption text-text2">{t('assistant.directory.subtitle')}</div>
+          <div className="rounded-xl border border-dashed border-border bg-surface p-4">
+            <div className="text-sm text-text">{t('assistant.directory.detailTitle')}</div>
+            <div className="mt-1 text-caption leading-relaxed text-text2">{t('assistant.directory.subtitle')}</div>
+          </div>
         ) : (
           <div className="space-y-3">
-            <div>
-              <div className="text-sm font-medium">{selected.title_cn || selected.name || selected.id}</div>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-text2">
+            <div className="rounded-xl border border-border bg-surface p-3">
+              <div className="text-sm font-medium text-text">{selected.title_cn || selected.name || selected.id}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-text2">
                 {selected.category && <span>{selected.category}</span>}
                 {selected.industry && <span>{selected.industry}</span>}
                 <span className={RUNTIME_TONE[rt]}>{t(RUNTIME_KEY[rt])}</span>
               </div>
             </div>
 
-            {selected.mission && (
-              <Field label={t('assistant.directory.missionLabel')} value={selected.mission} />
-            )}
-            {!!(selected.core_skills || []).length && (
-              <Field label={t('assistant.directory.skillsLabel')} value={(selected.core_skills || []).join(t('assistant.listSep'))} />
-            )}
-            {!!(selected.tools || []).length && (
-              <Field label={t('assistant.directory.toolsLabel')} value={(selected.tools || []).join(t('assistant.listSep'))} />
-            )}
-            <div className="grid grid-cols-3 gap-2 text-caption">
-              <Field label={t('assistant.directory.modelTierLabel')} value={selected.default_model_tier || t('assistant.directory.none')} />
-              <Field label={t('assistant.directory.approvalLabel')} value={selected.approval_policy || t('assistant.directory.none')} />
-              <Field label={t('assistant.directory.sandboxLabel')} value={selected.sandbox_policy || t('assistant.directory.none')} />
+            <div className="rounded-xl border border-border bg-surface p-3 space-y-3">
+              {selected.mission && (
+                <Field label={t('assistant.directory.missionLabel')} value={selected.mission} />
+              )}
+              {!!(selected.core_skills || []).length && (
+                <Field label={t('assistant.directory.skillsLabel')} value={(selected.core_skills || []).join(t('assistant.listSep'))} />
+              )}
+              {!!(selected.tools || []).length && (
+                <Field label={t('assistant.directory.toolsLabel')} value={(selected.tools || []).join(t('assistant.listSep'))} />
+              )}
+              <div className="grid grid-cols-3 gap-2">
+                <Field label={t('assistant.directory.modelTierLabel')} value={selected.default_model_tier || t('assistant.directory.none')} />
+                <Field label={t('assistant.directory.approvalLabel')} value={selected.approval_policy || t('assistant.directory.none')} />
+                <Field label={t('assistant.directory.sandboxLabel')} value={selected.sandbox_policy || t('assistant.directory.none')} />
+              </div>
             </div>
 
-            <div className="space-y-1 border-t border-border pt-3">
-              <div className="text-xs font-medium">{t('assistant.directory.dispatchTitle')}</div>
+            <div className="rounded-xl border border-border bg-surface p-3 space-y-2">
+              <div className="text-xs font-medium text-text">{t('assistant.directory.dispatchTitle')}</div>
               <textarea
                 value={goal}
                 onChange={(ev) => setGoal(ev.target.value)}
