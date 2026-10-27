@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:vite\" \"wait-on http://localhost:5173 && electron .\"",
     "dev:vite": "cd renderer && npm run dev",
-    "build": "npm run build --prefix renderer && electron-builder",
-    "dist:dir": "npm run build --prefix renderer && electron-builder --dir",
-    "dist:mac": "npm run build --prefix renderer && electron-builder --mac",
+    "build": "npm run build --prefix renderer && npm run bundle:ocr && electron-builder",
+    "dist:dir": "npm run build --prefix renderer && npm run bundle:ocr && electron-builder --dir",
+    "dist:mac": "npm run build --prefix renderer && npm run bundle:ocr && electron-builder --mac",
     "dist:win": "npm run build --prefix renderer && electron-builder --win",
     "dist:linux": "npm run build --prefix renderer && electron-builder --linux",
     "start": "electron .",
@@ -23,7 +23,8 @@
     "format": "prettier --write \"main/**/*.js\" \"agent-core/**/*.js\" \"renderer/src/**/*.{js,jsx}\"",
     "format:check": "prettier --check \"main/**/*.js\" \"agent-core/**/*.js\" \"renderer/src/**/*.{js,jsx}\"",
     "typecheck": "npm run typecheck --prefix renderer",
-    "setup:ocr": "node scripts/install-ocr.mjs"
+    "setup:ocr": "node scripts/install-ocr.mjs",
+    "bundle:ocr": "node scripts/bundle-ocr.mjs --force"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
@@ -63,6 +64,7 @@
       "!**/AUTHORS*",
       "!**/NOTICE*",
       "!**/{test,tests,__tests__,examples,example,benchmark,coverage}/**",
+      "!**/.playwright-mcp/**",
       "!**/node_modules/zod/src/**",
       "!**/node_modules/sql.js/dist/sql-asm*",
       "!**/node_modules/sql.js/dist/sql-wasm-debug*",
@@ -83,7 +85,13 @@
       "icon": "renderer/src/assets/logo.png",
       "artifactName": "MJCode-${version}-${os}-${arch}.${ext}",
       "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extraResources": [
+        {
+          "from": "build/ocr",
+          "to": "ocr"
+        }
+      ]
     },
     "win": {
       "target": "nsis",

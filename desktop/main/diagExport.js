@@ -22,7 +22,7 @@ const SENSITIVE_KEYS = new Set(['api_key', 'apikey', 'keyencrypted', 'api_key_en
 
 // P0-7 修复（2026-10-17）：非结构化文本统一正则密钥扫描。
 // 背景：诊断包此前的脱敏只作用于**结构化配置的字段名**（黑名单剔除），而 audit/traces/logs
-// 里带的是命令原文与上游响应体（如 `curl -H "Authorization: Bearer sk-live-..."`、
+// 里带的是命令原文与上游响应体（如 curl 请求的 Authorization 头后面直接跟着厂商 Key、
 // 模型 401 响应体回显 Key）——字段名脱敏对这类内容完全无效，用户把包发给别人即泄漏。
 // 该正则是兜住「内容里嵌密钥」的唯一切实手段，与白名单字段剔除形成双保险。
 const SECRET_SCAN_RE = /(sk-[A-Za-z0-9]{16,}|Bearer\s+\S+|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})/g;

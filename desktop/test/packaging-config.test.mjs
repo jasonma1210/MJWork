@@ -97,5 +97,80 @@ check('④ OCR 安装脚本存在且可从 npm scripts 调用（本地依赖要�
   assert.ok(fs.existsSync(path.join(DESKTOP, 'scripts', m[1])), `脚本文件不存在：scripts/${m[1]}`);
 });
 
+// ── ⑤⑥ 随包 OCR：三个位置必须是**同一个目录名**，且打包顺序不能颠倒 ──────────────
+//
+// 为什么这三方要一起断言：OCR 随包是三处独立写的字面量 ——
+//   生成方 scripts/bundle-ocr.mjs 写进 build/ocr；
+//   声明方 package.json 的 mac.extraResources 把 build/ocr 映射成 resources/<to>；
+//   使用方 main/ocrEngine.js 去 process.resourcesPath/<dir> 找可执行文件与 tessdata。
+// 任意一处改名，另外两处都不会报错：本地 dev 走 Homebrew 的 tesseract 一切正常，
+// 只有**打包后的 App**才显示「OCR 不可用」—— 又是「本地绿、发版炸」那一类。
+// 所以这里不变量测 package.json 自己，而是把 ocrEngine 源码里的实际查找目录读出来做交叉比对。
+check('⑤ 随包 OCR 三方目录一致（生成方 == 声明方 == 使用方）', () => {
+  const engine = fs.readFileSync(path.join(DESKTOP, 'main', 'ocrEngine.js'), 'utf8');
+  // 使用方：ocrEngine 里所有 process.resourcesPath/<dir> 探测
+  const lookupDirs = [...engine.matchAll(/path\.join\(process\.resourcesPath,\s*'([^']+)'/g)].map((m) => m[1]);
+  assert.ok(
+    new Set(lookupDirs).size >= 1,
+    `ocrEngine 里没解析出任何 resourcesPath 探测（命中 ${lookupDirs.length} 处）—— 这条断言已空转`,
+  );
+
+  // 声明方
+  const macRes = pkg.build?.mac?.extraResources || [];
+  const entry = macRes.find((e) => e && typeof e.to === 'string' && /ocr/i.test(String(e.to)));
+  assert.ok(entry, `mac.extraResources 未声明 OCR 随包目录（当前 ${JSON.stringify(macRes)}）`);
+  assert.ok(
+    lookupDirs.includes(entry.to),
+    `package.json 把 OCR 放到 resources/${entry.to}，而 ocrEngine 只查 resources/{${[...new Set(lookupDirs)].join(',')}} —— 打包版会显示 OCR 不可用`,
+  );
+
+  // 使用方还必须找 tessdata（只拷二进制不拷语言包 = 引擎能起来但识别报「找不到语言」）
+  assert.ok(
+    engine.includes(`path.join(process.resourcesPath, '${entry.to}', 'tessdata')`),
+    `ocrEngine 未在 resources/${entry.to}/tessdata 找语言包`,
+  );
+
+  // 生成方
+  const bundleSrc = fs.readFileSync(path.join(DESKTOP, 'scripts', 'bundle-ocr.mjs'), 'utf8');
+  const m = bundleSrc.match(/path\.join\(DESKTOP,\s*'([^']+)',\s*'([^']+)'\)/);
+  assert.ok(m, 'bundle-ocr.mjs 里找不到产物目录定义（DESKTOP/build/ocr）');
+  const produced = path.posix.join(m[1], m[2]);
+  assert.equal(
+    path.posix.normalize(String(entry.from)).replace(/\/$/, ''),
+    produced,
+    `extraResources.from=${entry.from} 与 bundle-ocr 的产物目录 ${produced} 不一致（打包会缺整个 OCR 目录）`,
+  );
+});
+
+check('⑤ 反向自检：改名后这条断言确实会红（否则它只是在读两个自己写的常量）', () => {
+  const engine = fs.readFileSync(path.join(DESKTOP, 'main', 'ocrEngine.js'), 'utf8');
+  const dirs = [...engine.matchAll(/path\.join\(process\.resourcesPath,\s*'([^']+)'/g)].map((m) => m[1]);
+  const bogus = 'ocr-renamed';
+  assert.ok(!dirs.includes(bogus), '反例目录名居然真的被 ocrEngine 使用，换一个反例');
+  const macRes = pkg.build?.mac?.extraResources || [];
+  assert.ok(
+    !macRes.some((e) => e && e.to === bogus),
+    '把 resources 目录改成反例名竟然也通过 —— 说明断言没在比对这个值',
+  );
+});
+
+check('⑥ 打包脚本必须先 bundle:ocr 再 electron-builder（顺序颠倒 = 打进空目录）', () => {
+  for (const key of ['build', 'dist:dir', 'dist:mac']) {
+    const cmd = String(pkg.scripts?.[key] || '');
+    const iBundle = cmd.indexOf('bundle:ocr');
+    const iBuilder = cmd.indexOf('electron-builder');
+    assert.ok(iBundle >= 0, `${key} 未调用 bundle:ocr（OCR 不会被重建，冷机器上 extraResources 源目录不存在）`);
+    assert.ok(iBundle < iBuilder, `${key} 里 bundle:ocr 必须在 electron-builder 之前：${cmd}`);
+  }
+  const bundleScript = String(pkg.scripts?.['bundle:ocr'] || '');
+  assert.ok(/scripts\/bundle-ocr\.mjs/.test(bundleScript), `bundle:ocr 未指向 scripts/bundle-ocr.mjs：${bundleScript}`);
+  assert.ok(fs.existsSync(path.join(DESKTOP, 'scripts', 'bundle-ocr.mjs')), 'scripts/bundle-ocr.mjs 不存在');
+  // 只有 mac 需要它：写到 mac.extraResources，其他平台 target 不该被这条字符串污染
+  assert.ok(
+    !(pkg.build?.extraResources || []).some((e) => e && /ocr/.test(String(e.to))),
+    'OCR 应只挂在 mac.extraResources（dylib 改写是 Darwin 专有），不要写进跨平台 extraResources',
+  );
+});
+
 console.log(`\npackaging-config: ${pass}/${pass + fail} 通过`);
 if (fail > 0) process.exitCode = 1;

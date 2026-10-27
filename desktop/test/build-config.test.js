@@ -62,7 +62,20 @@ check('publish.owner/repo 指向真实仓库 jasonma1210/MJCoder',
   `${pkg.build?.publish?.owner}/${pkg.build?.publish?.repo}`);
 
 // ── 5. 打包链本身未被顺手改坏 ──
-check('build 脚本 = renderer 构建 + electron-builder', /build --prefix renderer && electron-builder/.test(pkg.scripts.build || ''));
+// 2026-10-27：链上多了「随包 OCR」一步。断言因此改成**顺序敏感**的三段定位：
+// 只断言「脚本里有 electron-builder」会同时放过两类回归 —— renderer 构建被删（打出白屏包）、
+// bundle:ocr 排到 builder 之后（extraResources 源目录还不存在，打出没有 OCR 的包）。
+const buildChain = (() => {
+  const cmd = String(pkg.scripts?.build || '');
+  const iRenderer = cmd.indexOf('build --prefix renderer');
+  const iOcr = cmd.indexOf('bundle:ocr');
+  const iBuilder = cmd.indexOf('electron-builder');
+  return {
+    ok: iRenderer >= 0 && iOcr >= 0 && iBuilder >= 0 && iRenderer < iOcr && iOcr < iBuilder,
+    cmd,
+  };
+})();
+check('build 脚本 = renderer 构建 → OCR 随包 → electron-builder（顺序敏感）', buildChain.ok, buildChain.cmd);
 // P0-3：macOS 自动更新产物——electron-updater 在 macOS 只消费 zip；dmg 供手动分发。
 // 二者必须同时存在，缺 zip 则更新检查恒 not found（曾因此结构性不可用）。
 check('macOS 产物含 dmg（分发）+ zip（自动更新消费）',
