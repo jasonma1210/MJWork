@@ -1,36 +1,31 @@
-// 工作台（desk）·「一个人的软件公司」的开工前一屏
+// 工作台（desk）· 用量与任务一屏
 //
-// 为什么需要这一屏：现有能力分散在 4 处（WelcomePage 空态 / Composer 控制台 /
-// Dashboard 统计 / ArtifactPanel 侧栏），用户在「开工前」没有一处能一次看清
-// 「今天要决定什么、正在跑什么、最近交了什么、额度还剩多少」。原型 desk 路由就是这一屏。
+// 2026-10-27 重做（用户原话：「工作台实际上展现的就是我用的模型的消耗量、数据展示、
+// 目前主要的那些任务、每个任务消耗的 token 量……没有必要给出一堆其他无关的东西」）：
+//   · 主体改成**用量看板**：总量 / 模型分布 / 近 7 天 / 任务消耗 / 会话消耗；
+//   · 原「最近交付」「待你决定」「最近运行」三张卡下线（前两张与本页主题无关，
+//     第三张的数据源本来就不存在，恒显示「尚未接线」——留着就是编一块内容）；
+//   · 「账本」不再是独立页面：明细与 CSV 导出原样搬到本页底部的「用量流水」折叠区
+//     （直接复用 LedgerPage，不复制一份逻辑）。
+//
+// 取数纪律（见 lib/usageAggregate 与 desk/useDeskUsage）：
+//   总量取不到 ⇒ 整页 error + 重试；任务/账本维度取不到 ⇒ 该区块显式「未记录」，
+//   绝不填 0 冒充。空态一律说明"为什么空"，不画 0 值卡片。
 //
 // 圆角映射（原型体系比本仓小一档，**禁止逐值替换**）：
 //   r-1 8px → rounded-lg（10px）· r-2 10px → rounded-lg · r-3 14px → rounded-xl · r-pill → rounded-full
-//
-// 取数纪律（全部裸调 window.mjcode.*：lib/api.js 对这三个通道**没有**封装，写 api.xxx 会是 undefined）：
-//   进行中   ← tasksList({ limit: 30 })          按 thread_id / cwd 归属过滤，只取 running
-//   最近交付 ← artifactsForProject({ threadId })  NO_PROJECT / NOT_FOUND 分开处理（见该卡头注）
-//   用量     ← projectsQuota({ threadId })        判空看 **quota === null**，不是 ok ——
-//              「两参皆空」返回 {ok:false, quota:null}，「未绑定项目」返回 {ok:true, quota:null}，
-//              两条都是 null、只有一条 ok 为 false，用 ok 判空会把正常会话误报成错误。
-//   最近运行 ← **无数据源**，恒显示静态「尚未接线」，不造一行假数据。
-// 三者都**只在挂载时取一次**，不订阅事件：desk 是「开工前的一屏」，不是监控面。
-//
-// 空态纪律：quota 为 null / 运行组为 0 / 待决定为 0 ⇒ **整卡或整行卸载**，
-// 不留骨架屏、不留「0 件」。
-//
-// 项目 id 口径（最容易踩的静默缺陷）：本页**不接收也不使用** activeProject.id ——
-// 它是磁盘路径（App.jsx 里 `id: p.path`），而 projects:quota / artifacts:forProject
-// 要的是 prj_<时间戳>_<hex>。传错类型不报错、静默返回 null。故本页只按 threadId 定位。
 import { useEffect, useState } from 'react';
 import DeskIntake, { type DeskPolicyEcho } from './desk/DeskIntake';
 import {
   deskModelOptions, deskModelKey, findDeskModel,
   type DeskProvider, type DeskModel, type DeskSelectedModel,
 } from '../lib/deskModels';
-import DeskRunsCard from './desk/DeskRunsCard';
-import DeskDeliveriesCard from './desk/DeskDeliveriesCard';
-import DeskDecisionsCard from './desk/DeskDecisionsCard';
+import DeskUsageBoard from './desk/DeskUsageBoard';
+import { DeskTaskTable, DeskThreadTable } from './desk/DeskUsageTables';
+import { useDeskUsage } from './desk/useDeskUsage';
+import LedgerPage from './LedgerPage';
+import Button from './ui/Button';
+import InlineAlert from './InlineAlert';
 import { useI18n } from '../i18n';
 import { loadJSON } from '../lib/appState';
 import { APPROVAL_MODES, SANDBOX_MODES } from '../constants/approval';
@@ -59,55 +54,28 @@ interface DeskThreadRow {
 export interface DeskPageProps {
   /** 会话列表（待决定计数与列表的唯一来源；本页只读，不调 IPC） */
   threads: DeskThreadRow[];
-  /**
-   * 当前会话 id —— **可空**。无会话时的实际行为（此前注释写成「三卡全部卸载」，
-   * 但交付卡是带引导文案的，属过度声明，已按真实行为订正）：
-   *   · 进行中   ⇒ 整卡卸载（「开工前一屏」的进行中只回答「我这个会话在跑什么」）
-   *   · 用量     ⇒ 整卡卸载（projectsQuota 返回 quota:null）
-   *   · 待你决定 ⇒ 整卡卸载（计数为 0）
-   *   · 最近交付 ⇒ **保留卡片 + 显示『未绑定项目』引导**：它有数据源，只是当前定位不到项目，
-   *                沉默会让人以为功能坏了
-   */
+  /** 当前会话 id —— 可空。只影响「项目水位」卡是否出现（quota 为 null 时整卡卸载）。 */
   threadId: string | null;
-  /** 当前项目目录：只作 tasksList 历史组的 cwd 归属兜底，**禁止**当 projectId 用 */
+  /** 当前项目目录。本页不再用它做归属判断（任务表直接读 tasks:list），保留以不破坏 App 契约 */
   projectPath: string;
   /** 派单：与 AssistantPage.onAutoRun 同构，只把目标交回主链路 */
   onAutoRun: (goal: string) => void;
-  /** 打开文件到右栏预览。当前 artifacts 投影不返回文件路径（只有 artifactId/title/kind），
-      故本页暂无落点、未消费；保留在契约里以便工件落盘带 path 后直接接上。 */
+  /** 打开文件到右栏预览。本页暂无落点（工件卡已下线），保留以不破坏 App 契约 */
   onOpenFile: (path: string) => void;
-  /** 追加（非 §4.2 原契约）：档位 chip → 设置页。缺省时 chip 只回显不可点 */
+  /** 档位 chip → 设置页。缺省时 chip 只回显不可点 */
   onOpenSettings?: () => void;
-  /** 追加：跳到某个会话（待决定行 / 进行中「查看对话」），由 App 传 selectThread */
+  /** 保留以不破坏 App 契约（原「待你决定」卡跳会话；该卡已下线） */
   onOpenThread?: (threadId: string) => void;
-  /** 追加：打开右栏工件面板（交付行 / 「全部工件」） */
+  /** 保留以不破坏 App 契约（原「最近交付」卡跳工件面板；该卡已下线） */
   onOpenArtifacts?: () => void;
-  /** 追加：模型 providers 树（App 的 allProviders）。摊平与还原都在 lib/deskModels.ts 里做，
-      不把转换逻辑写进 App.jsx —— 那里已贴行数水位线（772/780）。 */
+  /** 模型 providers 树（App 的 allProviders）。摊平与还原在 lib/deskModels.ts 里做。 */
   providers?: readonly DeskProvider[];
-  /** 追加：当前选中模型（App 的 selectedModel，形状是 { provider, model }） */
+  /** 当前选中模型（App 的 selectedModel，形状是 { provider, model }） */
   selectedModel?: DeskSelectedModel | null;
-  /** 追加：切换模型（App 的 chooseModel，收 { provider, model } 而不是 id 字符串） */
+  /** 切换模型（App 的 chooseModel，收 { provider, model } 而不是 id 字符串） */
   onPickModel?: (m: { provider: DeskProvider; model: DeskModel }) => void;
-  /** 追加：新建会话（接单区 + 号，同侧栏「新建任务」——退出 desk 回到新会话） */
+  /** 新建会话（接单区 + 号，同侧栏「新建会话」） */
   onNewThread?: () => void;
-}
-
-/** token 数字格式化：与 Dashboard 同口径（≥1e6 → M，≥1e3 → K） */
-function fmt(n?: number): string {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return '0';
-  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
-  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
-  return String(v);
-}
-
-/** 时段问候（用真实时间，不写死「早上好」—— 原型是静态稿） */
-function greetingKey(hour: number): string {
-  if (hour >= 5 && hour < 12) return 'desk.hero.greetingMorning';
-  if (hour >= 12 && hour < 18) return 'desk.hero.greetingAfternoon';
-  if (hour >= 18 && hour < 23) return 'desk.hero.greetingEvening';
-  return 'desk.hero.greetingLate';
 }
 
 interface QuotaRow {
@@ -118,7 +86,15 @@ interface QuotaRow {
   totalLimit?: number;
 }
 
-/** 用量卡（仅本页使用，故不单独成文件）：quota 为 null 时整卡卸载 */
+function fmt(n?: number): string {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '0';
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
+  return String(v);
+}
+
+/** 项目配额水位：quota 为 null（未绑定项目/无额度）时整卡卸载 */
 function UsageCard({ threadId }: { threadId: string | null }) {
   const { t } = useI18n();
   const [quota, setQuota] = useState<QuotaRow | null>(null);
@@ -152,11 +128,9 @@ function UsageCard({ threadId }: { threadId: string | null }) {
         </div>
         <div className="flex justify-between gap-3">
           <dt>{t('desk.usage.limitRow', { totalLimit: fmt(quota.totalLimit) })}</dt>
-          <dd className="shrink-0">{t('desk.usage.utilRow', { util: utilPct })}</dd>
         </div>
       </dl>
-      <p className="mt-2 text-caption leading-relaxed text-text2">{t('desk.usage.scopeNote')}</p>
-      {typeof quota.util === 'number' && quota.util >= 0 ? (
+      {Number(quota.util) > 0 ? (
         <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-hover" role="img" aria-label={t('desk.usage.utilRow', { util: utilPct })}>
           <div className="h-full rounded-full bg-accent" style={{ width: utilPct }} />
         </div>
@@ -166,55 +140,105 @@ function UsageCard({ threadId }: { threadId: string | null }) {
 }
 
 export default function DeskPage({
-  threads, threadId, projectPath, onAutoRun, onOpenSettings, onOpenThread, onOpenArtifacts,
-  providers, selectedModel, onPickModel, onNewThread,
+  threads, threadId, onAutoRun, onOpenSettings, providers, selectedModel, onPickModel, onNewThread,
 }: DeskPageProps) {
   const { t, locale } = useI18n();
-  // 档位只读回显的真实值（只在挂载时读一次）
   const [approval] = useState(readApproval);
+  const [exporting, setExporting] = useState(false);
+  const [exportMsg, setExportMsg] = useState('');
+  const [flowOpen, setFlowOpen] = useState(false);
   const now = new Date();
   const dateText = now.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
   const decideCount = threads.filter((x) => x.status === 'awaiting_approval').length;
+  const usage = useDeskUsage();
+
+  /** 导出全部流水：路径由主进程的保存对话框给出，渲染层不传路径（§7.3） */
+  function exportCsv() {
+    const mj = window.mjcode as unknown as {
+      ledgerExport?: (o: unknown) => Promise<{ ok?: boolean; rows?: number; filePath?: string; error?: string } | undefined>;
+    } | undefined;
+    if (!mj?.ledgerExport) return;
+    setExporting(true);
+    setExportMsg('');
+    mj.ledgerExport({ filters: { from: null, to: null } })
+      .then((r) => {
+        if (r?.ok) setExportMsg(t('ledger.exportDone', { n: r.rows || 0, path: r.filePath || '' }));
+        else setExportMsg(t('ledger.exportFailed', { msg: r?.error || t('desk.stats.exportFailed') }));
+      })
+      .catch((e) => setExportMsg(t('ledger.exportFailed', { msg: String((e as Error)?.message || e) })))
+      .finally(() => setExporting(false));
+  }
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="mx-auto w-full max-w-[var(--view-max)] px-6 pt-6 pb-8">
-          <header className="pb-5">
-            <p className="text-caption tracking-wide text-text2">{t('desk.hero.today', { date: dateText })}</p>
-            <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
-              <h2 className="font-serif text-[clamp(26px,3vw,34px)] font-semibold leading-snug text-text">
-                {t(greetingKey(now.getHours()))}
-              </h2>
-              {decideCount > 0 ? (
-                <p className="text-xs text-text2">{t('desk.hero.decideLine', { n: decideCount })}</p>
-              ) : (
-                <p className="text-xs text-text2">{t('desk.hero.allClear')}</p>
-              )}
+          <header className="pb-4">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-lg font-semibold leading-snug text-text">{t('desk.hero.title')}</h2>
+                <p className="mt-1 text-caption text-text2">
+                  {t('desk.hero.today', { date: dateText })}
+                  {decideCount > 0 ? ` · ${t('desk.hero.decideLine', { n: decideCount })}` : ''}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button size="xs" variant="secondary" onClick={usage.reload}>{t('desk.stats.refresh')}</Button>
+                <Button size="xs" variant="secondary" disabled={exporting} onClick={exportCsv}>
+                  {exporting ? t('ledger.exporting') : t('desk.stats.export')}
+                </Button>
+              </div>
             </div>
+            {exportMsg ? <p className="mt-2 text-caption text-text2">{exportMsg}</p> : null}
           </header>
 
-          <DeskIntake
-            policies={policiesOf(t, approval)}
-            onPolicyClick={onOpenSettings}
-            onDispatch={onAutoRun}
-            models={deskModelOptions(providers)}
-            currentModel={deskModelKey(selectedModel)}
-            onPickModel={(id) => { const hit = findDeskModel(providers, id); if (hit) onPickModel?.(hit); }}
-            onNewThread={onNewThread}
-          />
-
-          <div className="mt-4 grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="flex min-w-0 flex-col gap-4">
-              <DeskRunsCard variant="running" threadId={threadId} projectPath={projectPath} onOpenThread={onOpenThread} />
-              <DeskDeliveriesCard threadId={threadId} onOpenArtifacts={onOpenArtifacts} />
+          {usage.status === 'error' ? (
+            <div className="flex flex-col gap-2">
+              <InlineAlert type="error" onDismiss={() => usage.reload()}>{t('desk.stats.loadFailed')}</InlineAlert>
+              <div><Button size="xs" variant="secondary" onClick={() => usage.reload()}>{t('desk.stats.retry')}</Button></div>
             </div>
-            <aside className="flex min-w-0 flex-col gap-4">
-              <DeskDecisionsCard threads={threads} onOpenThread={onOpenThread} />
+          ) : null}
+
+          {usage.status === 'loading' ? (
+            <p className="text-caption text-text2" role="status">{t('desk.stats.loading')}</p>
+          ) : null}
+
+          {usage.status === 'ready' ? (
+            <div className="flex flex-col gap-4">
+              <DeskUsageBoard totals={usage.totals} byModel={usage.byModel} byDay={usage.byDay} />
+
+              <DeskIntake
+                policies={policiesOf(t, approval)}
+                onPolicyClick={onOpenSettings}
+                onDispatch={onAutoRun}
+                models={deskModelOptions(providers)}
+                currentModel={deskModelKey(selectedModel)}
+                onPickModel={(id) => { const hit = findDeskModel(providers, id); if (hit) onPickModel?.(hit); }}
+                onNewThread={onNewThread}
+              />
+
+              <DeskTaskTable rows={usage.tasks} hint={usage.taskHint} />
+              <DeskThreadTable rows={usage.byThread} />
               <UsageCard threadId={threadId} />
-              <DeskRunsCard variant="recent" />
-            </aside>
-          </div>
+
+              {/* 用量流水（原独立「账本」页）：默认折叠，展开即为完整明细 + 导出。
+                  只在展开后才挂载 LedgerPage —— 它一挂载就会发 ledger:query，
+                  折叠状态下白跑一次 IPC 没有意义。 */}
+              <details
+                className="rounded-xl border border-border bg-surface"
+                onToggle={(e) => setFlowOpen((e.currentTarget as HTMLDetailsElement).open)}
+              >
+                <summary className="cursor-pointer select-none px-5 py-3 text-sm font-medium text-text">
+                  {t('desk.stats.flow')}
+                </summary>
+                {flowOpen ? (
+                  <div className="h-[420px] min-h-0 overflow-hidden border-t border-border">
+                    <LedgerPage projectId={null} />
+                  </div>
+                ) : null}
+              </details>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -222,10 +246,7 @@ export default function DeskPage({
 }
 
 /** 档位只读回显：值来自**已持久化的真实设置**（App 每次改动都会写回 mj_approval_settings），
- *  不是写死的默认值 —— 写死默认值等于在界面上编一个用户并没有选的档位。
- *  为什么不走 props：§4.2 锁定的 props 契约里没有 approvalSettings，为一段只读回显加一个
- *  需要 App 同步维护的 prop 不划算；localStorage 里那份就是 App 写进去的同一份数据。
- *  只在挂载时读一次（desk 每次打开都会重挂载），不订阅变更。 */
+ *  不是写死的默认值 —— 写死默认值等于在界面上编一个用户并没有选的档位。 */
 function readApproval(): Record<string, string> {
   const fallback = { sandbox_policy: 'workspace-write', approval_mode: 'on-request', response_style: 'default' };
   try {

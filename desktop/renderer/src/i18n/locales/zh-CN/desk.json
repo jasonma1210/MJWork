@@ -6,7 +6,8 @@
     "greetingLate": "还没休息？",
     "today": "{date}",
     "decideLine": "今天有 {n} 个会话等你决定",
-    "allClear": "今天没有等你决定的事"
+    "allClear": "今天没有等你决定的事",
+    "title": "工作台"
   },
   "intake": {
     "label": "接一单",
@@ -24,10 +25,22 @@
     "newThread": "新建会话"
   },
   "scenario": {
-    "office": { "name": "文档协作", "desc": "整理你已有的材料，默认不改原文件" },
-    "dev": { "name": "软件开发", "desc": "改在隔离副本里，可回滚、可验证" },
-    "write": { "name": "内容创作", "desc": "从零起草，先大纲后正文" },
-    "research": { "name": "数据调研", "desc": "查清楚再决定，结论必须带出处" }
+    "office": {
+      "name": "文档协作",
+      "desc": "整理你已有的材料，默认不改原文件"
+    },
+    "dev": {
+      "name": "软件开发",
+      "desc": "改在隔离副本里，可回滚、可验证"
+    },
+    "write": {
+      "name": "内容创作",
+      "desc": "从零起草，先大纲后正文"
+    },
+    "research": {
+      "name": "数据调研",
+      "desc": "查清楚再决定，结论必须带出处"
+    }
   },
   "goal": {
     "office": "把 {source} 整理成 {output}，给 {audience} 用。\n要求：保留原文里的事实与数字，不确定的地方显式标成「待确认」；篇幅 {length}；交付时间 {deadline}。\n不要改动 {source} 里的原始文件，产出另写一份。",
@@ -83,5 +96,44 @@
     "stateThrottle": "已限流",
     "stateSuspended": "额度用尽",
     "scopeNote": "本地优先运行，金额在服务商侧结算，这里只统计用量"
+  },
+  "stats": {
+    "title": "用量总览",
+    "subtitle": "累计 {total} tokens · {requests} 次请求",
+    "allTime": "累计",
+    "today": "今日",
+    "last7": "近 7 天",
+    "input": "输入",
+    "output": "输出",
+    "unit": "tokens",
+    "note": "只统计本机消息记录里的真实 token 用量；本机没有任何价格数据，因此不折算成金额。",
+    "models": "模型消耗",
+    "modelUnknown": "未记录模型",
+    "modelRow": "{tokens} · {requests} 次 · {share}%",
+    "daily": "近 7 天消耗",
+    "dailyCaption": "近 7 天每日 token 消耗",
+    "tasks": "任务消耗",
+    "taskNoTasks": "本机还没有任务组。团队编排跑起来后，这里会按任务显示真实 token 消耗。",
+    "taskNoLedger": "任务已记录，但还没有对应的配额流水（团队运行结束后才会有）",
+    "threads": "会话消耗",
+    "threadsHint": "按会话聚合，含该会话全部模型调用",
+    "colTask": "任务",
+    "colStatus": "状态",
+    "colProgress": "子任务",
+    "colRounds": "轮次",
+    "colTokens": "tokens",
+    "colThread": "会话",
+    "colModel": "模型",
+    "colRequests": "请求",
+    "notRecorded": "未记录",
+    "refresh": "刷新",
+    "export": "导出明细 CSV",
+    "exportFailed": "导出失败",
+    "loading": "正在读取用量…",
+    "loadFailed": "用量数据读取失败",
+    "retry": "重试",
+    "flow": "用量流水（逐条明细与导出）",
+    "empty": "还没有可统计的 token 消耗",
+    "emptyHint": "发起一次对话后，这里会按模型与任务显示真实消耗。数据只来自本机消息记录，不上传。"
   }
 }

@@ -14,7 +14,7 @@
   "noRecentMessages": "近 7 天暂无消息",
   "weeklyThreads": "近 8 周新增对话",
   "weeklyTitle": "{week}：{count} 个对话",
-  "localScopeNote": "本地统计仅覆盖会话数、消息数与 token 用量。模型分布与活跃趋势需要服务端数据，本地模式下不计算，因此对应卡片显示为空，而非表示没有活动。",
+  "localScopeNote": "本页只统计本地消息记录里的对话数、消息数与 token 合计。按模型、按任务、按会话的完整消耗在「工作台」。",
   "ledgerTitle": "用量账本（按成员）",
   "ledgerUnassigned": "未归属成员",
   "ledgerNote": "统计的是 token 消耗，不是金额——本地没有任何价格数据，不能折算成钱。"

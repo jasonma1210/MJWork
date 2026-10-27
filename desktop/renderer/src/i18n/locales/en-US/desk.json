@@ -6,7 +6,8 @@
     "greetingLate": "Still up?",
     "today": "{date}",
     "decideLine": "{n} conversations waiting on you today",
-    "allClear": "Nothing waiting on you today"
+    "allClear": "Nothing waiting on you today",
+    "title": "Workbench"
   },
   "intake": {
     "label": "New order",
@@ -24,10 +25,22 @@
     "newThread": "New conversation"
   },
   "scenario": {
-    "office": { "name": "Document Desk", "desc": "Organize materials you already have; originals untouched" },
-    "dev": { "name": "Software Delivery", "desc": "Work in an isolated copy: rollback-ready, verifiable" },
-    "write": { "name": "Content Studio", "desc": "Draft from scratch: outline first, body after" },
-    "research": { "name": "Research", "desc": "Nail the facts first; every claim sourced" }
+    "office": {
+      "name": "Document Desk",
+      "desc": "Organize materials you already have; originals untouched"
+    },
+    "dev": {
+      "name": "Software Delivery",
+      "desc": "Work in an isolated copy: rollback-ready, verifiable"
+    },
+    "write": {
+      "name": "Content Studio",
+      "desc": "Draft from scratch: outline first, body after"
+    },
+    "research": {
+      "name": "Research",
+      "desc": "Nail the facts first; every claim sourced"
+    }
   },
   "goal": {
     "office": "Turn {source} into {output} for {audience}.\nKeep every fact and number from the original; mark anything uncertain as TBC; length: {length}; due: {deadline}.\nDo not modify the original files under {source} — write the result to a new file.",
@@ -83,5 +96,44 @@
     "stateThrottle": "Throttled",
     "stateSuspended": "Suspended",
     "scopeNote": "Runs on your machine and bills at your provider, so this tracks usage, not spend"
+  },
+  "stats": {
+    "title": "Usage overview",
+    "subtitle": "{total} tokens total · {requests} requests",
+    "allTime": "All time",
+    "today": "Today",
+    "last7": "Last 7 days",
+    "input": "Input",
+    "output": "Output",
+    "unit": "tokens",
+    "note": "Counts real token usage from local message records only. No pricing data exists on this machine, so nothing is converted into money.",
+    "models": "Usage by model",
+    "modelUnknown": "Model not recorded",
+    "modelRow": "{tokens} · {requests} req · {share}%",
+    "daily": "Last 7 days",
+    "dailyCaption": "Daily token usage for the last 7 days",
+    "tasks": "Usage by task",
+    "taskNoTasks": "No task groups yet. Once a team run happens, real token usage per task shows up here.",
+    "taskNoLedger": "Tasks exist but there is no quota ledger yet (it is written after a team run finishes)",
+    "threads": "Usage by conversation",
+    "threadsHint": "Aggregated per conversation, including every model call in it",
+    "colTask": "Task",
+    "colStatus": "Status",
+    "colProgress": "Subtasks",
+    "colRounds": "Rounds",
+    "colTokens": "tokens",
+    "colThread": "Conversation",
+    "colModel": "Model",
+    "colRequests": "Requests",
+    "notRecorded": "Not recorded",
+    "refresh": "Refresh",
+    "export": "Export CSV",
+    "exportFailed": "Export failed",
+    "loading": "Reading usage…",
+    "loadFailed": "Failed to read usage data",
+    "retry": "Retry",
+    "flow": "Usage ledger (row-by-row detail and export)",
+    "empty": "No token usage recorded yet",
+    "emptyHint": "Start a conversation and real usage will appear here by model and by task. Data comes from local message records only and is never uploaded."
   }
 }

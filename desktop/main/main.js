@@ -1775,8 +1775,9 @@ initProjectsIpc({
   getLocalStore: () => localStore,
   audit,
 });
-// DS Bots / T6-10：工件只读域装配（与 projects 同源 getter，不引入新存储实例）
-registerDomainIpc({ artifactStore, projectStore, teamStore, taskStore, taskDb, audit, mainWindow, getFlags: () => featureFlags });
+// DS Bots / T6-10：只读域装配。**必须传 getter**：本函数在顶层执行，此刻存储全为 null（等 setupTaskOrchestration
+// 异步跑完才赋值），传裸变量会把 null 快照进被调方闭包 ⇒ 账本恒 UNAVAILABLE、工件/Studio/知识库同样拿不到数据。
+registerDomainIpc({ getArtifactStore: () => artifactStore, getProjectStore: () => projectStore, getTeamStore: () => teamStore, getTaskStore: () => taskStore, getTaskDb: () => taskDb, audit, getMainWindow: () => mainWindow, getFlags: () => featureFlags });
 initTeamsIpc({
   getTeamStore: () => teamStore,
   // M5 / T5-6：对话内团队事件流按 thread_id 反查 run（task_groups 是「run 属于哪个会话」的
