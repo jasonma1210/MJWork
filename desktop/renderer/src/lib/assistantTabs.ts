@@ -6,20 +6,20 @@
 //   放在组件文件里会让另外两处反向 import 组件（React 依赖 ⇒ Node 侧测试加载不了），
 //   放这里则三处共用同一份清单（单一事实来源）。
 //
-// Tab 语义（2026-10-24 二次调整：定时任务回到一级入口，见下）：
-//   directory —— **助手目录（默认，2026-10-27 新增）**：真实数字员工目录。先「选谁干」，
-//                看清它能做什么、缺什么配置，再进入派单。默认页不是 publish 的原因：
-//                目录是「发现」入口，一进来就是空白表单会让用户不知道有哪些助手可选
-//                （设计文档 §5.2）。
-//   publish   —— 发布任务：唯一发起面。一句话 + 选军团（不选=自动构建）
-//   aiTeam    —— AI 建团（草案卡片逐条采纳/编辑/否决）
-//   （原 teams 军团编制已于 2026-10-27 迁入工作室 Studio，见下方第四版说明）
+// Tab 语义（2026-10-27 第六版：**派活面板 + 两个资源面**，见
+// docs/MJ Nexus-助手界面派活收敛方案-2026-10-27.md）：
+//   dispatch  —— **派活（默认）**：主体（助手/团队/系统）× 运行方式（立即/定时）× 目标 ×
+//                本会话看板。唯一发起面，全文件只有一个 submit() 出口。
+//   directory —— 助手目录：**资源面**，只负责「发现 + 选用」，选中后回填到 dispatch。
+//   aiTeam    —— AI 建团：**资源面**，只产出编制，落库后回填团队到 dispatch。
+//   （原 publish 发布任务已于 2026-10-27 删除：它只能选团队或交给系统，从头到尾没有
+//    助手主体 —— 名字承诺「发起一切任务」，能力只覆盖三分之一，留着就是第四条派活路径。
+//     原 teams 军团编制已于同日迁入工作室 Studio。）
 //
 // 为什么删掉 scheduled / complex 两个 Tab：
 //   · scheduled —— 用户明确要求「一级菜单下面还是要有定时任务」⇒ 它升回**一级入口**，
 //     不再藏在助理里（一个能力不该同时有两个并列入口，否则「在哪管理」会有两个答案）；
-//   · complex   —— 它就是「发布任务」的类型之一（复杂任务），独立成 Tab 会与 publish
-//     抢同一个职责，且用户在两个地方都能派活时，「默认走哪条」变得不可解释。
+//   · complex   —— 它就是「派活」的一种目标描述，独立成 Tab 会与 dispatch 抢同一个职责。
 export type AssistantTab = 'directory' | 'dispatch' | 'aiTeam';
 
 export interface AssistantTabDef {
@@ -28,16 +28,16 @@ export interface AssistantTabDef {
   labelKey: string;
 }
 
-// 2026-10-27 第五版：**默认页改为助手目录**。
-//   助理的主任务按设计文档 §0.2 收敛为「选助手与派活」——先有目录（发现），再有派单。
-//   目录数据源是真实的 `ecosystem:employees`（51 条数字员工），不是插件市场复制品。
+// 2026-10-27 第六版：**默认页改为派活面板**（原第五版曾把默认页设成助手目录）。
+//   改回派活的原因：用户是带着「我要让谁干什么」这一个意图进来的，一进来先看目录
+//   等于强制多一次跳转；目录与建团降级为资源面，选完自动回填并切回派活。
 export const ASSISTANT_TABS: readonly AssistantTabDef[] = [
   { id: 'dispatch', labelKey: 'assistant.tabDispatch' },
   { id: 'directory', labelKey: 'assistant.tabDirectory' },
   { id: 'aiTeam', labelKey: 'assistant.tabAiTeam' },
 ];
 
-/** 助理页的默认 Tab：**助手目录**（进入助理先看到有哪些助手可派，而不是空白表单） */
+/** 助理页的默认 Tab：**派活面板**（唯一发起面；资源面选完会回填到这里） */
 export const DEFAULT_ASSISTANT_TAB: AssistantTab = 'dispatch';
 
 /** Tab id 合法性判定（外部输入不可信时用，避免把非法 id 塞进视图状态） */

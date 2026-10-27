@@ -34,8 +34,14 @@
 export type NavKey =
   | 'desk' | 'studio' | 'assistant' | 'scheduled' | 'ledger' | 'ecosystem' | '' | 'teams';
 
-/** 助理工作台的子 Tab（见 lib/assistantTabs.ts；此处只做类型引用，避免循环依赖） */
-export type NavAssistantTab = 'publish' | 'teams' | 'aiTeam';
+// 助理子 Tab 的类型**必须转发自 assistantTabs.ts**，不能在这里再写一遍字面量。
+// 2026-10-27 实测：此处曾写死 `'publish' | 'teams' | 'aiTeam'`，而真实 Tab 集早已是
+// `dispatch / directory / aiTeam` —— 两处字面量各自演化，TS 不会报错（它俩本来就是两个类型），
+// 于是导航层可以合法地塞进一个渲染层根本不存在的 'publish'。类型漂移比逻辑 bug 更隐蔽。
+import type { AssistantTab } from './assistantTabs.ts';
+
+/** 助理工作台的子 Tab（单一事实来源见 lib/assistantTabs.ts） */
+export type NavAssistantTab = AssistantTab;
 
 export interface NavViewState {
   /** 助理工作台是否在前台（一级入口「助理」） */

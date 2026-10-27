@@ -448,5 +448,30 @@ await check('E3 资源面不得再长出执行调用（防「三处各自发布�
   }
 });
 
+await check('E4 导航层的子 Tab 类型必须转发自 assistantTabs（不得自写字面量）', () => {
+  // 2026-10-27 实测漂移：navState.ts 曾写死 `'publish' | 'teams' | 'aiTeam'`，而真实 Tab 集
+  // 早已是 `dispatch / directory / aiTeam`。两个独立的字面量联合类型各自演化时 **TS 不会报错**
+  // （它们本来就是两个类型），于是导航层可以合法地塞进渲染层根本不存在的 'publish' ——
+  // 用户看到的是"点了没反应"，查的是 reducer，而病根在类型定义各写了一份。
+  const nav = stripComments(read('lib/navState.ts'));
+  assert.ok(!/NavAssistantTab\s*=\s*['"]/.test(nav),
+    'NavAssistantTab 又写成了字面量联合：请改为 `= AssistantTab`（单一事实来源）');
+  assert.ok(/import type \{[^}]*\bAssistantTab\b[^}]*\}\s*from\s*['"]\.\/assistantTabs\.ts['"]/.test(nav),
+    'navState.ts 未从 assistantTabs.ts 转发 AssistantTab');
+  assert.ok(/NavAssistantTab\s*=\s*AssistantTab\b/.test(nav),
+    'NavAssistantTab 未别名到 AssistantTab');
+  // 反向自检：旧写法必须被判红（否则这条断言在「正则写错」时会静默全绿）
+  const oldShape = "export type NavAssistantTab = 'publish' | 'teams' | 'aiTeam';";
+  assert.ok(/NavAssistantTab\s*=\s*['"]/.test(oldShape), '反向自检失败：旧写法没被这条正则命中');
+
+  // 注释与代码同源：ASSISTANT_TABS 的首项必须等于 DEFAULT_ASSISTANT_TAB，
+  // 否则注释里那句「默认页是 X」与用户实际看到的第一屏会各说一套。
+  const tabs = read('lib/assistantTabs.ts');
+  const firstId = (tabs.match(/ASSISTANT_TABS[\s\S]{0,300}?id:\s*'([a-zA-Z]+)'/) || [])[1];
+  const defId = (tabs.match(/DEFAULT_ASSISTANT_TAB:\s*AssistantTab\s*=\s*'([a-zA-Z]+)'/) || [])[1];
+  assert.ok(firstId && defId, `未能取到首项/默认项（first=${firstId} def=${defId}）`);
+  assert.equal(defId, firstId, `默认 Tab(${defId}) 不是 Tab 条第一项(${firstId})：用户第一眼看到的与默认值不一致`);
+});
+
 console.log(`\nnav-state-dual-entry: ${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);
