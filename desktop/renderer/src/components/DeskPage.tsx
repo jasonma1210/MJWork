@@ -192,54 +192,57 @@ export default function DeskPage({
             {exportMsg ? <p className="mt-2 text-caption text-text2">{exportMsg}</p> : null}
           </header>
 
-          {usage.status === 'error' ? (
-            <div className="flex flex-col gap-2">
-              <InlineAlert type="error" onDismiss={() => usage.reload()}>{t('desk.stats.loadFailed')}</InlineAlert>
-              <div><Button size="xs" variant="secondary" onClick={() => usage.reload()}>{t('desk.stats.retry')}</Button></div>
-            </div>
-          ) : null}
+          {/* 接单区**始终渲染**：它不依赖用量数据，若跟着 status 一起显示/隐藏，
+              每次进工作台都会闪一下「只剩一行加载中」，而且主操作会在首帧消失。 */}
+          <DeskIntake
+            policies={policiesOf(t, approval)}
+            onPolicyClick={onOpenSettings}
+            onDispatch={onAutoRun}
+            models={deskModelOptions(providers)}
+            currentModel={deskModelKey(selectedModel)}
+            onPickModel={(id) => { const hit = findDeskModel(providers, id); if (hit) onPickModel?.(hit); }}
+            onNewThread={onNewThread}
+          />
 
-          {usage.status === 'loading' ? (
-            <p className="text-caption text-text2" role="status">{t('desk.stats.loading')}</p>
-          ) : null}
+          <div className="mt-4 flex flex-col gap-4">
+            {usage.status === 'error' ? (
+              <div className="flex flex-col gap-2">
+                <InlineAlert type="error" onDismiss={() => usage.reload()}>{t('desk.stats.loadFailed')}</InlineAlert>
+                <div><Button size="xs" variant="secondary" onClick={() => usage.reload()}>{t('desk.stats.retry')}</Button></div>
+              </div>
+            ) : null}
 
-          {usage.status === 'ready' ? (
-            <div className="flex flex-col gap-4">
-              <DeskUsageBoard totals={usage.totals} byModel={usage.byModel} byDay={usage.byDay} />
-              {usage.truncated ? <p className="text-caption text-text2">{t('desk.stats.truncated')}</p> : null}
+            {usage.status === 'loading' ? (
+              <p className="text-caption text-text2" role="status">{t('desk.stats.loading')}</p>
+            ) : null}
 
-              <DeskIntake
-                policies={policiesOf(t, approval)}
-                onPolicyClick={onOpenSettings}
-                onDispatch={onAutoRun}
-                models={deskModelOptions(providers)}
-                currentModel={deskModelKey(selectedModel)}
-                onPickModel={(id) => { const hit = findDeskModel(providers, id); if (hit) onPickModel?.(hit); }}
-                onNewThread={onNewThread}
-              />
+            {usage.status === 'ready' ? (
+              <>
+                <DeskUsageBoard totals={usage.totals} byModel={usage.byModel} byDay={usage.byDay} />
+                {usage.truncated ? <p className="text-caption text-text2">{t('desk.stats.truncated')}</p> : null}
+                <DeskTaskTable rows={usage.tasks} hint={usage.taskHint} />
+                <DeskThreadTable rows={usage.byThread} />
+                <UsageCard threadId={threadId} />
 
-              <DeskTaskTable rows={usage.tasks} hint={usage.taskHint} />
-              <DeskThreadTable rows={usage.byThread} />
-              <UsageCard threadId={threadId} />
-
-              {/* 用量流水（原独立「账本」页）：默认折叠，展开即为完整明细 + 导出。
-                  只在展开后才挂载 LedgerPage —— 它一挂载就会发 ledger:query，
-                  折叠状态下白跑一次 IPC 没有意义。 */}
-              <details
-                className="rounded-xl border border-border bg-surface"
-                onToggle={(e) => setFlowOpen((e.currentTarget as HTMLDetailsElement).open)}
-              >
-                <summary className="cursor-pointer select-none px-5 py-3 text-sm font-medium text-text">
-                  {t('desk.stats.flow')}
-                </summary>
-                {flowOpen ? (
-                  <div className="h-[420px] min-h-0 overflow-hidden border-t border-border">
-                    <LedgerPage projectId={null} />
-                  </div>
-                ) : null}
-              </details>
-            </div>
-          ) : null}
+                {/* 用量流水（原独立「账本」页）：默认折叠，展开即为完整明细 + 导出。
+                    只在展开后才挂载 LedgerPage —— 它一挂载就会发 ledger:query，
+                    折叠状态下白跑一次 IPC 没有意义。 */}
+                <details
+                  className="rounded-xl border border-border bg-surface"
+                  onToggle={(e) => setFlowOpen((e.currentTarget as HTMLDetailsElement).open)}
+                >
+                  <summary className="cursor-pointer select-none px-5 py-3 text-sm font-medium text-text">
+                    {t('desk.stats.flow')}
+                  </summary>
+                  {flowOpen ? (
+                    <div className="h-[420px] min-h-0 overflow-hidden border-t border-border">
+                      <LedgerPage projectId={null} />
+                    </div>
+                  ) : null}
+                </details>
+              </>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

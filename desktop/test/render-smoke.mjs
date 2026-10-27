@@ -263,6 +263,82 @@ check('渲染冒烟：脏 localStorage（enabledSkills 非数组）不得让首�
   }
 });
 
+// ── 工作台用量看板（2026-10-27 重做）──
+// 为什么要单独覆盖：DeskPage 只在 `page==='desk'` 时才被 App 渲染，而 App 首帧走的是
+// 'new' 页 —— 也就是说**工作台整块从来没被首帧冒烟覆盖过**。这次重写把主体换成了
+// 用量看板（新的纯函数聚合 + 三张表），组件函数体一旦有 TDZ / 未定义引用，
+// 表现就是「点进工作台白屏」，而 App 冒烟依然全绿。
+const DESK_TOTALS = { input: 1200, output: 800, total: 2000, requests: 3, todayTotal: 1500, last7Total: 7100 };
+const DESK_MODELS = [
+  { model: 'mimo-v2.6-flash', input: 1000, output: 500, total: 1500, requests: 2, share: 0.75 },
+  { model: '__unknown__', input: 200, output: 300, total: 500, requests: 1, share: 0.25 },
+];
+const DESK_DAYS = [
+  { key: '2026-10-21', label: '10-21', total: 0, requests: 0 },
+  { key: '2026-10-22', label: '10-22', total: 400, requests: 1 },
+  { key: '2026-10-23', label: '10-23', total: 0, requests: 0 },
+  { key: '2026-10-24', label: '10-24', total: 0, requests: 0 },
+  { key: '2026-10-25', label: '10-25', total: 5200, requests: 1 },
+  { key: '2026-10-26', label: '10-26', total: 0, requests: 0 },
+  { key: '2026-10-27', label: '10-27', total: 1500, requests: 1 },
+];
+
+check('渲染冒烟：工作台首帧可渲染（desk 路由此前未被任何首帧冒烟覆盖）', () => {
+  let html = '';
+  assert.doesNotThrow(() => {
+    html = renderWithI18n('components/DeskPage.tsx', {
+      threads: [], threadId: null, projectPath: '', onAutoRun: noop, onOpenFile: noop,
+    });
+  }, '工作台首帧渲染抛错（真机即点进工作台白屏）');
+  assert.ok(html.includes('接一单'), '工作台首帧没渲染到接单区，覆盖面不足');
+});
+
+check('渲染冒烟：用量看板有数据 / 空态两种形态都能渲染', () => {
+  const full = renderWithI18n('components/desk/DeskUsageBoard.tsx', {
+    totals: DESK_TOTALS, byModel: DESK_MODELS, byDay: DESK_DAYS,
+  });
+  assert.ok(full.includes('mimo-v2.6-flash'), '模型名没渲染出来');
+  assert.ok(full.includes('1.5K'), 'token 缩写没渲染出来（格式化口径可能被改坏）');
+  assert.ok(full.includes('未记录模型'), '未知模型的兜底标签没渲染出来');
+
+  const empty = renderWithI18n('components/desk/DeskUsageBoard.tsx', {
+    totals: { input: 0, output: 0, total: 0, requests: 0, todayTotal: 0, last7Total: 0 },
+    byModel: [], byDay: DESK_DAYS,
+  });
+  assert.ok(empty.includes('还没有可统计的 token 消耗'), '空态没有说明为什么是空的');
+  assert.ok(!empty.includes('0 tokens'), '空态不应画 0 值卡片');
+});
+
+check('渲染冒烟：任务表缺流水时显示「未记录」而不是 0', () => {
+  // 命名导出（DeskUsageTables 没有 default），故走一段内存探针把两个表一起渲染
+  const code = [
+    "import { LanguageProvider } from './i18n';",
+    "import { DeskTaskTable, DeskThreadTable } from './components/desk/DeskUsageTables';",
+    'export default function Root() {',
+    '  const rows = [',
+    "    { groupId: 'g1', goal: '重构导入链路', status: 'done', done: 3, total: 3, failed: 0, tokens: 1200, rounds: 3, lastAt: 1, hasTokens: true },",
+    "    { groupId: 'g2', goal: '补测试', status: 'running', done: 1, total: 2, failed: 0, tokens: 0, rounds: 0, lastAt: 2, hasTokens: false },",
+    '  ];',
+    '  const threads = [{ threadId: \'t1\', title: \'打包体积治理\', model: \'mimo-v2.6-flash\', total: 5000, requests: 2, lastAt: 1 }];',
+    '  return (',
+    '    <LanguageProvider>',
+    '      <DeskTaskTable rows={rows} hint="no-ledger" />',
+    '      <DeskThreadTable rows={threads} />',
+    '    </LanguageProvider>',
+    '  );',
+    '}',
+  ].join('\n');
+  let html = '';
+  assert.doesNotThrow(() => { html = renderToStaticMarkup(React.createElement(loadInline(code, '__desk_tables_probe.jsx').default)); },
+    '任务/会话表渲染抛错');
+  assert.ok(html.includes('重构导入链路') && html.includes('打包体积治理'), '表内容没渲染出来');
+  // 断言的是**出现次数**，不是「出现过」：g2 有「轮次」与「tokens」两个格子该显示未记录，
+  // 只写 includes('未记录') 会被轮次那格满足 —— 把 tokens 格改成 0 依然全绿（已实测踩到）。
+  const notRecorded = (html.match(/未记录/g) || []).length;
+  assert.equal(notRecorded, 2, `「未记录」应恰好 2 处（g2 的轮次与 tokens），实际 ${notRecorded} 处`);
+  assert.ok(html.includes('1.2K'), '任务 token 缩写没渲染出来');
+});
+
 // 门禁自检：故意写崩的组件必须被抓出来（否则这道门禁是摆设）
 check('门禁自检：能复现 TDZ 白屏（依赖数组引用后置声明）', () => {
   const bad = `
