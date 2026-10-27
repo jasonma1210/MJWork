@@ -118,7 +118,7 @@ export default function DeskRunsCard({ variant, threadId = null, projectPath = '
             <span>{latestPct}%</span>
           </div>
           <div
-            className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-hover"
+            className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-hover"
             role="img"
             aria-label={t('desk.running.progress', { done: latestDone, total: latestTotal })}
           >

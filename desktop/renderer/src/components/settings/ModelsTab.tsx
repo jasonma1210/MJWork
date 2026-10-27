@@ -368,9 +368,9 @@ export default function ModelsTab({ providers, onProvidersChange, globalProvider
           也无「去哪拿 Key」指引——首启最关键一步用户对着三个空框不知如何开始。补齐 label + 必填星标，
           并为 API Key 加取用指引 hint；placeholder 改为 i18n 键。 */}
       <Section title={t('settings.addProviderTitle')}>
-        <Input label={<span>{t('settings.providerNameLabel')}<span className="text-danger ml-0.5">*</span></span>} placeholder={t('settings.providerNamePlaceholder')} value={newP.name} onChange={(e) => setNewP({ ...newP, name: e.target.value })} />
-        <Input label={<span>{t('settings.providerUrlLabel')}<span className="text-danger ml-0.5">*</span></span>} placeholder={t('settings.providerUrlPlaceholder')} value={newP.base_url} onChange={(e) => setNewP({ ...newP, base_url: e.target.value })} />
-        <Input label={<span>{t('settings.providerApiKeyLabel')}<span className="text-danger ml-0.5">*</span></span>} placeholder={t('settings.providerApiKeyPlaceholder')} type="password" value={newP.api_key} onChange={(e) => setNewP({ ...newP, api_key: e.target.value })} hint={t('settings.providerApiKeyHint')} />
+        <Input label={<span>{t('settings.providerNameLabel')}<span className="text-danger ml-1">*</span></span>} placeholder={t('settings.providerNamePlaceholder')} value={newP.name} onChange={(e) => setNewP({ ...newP, name: e.target.value })} />
+        <Input label={<span>{t('settings.providerUrlLabel')}<span className="text-danger ml-1">*</span></span>} placeholder={t('settings.providerUrlPlaceholder')} value={newP.base_url} onChange={(e) => setNewP({ ...newP, base_url: e.target.value })} />
+        <Input label={<span>{t('settings.providerApiKeyLabel')}<span className="text-danger ml-1">*</span></span>} placeholder={t('settings.providerApiKeyPlaceholder')} type="password" value={newP.api_key} onChange={(e) => setNewP({ ...newP, api_key: e.target.value })} hint={t('settings.providerApiKeyHint')} />
         {addPError && <p className="text-xs text-danger mt-1">{addPError}</p>}
         <button onClick={addProvider} className="bg-accent-solid text-on-accent px-4 py-2 rounded-lg text-sm mt-2">{t('settings.addService')}</button>
       </Section>

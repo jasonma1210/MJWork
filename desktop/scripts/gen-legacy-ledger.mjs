@@ -26,6 +26,10 @@
 //   裸 button      ← test/ui-conventions.test.js（排除 components/ui/ 与 styles/）
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+
+// 本文件是 ESM，而共用口径模块 scripts/lib/rawButtonScan.js 是 CJS（门禁 test/*.test.js 用 require 加载）
+const require = createRequire(import.meta.url);
 
 const DESKTOP = path.resolve(import.meta.dirname, '..');
 const REPO = path.resolve(DESKTOP, '..');
@@ -139,16 +143,12 @@ function computeDeadBridge() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 2) 裸 <button>
 // ─────────────────────────────────────────────────────────────────────────────
-// 与 ui-conventions.test.js 同口径：
-//   · 只认小写 `<button`（`<Button>` 原语不计）
-//   · 排除 components/ui/（原语自身必须渲染裸 button）
-//   · 排除 styles/ 目录
-//   · 注释先屏蔽（保留行号）
-function blankComments(s) {
-  return s
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/(^|[^:\\])\/\/[^\n]*/g, (_m, p1) => p1);
-}
+// 口径**唯一来源**：scripts/lib/rawButtonScan.js（与 test/ui-conventions.test.js 共用同一实现）。
+// 为什么不再在本文件里重写一遍：本文件曾自己实现「注释屏蔽 + 数 <button」，
+// 而 exemptions（文字链 / 正方形图标按钮）只加在门禁那一侧，于是同一份代码
+// 在门禁得 164、在台账得 256 —— 而 legacy-ledger 的断言是「台账 === 门禁基线」，
+// 两边都自称权威、数字却不同，人只能靠猜信哪个。
+const { blankComments, countButtons } = require('./lib/rawButtonScan.js');
 
 function computeRawButtons() {
   const all = walkRenderer(RENDERER_SRC, [], { skipDotDirs: true })
@@ -159,9 +159,7 @@ function computeRawButtons() {
     const isPrimitive = file.includes(`${path.sep}components${path.sep}ui${path.sep}`);
     if (isPrimitive) continue;
     const code = blankComments(fs.readFileSync(file, 'utf8'));
-    let count = 0;
-    let pos = code.indexOf('<button');
-    while (pos !== -1) { count += 1; pos = code.indexOf('<button', pos + 1); }
+    const count = countButtons(code).count; // 已扣除形态豁免
     if (count > 0) {
       byFile.set(path.relative(RENDERER_SRC, file).split(path.sep).join('/'), count);
       total += count;

@@ -113,11 +113,17 @@ check('设置页关闭入口唯一且可点（不再自绘交通灯）', () => {
   // 2026-10-17 变更：原按平台分两套（mac 左上红点模拟交通灯 / 其他系统右上 X）。
   // 红点与真实系统交通灯语义重复、两平台行为也不一致，已统一为右上 X。
   // 守护目标不变：必须存在可点击的关闭按钮、共用同一 aria-label，且不能出现第二个入口。
-  assert.match(settings, /onClick=\{onClose\}[\s\S]{0,240}?aria-label=\{t\('settings\.closeSettings'\)\}/,
+  // 2026-10-27：判据由「`onClick={onClose}` 字面量」改为「任意处理函数 + 唯一的关闭 aria-label」。
+  // 原写法把**变量名**当契约：本组件为支持「有未保存改动时先确认」，关闭走的是
+  // `handleClose`（内部才调用 onClose），于是按钮明明存在、aria-label 也在，
+  // 断言却因为名字不叫 onClose 而红 —— 这是把实现细节写成了产品契约。
+  // 现在的判据仍守两件事：① 关闭按钮存在且可点（有 onClick 处理器）+ 明确 aria-label；
+  // ② 关闭入口**唯一**（按 aria-label 计数，而不是按处理函数名计数）。
+  assert.match(settings, /<button[^>]*onClick=\{[A-Za-z_$][\w$]*\}[\s\S]{0,240}?aria-label=\{t\('settings\.closeSettings'\)\}/,
     '设置页缺少明确关闭按钮');
   assert.ok(!/w-3 h-3 rounded-full bg-danger/.test(settings),
     '不应再自绘仿交通灯红点（与系统控件语义重复）');
-  const closeCount = (settings.match(/onClick=\{onClose\}/g) || []).length;
+  const closeCount = (settings.match(/aria-label=\{t\('settings\.closeSettings'\)\}/g) || []).length;
   assert.equal(closeCount, 1, `关闭入口应唯一，实际 ${closeCount} 个`);
 });
 

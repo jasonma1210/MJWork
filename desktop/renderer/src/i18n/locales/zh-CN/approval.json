@@ -16,7 +16,7 @@
   "dangerTitle": "危险命令",
   "fileWriteTitle": "文件写入",
   "mcpTitle": "MCP 工具",
-  "queuePosition": "共 {total} 条待审批",
+  "queuePosition": "第 1/{total} 条待审批",
   "expand": "展开",
   "collapse": "收起",
   "noDetail": "（无详情）",

@@ -1,6 +1,6 @@
 {
-  "reviewedAt": "2026-10-24",
-  "policy": "桥面暴露但渲染层未引用的方法必须显式登记在此（C-05 收口）。新增死方法 = 红；台账里的条目被启用后必须删除台账项 = 红。移除动作暂缓：每一项都可能是外部调用方（插件/脚本/旧版本渲染层）仍在使用的兼容面。｜2026-10-24（双入口 P1-4 收口）：entryChoice / entryPolicy / onEntryConfirm / onEntryRoute 已由 renderer/src/components/EntryRouteNotice.tsx 消费（升级/降级提示条 + C1 确认卡 + C2 引导），已按纪律从台账删除。",
+  "reviewedAt": "2026-10-27",
+  "policy": "桥面暴露但渲染层未引用的方法必须显式登记在此（C-05 收口）。新增死方法 = 红；台账里的条目被启用后必须删除台账项 = 红。移除动作暂缓：每一项都可能是外部调用方（插件/脚本/旧版本渲染层）仍在使用的兼容面。｜2026-10-24（双入口 P1-4 收口）：entryChoice / entryPolicy / onEntryConfirm / onEntryRoute 已由 renderer/src/components/EntryRouteNotice.tsx 消费（升级/降级提示条 + C1 确认卡 + C2 引导），已按纪律从台账删除。｜2026-10-27（M3 收口）：① 别名扫描补 `as unknown as` 断言盲区后，ecosystemEmployeeRuntime、webSearchSetConfig、projectsQuotaLedger 三个「假死」恢复为已用，前两者从台账删除（第三个原本误判，未入台账）；② ledgerCapabilities 是 M2 自己留下的无消费方 API —— 字段可用性已随 ledger:query 首页下发，故连同通道一并删除，不入台账。",
   "dead": [
     "applyPatch",
     "collabApplyUpdate",
@@ -16,7 +16,6 @@
     "cuaRun",
     "cuaStop",
     "diagExport",
-    "ecosystemEmployeeRuntime",
     "ecosystemSummary",
     "editFile",
     "getSecrets",
@@ -53,7 +52,6 @@
     "teamsArchive",
     "teamsCreateLead",
     "teamsSetMemberEnabled",
-    "webSearchSetConfig",
     "writeFile"
   ]
 }

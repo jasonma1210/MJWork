@@ -64,7 +64,12 @@ const used = new Map(); // method -> [文件:行]
 // 而那恰好是最核心的链路。别名按**文件内**生效：同名变量在别的文件里可能是别的对象。
 // 末尾 lookahead 是关键：`= window.mjcode?.getPathForFile?.(f)` 是**调用结果**而不是整桥别名，
 // 若放过会把它赋给的变量（如 p）也当成别名，于是 `p.split('/')` 被误报成「调用了未暴露的 split」。
-const ALIAS_SRC = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:globalThis\.)?(?:window\??\.)?mjcode\b(?=\s*[;,)\]}\n]|\s*(?:\|\||\?\?))/g;
+//
+// 2026-10-27 补一处盲区：TS 文件里合法写法 `const mj = window.mjcode as unknown as {...} | undefined;`
+// 因为 `mjcode` 后面跟的是 ` as ...` 而不是 `;`/`)`，旧 lookahead 不认，于是 LedgerCard.tsx 里
+// 真实调用的 `mj.projectsQuotaLedger(...)` 被算成「死方法」，台账被迫收一条其实在用的桥
+// （false dead —— 比漏报更隐蔽：它会让台账永远无法收敛到真实）。故 lookahead 额外接受 `as` 断言。
+const ALIAS_SRC = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:globalThis\.)?(?:window\??\.)?mjcode\b(?=\s*[;,)\]}\n]|\s*(?:\|\||\?\?)|\s+as\s)/g;
 let aliasFiles = 0;
 for (const file of walk(SRC)) {
   const src = stripComments(fs.readFileSync(file, 'utf8'));

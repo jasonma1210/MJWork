@@ -14,23 +14,20 @@
 // 不需要先跑一次 agent:run。
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import Module, { createRequire } from 'node:module';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+import { installElectronStub } from './helpers/electronStub.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(import.meta.dirname, '..');
-const electronPath = path.join(ROOT, 'node_modules/electron/index.js');
 
 // stub electron：只提供 ipcMain.handle，记录注册了哪些通道
+// （缓存键由 require.resolve 现算，见 helpers/electronStub.mjs 里对 pnpm realpath 的说明）
 const handlers = new Map();
-const stubModule = new Module(electronPath, null);
-stubModule.filename = electronPath;
-stubModule.loaded = true;
-stubModule.exports = {
+installElectronStub({
   ipcMain: { handle: (ch, fn) => { handlers.set(ch, fn); } },
   app: { getPath: () => '/tmp' },
-};
-require.cache[electronPath] = stubModule;
+});
 
 let pass = 0;
 let fail = 0;

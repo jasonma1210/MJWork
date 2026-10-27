@@ -401,7 +401,6 @@ contextBridge.exposeInMainWorld('mjcode', {
   studioProjectRuns: (payload) => ipcRenderer.invoke('studio:projectRuns', payload || {}),
   // Token 用量账本（2026-10-27，§7）：只读流水 + 同快照汇总 + CSV 导出。
   // 口径纪律：这是 **token 消耗**，不是金额；全仓无价格数据，不得折算成钱。
-  ledgerCapabilities: () => ipcRenderer.invoke('ledger:capabilities'),
   ledgerQuery: (payload) => ipcRenderer.invoke('ledger:query', payload || {}),
   // 导出路径由主进程的系统保存对话框给出 —— 渲染层**不传**文件路径
   ledgerExport: (payload) => ipcRenderer.invoke('ledger:export', payload || {}),

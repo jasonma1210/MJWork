@@ -11,20 +11,16 @@
 // 消息写入都被自己拦下。会话改名/删除/归档同理。
 //
 // 这里直接调真实 handler（stub electron + 假 store），传**数字** id，守住这条路径。
-import Module, { createRequire } from 'node:module';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+import { installElectronStub } from './helpers/electronStub.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(import.meta.dirname, '..');
-const electronPath = path.join(ROOT, 'node_modules/electron/index.js');
 const handlers = new Map();
 
-// stub electron：只提供 ipcMain.handle
-const stubModule = new Module(electronPath, null);
-stubModule.filename = electronPath;
-stubModule.loaded = true;
-stubModule.exports = { ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) }, app: { getPath: () => '/tmp' } };
-require.cache[electronPath] = stubModule;
+// stub electron：只提供 ipcMain.handle（键由 require.resolve 现算，见 helpers/electronStub.mjs）
+installElectronStub({ ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) }, app: { getPath: () => '/tmp' } });
 
 const { initLocalDataIpc } = require(path.join(ROOT, 'main/ipc/localData.js'));
 

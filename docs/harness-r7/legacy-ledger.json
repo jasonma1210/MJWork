@@ -6,10 +6,10 @@
     "deadBridgeMethods": {
       "source": "desktop/main/preload.js − desktop/renderer/src（口径同 test/bridge-parity.test.mjs）",
       "unit": "method",
-      "total": 250,
-      "referenced": 197,
+      "total": 262,
+      "referenced": 209,
       "dead": 53,
-      "ratio": 0.212,
+      "ratio": 0.2023,
       "groups": [
         {
           "prefix": "market",
@@ -27,12 +27,12 @@
           "disposition": "pending"
         },
         {
-          "prefix": "git",
-          "count": 4,
+          "prefix": "projects",
+          "count": 5,
           "disposition": "pending"
         },
         {
-          "prefix": "projects",
+          "prefix": "git",
           "count": 4,
           "disposition": "pending"
         },
@@ -52,11 +52,6 @@
           "disposition": "pending"
         },
         {
-          "prefix": "ecosystem",
-          "count": 2,
-          "disposition": "pending"
-        },
-        {
           "prefix": "mcp",
           "count": 2,
           "disposition": "pending"
@@ -68,6 +63,11 @@
         },
         {
           "prefix": "diag",
+          "count": 1,
+          "disposition": "pending"
+        },
+        {
+          "prefix": "ecosystem",
           "count": 1,
           "disposition": "pending"
         },
@@ -121,67 +121,52 @@
     "rawButtons": {
       "source": "desktop/renderer/src（排除 components/ui/ 与 styles/，口径同 test/ui-conventions.test.js）",
       "unit": "button",
-      "total": 251,
-      "scannedFiles": 143,
+      "total": 164,
+      "scannedFiles": 152,
       "groups": [
         {
           "file": "components/Onboarding.jsx",
-          "count": 28,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/Composer.tsx",
-          "count": 19,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/settings/ModelsTab.tsx",
           "count": 16,
           "disposition": "pending"
         },
         {
           "file": "components/DiffReviewPanel.jsx",
-          "count": 13,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/MessageStream.tsx",
           "count": 12,
           "disposition": "pending"
         },
         {
-          "file": "components/ThreadList.jsx",
-          "count": 12,
+          "file": "components/Composer.tsx",
+          "count": 9,
           "disposition": "pending"
         },
         {
           "file": "components/ScheduledTasks.jsx",
-          "count": 11,
+          "count": 9,
           "disposition": "pending"
         },
         {
           "file": "components/MarketModal.jsx",
-          "count": 10,
+          "count": 8,
           "disposition": "pending"
         },
         {
           "file": "components/PlusMenu.jsx",
-          "count": 10,
+          "count": 8,
           "disposition": "pending"
         },
         {
-          "file": "components/EcosystemModal.jsx",
+          "file": "components/settings/ModelsTab.tsx",
           "count": 8,
           "disposition": "pending"
         },
         {
           "file": "components/FilePreview.jsx",
-          "count": 8,
+          "count": 7,
           "disposition": "pending"
         },
         {
-          "file": "components/AgentDock.jsx",
-          "count": 6,
+          "file": "components/MessageStream.tsx",
+          "count": 7,
           "disposition": "pending"
         },
         {
@@ -190,27 +175,12 @@
           "disposition": "pending"
         },
         {
+          "file": "components/AgentDock.jsx",
+          "count": 5,
+          "disposition": "pending"
+        },
+        {
           "file": "components/TeamSpace.jsx",
-          "count": 6,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/tools/ToolTrace.tsx",
-          "count": 6,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/LocalMcpSection.tsx",
-          "count": 5,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/RightPane.jsx",
-          "count": 5,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/SettingsModal.jsx",
           "count": 5,
           "disposition": "pending"
         },
@@ -225,8 +195,13 @@
           "disposition": "pending"
         },
         {
-          "file": "components/ArchiveModal.jsx",
-          "count": 3,
+          "file": "components/EcosystemModal.jsx",
+          "count": 4,
+          "disposition": "pending"
+        },
+        {
+          "file": "components/SettingsModal.jsx",
+          "count": 4,
           "disposition": "pending"
         },
         {
@@ -235,12 +210,7 @@
           "disposition": "pending"
         },
         {
-          "file": "components/CustomConnectorForm.tsx",
-          "count": 3,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/FileViewerPane.jsx",
+          "file": "components/ErrorBoundary.jsx",
           "count": 3,
           "disposition": "pending"
         },
@@ -250,17 +220,22 @@
           "disposition": "pending"
         },
         {
-          "file": "components/MemorySection.tsx",
-          "count": 3,
-          "disposition": "pending"
-        },
-        {
           "file": "components/RecordReplayPanel.tsx",
           "count": 3,
           "disposition": "pending"
         },
         {
-          "file": "components/SideChatPanel.tsx",
+          "file": "components/RightPane.jsx",
+          "count": 3,
+          "disposition": "pending"
+        },
+        {
+          "file": "components/ThreadList.jsx",
+          "count": 3,
+          "disposition": "pending"
+        },
+        {
+          "file": "components/tools/ToolTrace.tsx",
           "count": 3,
           "disposition": "pending"
         },
@@ -270,27 +245,17 @@
           "disposition": "pending"
         },
         {
-          "file": "components/ConnectorConfigDialog.tsx",
+          "file": "components/ArchiveModal.jsx",
           "count": 2,
           "disposition": "pending"
         },
         {
-          "file": "components/ErrorBoundary.jsx",
+          "file": "components/FileViewerPane.jsx",
           "count": 2,
           "disposition": "pending"
         },
         {
-          "file": "components/feedback.jsx",
-          "count": 2,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/FilesPanel.tsx",
-          "count": 2,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/ProjectPicker.jsx",
+          "file": "components/MemorySection.tsx",
           "count": 2,
           "disposition": "pending"
         },
@@ -300,23 +265,13 @@
           "disposition": "pending"
         },
         {
-          "file": "components/Sidebar.jsx",
-          "count": 2,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/WelcomePage.tsx",
+          "file": "components/SideChatPanel.tsx",
           "count": 2,
           "disposition": "pending"
         },
         {
           "file": "components/WindowsSandboxSetup.tsx",
           "count": 2,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/ApprovalCard.jsx",
-          "count": 1,
           "disposition": "pending"
         },
         {
@@ -330,22 +285,22 @@
           "disposition": "pending"
         },
         {
-          "file": "components/ContextRing.jsx",
+          "file": "components/CustomConnectorForm.tsx",
           "count": 1,
           "disposition": "pending"
         },
         {
-          "file": "components/FileTree.jsx",
+          "file": "components/FilesPanel.tsx",
           "count": 1,
           "disposition": "pending"
         },
         {
-          "file": "components/InlineAlert.jsx",
+          "file": "components/LocalMcpSection.tsx",
           "count": 1,
           "disposition": "pending"
         },
         {
-          "file": "components/LocalSkillsSection.tsx",
+          "file": "components/ProjectPicker.jsx",
           "count": 1,
           "disposition": "pending"
         },
@@ -355,7 +310,7 @@
           "disposition": "pending"
         },
         {
-          "file": "components/TerminalPanel.tsx",
+          "file": "components/Sidebar.jsx",
           "count": 1,
           "disposition": "pending"
         },
@@ -366,6 +321,11 @@
         },
         {
           "file": "components/UpdateSection.tsx",
+          "count": 1,
+          "disposition": "pending"
+        },
+        {
+          "file": "components/WelcomePage.tsx",
           "count": 1,
           "disposition": "pending"
         }

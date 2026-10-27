@@ -298,7 +298,7 @@ export default function AssistantDirectory({
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-1">
       <div className="text-caption text-text2">{label}</div>
       <div className="text-xs break-words">{value}</div>
     </div>

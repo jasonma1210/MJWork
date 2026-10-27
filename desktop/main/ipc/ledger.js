@@ -45,8 +45,9 @@ async function writeLedgerCsv(db, filters, filePath) {
 }
 
 function register() {
-  ipcMain.handle('ledger:capabilities', async () => ({ ok: true, capabilities: ledgerQuery.capabilities() }));
-
+  // 不单独提供 `ledger:capabilities`：字段可用性随首页查询一起下发（`queryPage` 的返回值里
+  // 就有 `capabilities` / `fieldAvailability`，见下方 cursor 分支的注释），另开一条通道
+  // 只会多一份可能与首页不一致的副本 —— 这正是 C-05 台账里 ledgerCapabilities 一直死着的原因。
   ipcMain.handle('ledger:query', async (_, payload = {}) => {
     const db = getDb();
     if (!db) return { ok: false, code: 'UNAVAILABLE', error: '账本子系统不可用（初始化失败）' };

@@ -317,7 +317,7 @@ export default function ProjectCreateModal({ open, onClose, projects = [], onCre
 
         <div className="grid grid-cols-2 gap-3">
           <Input
-            label={<span>{t('projectSpace.name')}<span className="text-danger ml-0.5">*</span></span>}
+            label={<span>{t('projectSpace.name')}<span className="text-danger ml-1">*</span></span>}
             value={form.name}
             maxLength={40}
             placeholder={t('projectSpace.namePh')}
@@ -339,7 +339,7 @@ export default function ProjectCreateModal({ open, onClose, projects = [], onCre
         </div>
 
         <TextArea
-          label={<span>{t('projectSpace.objective')}<span className="text-danger ml-0.5">*</span></span>}
+          label={<span>{t('projectSpace.objective')}<span className="text-danger ml-1">*</span></span>}
           value={form.objective}
           maxLength={2000}
           rows={4}
@@ -373,7 +373,7 @@ export default function ProjectCreateModal({ open, onClose, projects = [], onCre
             </select>
           </Field>
           {form.teamTemplate === 'existing' && (
-            <Field label={<span>{t('projectSpace.existingTeam')}<span className="text-danger ml-0.5">*</span></span>} error={errorFor('teamId')}>
+            <Field label={<span>{t('projectSpace.existingTeam')}<span className="text-danger ml-1">*</span></span>} error={errorFor('teamId')}>
               <select
                 value={form.teamId}
                 onChange={(e) => patch('teamId', e.target.value)}

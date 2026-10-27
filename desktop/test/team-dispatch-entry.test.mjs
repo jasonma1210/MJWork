@@ -42,7 +42,16 @@ const snippet = (src, anchor, len) => {
 check('① 派活目标条：选中团队时常驻一行（团队名 + 成员数 + 预算 + 退出）', () => {
   const i = composer.indexOf('派活目标条');
   ok(i > 0, '找不到目标条注释锚');
-  const seg = composer.slice(i, i + 1200);
+  // 2026-10-27 修「字符窗口假红」：原判据是「注释锚之后 1200 个字符内出现 5 个标记」，
+  // 实测 onClearTeam 落在 +1326（只差 126 字符就被判缺失），而它明明在同一个 JSX 块里 ——
+  // 这是把**位置代理**当成契约：给目标条加一句文案、多一个字段，断言就红，与人无关。
+  // 现在按**块边界**取片段：从注释锚到该 JSX 块收尾 `)}`。
+  // 失败方向是安全的：若块内新增嵌套 `)}` 导致提前截断，断言会红（假红），不会静默变绿。
+  const endRe = /\n\s*\)\}\n/g;
+  endRe.lastIndex = i;
+  const m = endRe.exec(composer);
+  const seg = composer.slice(i, m ? m.index : composer.length);
+  ok(seg.length >= 400, `装配片段被截断（长度自检失败）：${seg.length} 字符`);
   ok(/t\('composer\.dispatchTo'\)/.test(seg), '缺少「派活给」前缀');
   ok(/t\('composer\.teamMembers'/.test(seg), '缺少成员数');
   ok(/teamBudgetLabel/.test(seg), '缺少预算摘要');

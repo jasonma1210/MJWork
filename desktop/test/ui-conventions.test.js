@@ -3,6 +3,11 @@
 // 修改组件后若本测试失败，要么修到基线以下，要么把基线调低（禁止调高）。
 const fs = require('fs');
 const path = require('path');
+// 裸 <button> 口径与豁免规则抽到 scripts/lib/rawButtonScan.js，与存量台账生成器共用同一份实现
+// （两份实现漂移的后果：同一份代码在门禁与台账里得到 251 / 256 两个「都对」的答案）。
+const { blankComments, isExemptButton, countButtons } = require(
+  path.join(__dirname, '..', 'scripts', 'lib', 'rawButtonScan.js'),
+);
 
 const SRC = path.join(__dirname, '..', 'renderer', 'src');
 // 2026-10-13 S0 收紧：硬编码色清零后基线归零（ratchet 只允许下降）
@@ -23,7 +28,12 @@ const BASELINE = {
   //   · 指标不匹配的表单按钮（px-3 py-2 text-sm / rounded-lg 或 rounded-xl，与 md 的 h-8 + text-xs 不符）。
   // 待决策项（暂不转换，避免引入可感知差异）：ScheduledTasks 恢复按钮（px-3 vs md 的 px-4、hover:bg-hover
   // vs danger-ghost 的 hover:bg-danger-bg）、WorktreeBar 移除按钮（rounded-lg vs xs 的 rounded、py-1 vs h-6）。
-  rawButton: 251,  // 2026-10-19 实测基线（首轮 ApprovalCard 4 + feedback 2；二轮 CodeView 2 + LocalMcpSection 1；三轮 RecordReplayPanel 4；四轮 xs 桶 AgentDock 5 + DiffReviewPanel 3；五轮 accent-ghost AgentDock 2；2026-10-21 顶栏按图2 移除筛选按钮与工作区名，App.jsx 裸 button 7→5；2026-10-22 实测 Composer 一处分组按钮收敛后 256→255；2026-10-24 FIX-P07 首启向导模型步重构：该步 3 个既有裸 button 与 4 个新增操作按钮统一收敛到 ui/Button，新选项卡用 label+radio，255→252；2026-10-26 新建会话用场景卡替换 4 张快捷动作卡，WelcomePage 源内那处 `QUICK_ACTIONS.map` 的裸 button 字面量随之删除，252→251）；每轮收敛后同步下调，禁止调高
+  rawButton: 164,  // 2026-10-27 重测下调（251 → 164）：不是"清掉了 87 个按钮"，而是把上方注释里
+  // **声明了但从未实现**的豁免（文字链 / 正方形图标按钮）真正落地后重新测得的口径值。
+  // 旧值 251 是"含豁免形态"的计数，与现在的判据不同量纲 —— 保留旧值等于给自己留 87 个冗余额度
+  // （任何人可以在不触发门禁的情况下新增 87 个裸按钮），那正是棘轮要防的"假大值"。
+  // 本次同时把计数口径抽到 scripts/lib/rawButtonScan.js，与存量台账生成器共用一份实现。
+  // 棘轮规则不变：只降不升；每轮收敛后同步下调。
 };
 
 let pass = 0;
@@ -59,16 +69,21 @@ function walk(dir, out = []) {
 //   · `lib/modelWindows.ts:7` —— 注释里用 ⚠️ 标注「两处取值有意偏离施工单」
 // 假阳性的代价是实打实的：它逼迫作者为了过门禁写更差/更含糊的注释，且让真违规淹没在噪声里。
 // 语义不变：只屏蔽「不可能被渲染/执行」的内容，规则强度不降（下方自检专门守这一点）。
-function blankComments(s) {
-  return s
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/(^|[^:\\])\/\/[^\n]*/g, (_m, p1) => p1);
-}
+// 实现已下沉到 scripts/lib/rawButtonScan.js（与台账生成器共用），此处仅转出引用。
+
+// ── G7 豁免判定 ──
+// 实现同样在 scripts/lib/rawButtonScan.js：只豁免「文字链」与「正方形图标按钮」两类，
+// 且要求 className 是**静态字面量**（变量/三元/含插值的模板串一律不放行）。
+
+// ── G7 豁免判定（注释见 scripts/lib/rawButtonScan.js；本文件不再重复实现）──
 
 const files = walk(SRC).filter((f) => !f.includes(`${path.sep}styles${path.sep}`));
 const typedFiles = files.filter((f) => /\.tsx?$/.test(f));
 const counts = { emoji: 0, rawZIndex: 0, paletteColor: 0, hexColor: 0, deadButton: 0, rawIpc: 0, rawButton: 0 };
 const samples = { emoji: [], rawZIndex: [], paletteColor: [], hexColor: [], deadButton: [], rawIpc: [], rawButton: [] };
+// 因形态豁免（文字链 / 正方形图标按钮）而不计入棘轮的裸 <button> 数量：只做透明披露，
+// 不参与判定 —— 它变大时应当有人问「为什么豁免这么多」，而不是靠基线悄悄吸收。
+let exemptButtonTotal = 0;
 
 for (const file of files) {
   const rel = path.relative(SRC, file);
@@ -102,13 +117,14 @@ for (const file of files) {
 
   // G7：裸 <button> 计数（jsx/tsx 标签名大小写敏感：`<Button` 不计入）。
   // 排除 components/ui/ —— 原语自身（Button.tsx / Modal.tsx / Switch.tsx）本就必须渲染裸 <button>。
+  // 计入/豁免判定全在 scripts/lib/rawButtonScan.js（与 gen-legacy-ledger.mjs 共用），此处只取行号。
   const isPrimitive = file.includes(`${path.sep}components${path.sep}ui${path.sep}`);
   if (!isPrimitive) {
-    let bpos = code.indexOf('<button');
-    while (bpos !== -1) {
-      mark('rawButton', code.slice(0, bpos).split('\n').length, code.slice(bpos, bpos + 40).split('\n')[0].trim().slice(0, 50));
-      bpos = code.indexOf('<button', bpos + 1);
+    const res = countButtons(code);
+    for (const lineNo of res.lines) {
+      mark('rawButton', lineNo, (lines[lineNo - 1] || '').trim().slice(0, 60));
     }
+    exemptButtonTotal += res.exempt;
   }
 }
 
@@ -136,6 +152,20 @@ for (const file of files) {
     for (let p = blanked.indexOf('<button'); p !== -1; p = blanked.indexOf('<button', p + 1)) cnt++;
     check('自检：rawButton 只计小写裸 <button>（<Button> 与注释不计）', cnt === 1, `计数=${cnt}`);
   }
+  // G7 豁免自检：豁免必须只吃掉三类形态，普通按钮仍要计数——否则「实现豁免」就是给自己开后门
+  {
+    const cases = [
+      ['文字链（无 bg/border/rounded）', '<button className="text-xs text-accent hover:opacity-80 mt-2">', true],
+      ['正方形图标按钮（h-7 w-7）', '<button className="h-7 w-7 rounded-lg hover:bg-hover">', true],
+      ['圆角档不匹配（rounded-lg）仍计数——该类只能人工判定，不做机械豁免', '<button className="border border-border rounded-lg px-3 py-1 text-xs hover:bg-hover">', false],
+      ['普通描边按钮（rounded-md）', '<button className="rounded-md px-3 py-1 border border-border text-xs">', false],
+      ['普通实心按钮（bg-accent-solid）', '<button className="inline-flex bg-accent-solid text-on-accent rounded-md px-4">', false],
+      ['无 className 的按钮（不得靠缺字段豁免）', '<button onClick={f}>', false],
+    ];
+    const wrong = cases.filter(([, head, want]) => isExemptButton(head) !== want).map(([n]) => n);
+    check('自检：G7 豁免只覆盖文字链/方图标/圆角不匹配三类，普通按钮照常计数', wrong.length === 0,
+      wrong.length ? `判定错误：${wrong.join('、')}` : `${cases.length} 个形态判定正确`);
+  }
 }
 
 check('零 emoji / 零装饰性字形', counts.emoji === BASELINE.emoji, `${counts.emoji}/${BASELINE.emoji} ${samples.emoji.join(' | ')}`);
@@ -144,7 +174,7 @@ check('硬编码调色板色不超过基线', counts.paletteColor <= BASELINE.pa
 check('组件内十六进制色不超过基线', counts.hexColor <= BASELINE.hexColor, `${counts.hexColor}/${BASELINE.hexColor} ${samples.hexColor.join(' | ')}`);
 check('无装饰性死按钮', counts.deadButton <= BASELINE.deadButton, `${counts.deadButton}/${BASELINE.deadButton} ${samples.deadButton.join(' | ')}`);
 check('渲染层无裸 electron/ipcRenderer（须走 preload 桥）', counts.rawIpc <= BASELINE.rawIpc, `${counts.rawIpc}/${BASELINE.rawIpc} ${samples.rawIpc.join(' | ')}`);
-check('裸 <button> 不超过基线（收敛到 ui/Button 原语）', counts.rawButton <= BASELINE.rawButton, `${counts.rawButton}/${BASELINE.rawButton} ${samples.rawButton.join(' | ')}`);
+check('裸 <button> 不超过基线（收敛到 ui/Button 原语）', counts.rawButton <= BASELINE.rawButton, `${counts.rawButton}/${BASELINE.rawButton}（另有 ${exemptButtonTotal} 处按形态豁免：文字链/正方形图标按钮）${samples.rawButton.join(' | ')}`);
 
 check('扫描到渲染层文件', files.length > 10, `${files.length} 个文件`);
 check('UI 规范扫描纳入 TypeScript/TSX', typedFiles.length > 0, `${typedFiles.length} 个 TS/TSX 文件`);
