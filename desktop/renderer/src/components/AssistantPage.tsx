@@ -1,59 +1,68 @@
-// 助手工作台（设计文档 §4.1 / §5）
+// 助手工作台（设计文档 §4.1 / §5；2026-10-27 第二次收敛）
 //
-// 2026-10-27 收敛：助理的主任务 = **选助手与派活**（§0.2 决策 2）。三个子 Tab：
-//   Tab1 助手目录（默认）—— AssistantDirectory：真实数字员工目录 → 详情 → 派单
-//   Tab2 发布任务 —— PublishTaskPage：唯一发起面（复杂任务 / 定时任务二选一）
-//   Tab3 AI 建团 —— AiTeamBuilder（草案卡片逐条采纳/编辑/否决）
+// ── 这次为什么又改（用户实测）──
+// 上一版把助理切成三个并列 Tab：目录（派给单个助手）/ 发布任务（派给军团或"自动"）/ AI 建团。
+// 用户的原话是：「我本该用来发布任务的『发布任务』进入后，发布任务没有任何和助手有关的事情，
+// 而助手目录和 AI 建团又各自为战，都有发布」。
+// 病因是**按功能切 Tab**：主体（谁来干）被拆在三个 Tab 里，落点规则还互相冲突
+// （目录派活强制开新会话、发布任务挂当前会话），于是"派活"这一个动作有了三种互不相认的形态。
 //
-// 定时任务已升回**一级入口**（用户要求），不再作为本页 Tab；
-// 军团编制已迁入**工作室**（2026-10-27），本页只保留目录/派单/建团。
+// ── 现在 ──
+//   Tab1 派活（dispatch，默认）—— AssistantDispatch：**唯一提交出口**。
+//        主体三态（指定助手 / 指定团队 / 交给系统）× 运行方式（立即 / 定时）× 目标，外加本会话看板。
+//   Tab2 助手目录（directory）—— 只浏览/发现。**没有提交按钮**，选中后「以此派活」把主体回填到 Tab1。
+//   Tab3 AI 建团（aiTeam）—— 只产出编制。确认落库后「用这个团队派活」把团队回填到 Tab1。
 //
-// 按 tab **挂载**（不是同时挂载）：三个视图各自持有自己的滚动位置与表单状态，
+// 三个 Tab 因此变成「一个动作 + 两个资源面」：派活只有一个出口，另外两个 Tab 只负责"挑什么来派"。
+// 三条执行通道全部复用既有实现（recruit-expert / teams:dispatch / 判定器 onAutoRun），
+// **没有第四条派活路径**；渲染层也不覆盖安全策略（助手的安全档由主进程取更严格者）。
+//
+// 按 tab **挂载**（不是同时挂载）：三个视图各自持有滚动位置与表单状态，
 // 同时挂载会让三份列表同时发请求、也把三个页面的状态混在一个 DOM 里。
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import AiTeamBuilder from './AiTeamBuilder';
 import AssistantDirectory, { type Employee } from './AssistantDirectory';
-import PublishTaskPage from './PublishTaskPage';
-import InlineAlert from './InlineAlert';
-import Button from './ui/Button';
+import AssistantDispatch from './AssistantDispatch';
 import TabBar from './ui/TabBar';
 import { IconBot, IconUsers, IconZap, IconList } from './icons';
 import { useI18n } from '../i18n';
 import { ASSISTANT_TABS, type AssistantTab } from '../lib/assistantTabs';
 
-// 目录用「清单」图标：它是浏览/发现面，与「发布任务」（闪电=发起）语义不同
+// 派活用「闪电」图标：它是发起面；目录用清单（浏览/发现）
 const TAB_ICON: Record<AssistantTab, typeof IconUsers> = {
+  dispatch: IconZap,
   directory: IconList,
-  publish: IconZap,
   aiTeam: IconBot,
 };
 
-interface TeamSummary {
-  id: string;
-  name: string;
-  description?: string;
-  leadMissing?: boolean;
-  archivedAt?: string | null;
+export interface DispatchTeamResult {
+  ok?: boolean;
+  tasks?: number;
+  error?: string;
+  code?: string;
 }
 
 export default function AssistantPage({
-  tab, onTab, threadId, projectPath, onAutoRun, onDispatchEmployee,
+  tab, onTab, threadId, projectPath, onAutoRun, onDispatchEmployee, onDispatchTeam,
 }: {
   tab: AssistantTab;
   onTab: (t: AssistantTab) => void;
-  /** 当前会话 id（发布任务派活挂到该会话；无会话时提示先建会话） */
+  /** 当前会话 id（派活落点；无会话时由调用方决定是否新建） */
   threadId?: string | null;
   /** 当前项目目录（派活的工作目录） */
   projectPath?: string;
-  /** 不选军团时的「自动构建」出口：把目标交回主链路，由判定器决定是否升级为团队 */
+  /** 主体=系统：目标交回主链路，由判定器决定是否升级为团队 */
   onAutoRun: (goal: string) => void;
-  /**
-   * 助手目录的派单出口：把（助手 + 主进程返回的角色预设 + 目标）交回既有 recruit-expert 链路。
-   * 不在这里另写一条执行实现 —— 与生态中心「用此角色开会话」同源（§5.5）。
-   */
-  onDispatchEmployee?: (payload: { employee: Employee; runtime: unknown; goal: string }) => void;
+  /** 主体=助手：复用 recruit-expert 链路（落当前会话，见 App 的 recruit 分支） */
+  onDispatchEmployee?: (payload: { employee: Employee; goal: string }) => void;
+  /** 主体=团队：确定性派活（复用 teams:dispatch） */
+  onDispatchTeam?: (p: { teamId: string; goal: string }) => Promise<DispatchTeamResult | undefined>;
 }) {
   const { t } = useI18n();
+  // 资源面 → 派活面的回填。只在页面内存里，不落盘：它描述的是"这一次派活选了谁"。
+  const [pickedEmployeeId, setPickedEmployeeId] = useState('');
+  const [pickedTeamId, setPickedTeamId] = useState('');
+
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       {/* Tab 条：走 ui/TabBar 原语（role=tablist/tab + 方向键 + aria-selected 都收敛在那一处，
@@ -70,12 +79,35 @@ export default function AssistantPage({
       />
       {/* 只挂载活动 Tab（§4.4）：三个视图各自持有滚动位置与表单状态 */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {tab === 'directory' && <AssistantDirectory onDispatch={onDispatchEmployee} />}
-        {tab === 'publish' && (
-          <PublishTaskPage threadId={threadId} projectPath={projectPath} onAutoRun={onAutoRun} />
+        {tab === 'dispatch' && (
+          <AssistantDispatch
+            threadId={threadId}
+            projectPath={projectPath}
+            onAutoRun={onAutoRun}
+            onDispatchAssistant={onDispatchEmployee}
+            onDispatchTeam={onDispatchTeam}
+            initialEmployeeId={pickedEmployeeId}
+            initialTeamId={pickedTeamId}
+            onNeedAssistant={() => onTab('directory')}
+            onNeedTeam={() => onTab('aiTeam')}
+          />
         )}
-        {/* 军团编制已于 2026-10-27 迁入工作室（Studio），此处不再挂 TeamsPage —— 避免双入口 */}
-        {tab === 'aiTeam' && <AiTeamBuilder />}
+        {tab === 'directory' && (
+          <AssistantDirectory
+            onPickForDispatch={(emp) => {
+              setPickedEmployeeId(emp.id);
+              onTab('dispatch');
+            }}
+          />
+        )}
+        {tab === 'aiTeam' && (
+          <AiTeamBuilder
+            onUseTeam={(teamId) => {
+              setPickedTeamId(teamId);
+              onTab('dispatch');
+            }}
+          />
+        )}
       </div>
     </div>
   );

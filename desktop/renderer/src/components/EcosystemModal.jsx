@@ -176,7 +176,9 @@ export default function EcosystemModal({ onClose, embedded = false, enabledSkill
         setError(t('ecosystem.recruitFailed', { msg: r?.error || t('ecosystem.unknownError') }));
         return;
       }
-      window.dispatchEvent(new CustomEvent('mjcode:recruit-expert', { detail: { ...e, runtime: r.rolePreset } }));
+      // newThread: true 是**语义声明**：这里的动作是「用此角色开新会话」。
+      // 派活面板复用同一事件但落当前会话，两者靠这个标志区分，不靠调用方猜。
+      window.dispatchEvent(new CustomEvent('mjcode:recruit-expert', { detail: { ...e, runtime: r.rolePreset, newThread: true } }));
     } catch (err) {
       setError(t('ecosystem.recruitFailed', { msg: err.message || t('ecosystem.unknownError') }));
     } finally {

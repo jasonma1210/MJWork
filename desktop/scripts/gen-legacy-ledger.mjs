@@ -79,7 +79,12 @@ function stripComments(source) {
     .replace(/(^|[^:'"\\])\/\/[^\n]*/g, (_m, p1) => p1);
 }
 
-const ALIAS_SRC = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:globalThis\.)?(?:window\??\.)?mjcode\b(?=\s*[;,)\]}\n]|\s*(?:\|\||\?\?))/g;
+// 别名正则**必须与 test/bridge-parity.test.mjs 的 ALIAS_SRC 一字不差** ——
+// 2026-10-27 实测漂移：bridge-parity 早已补了 `as unknown as` 断言盲区（渲染层合法写法
+// `const mj = window.mjcode as unknown as {...}`），本文件漏了那一支，于是同一时刻
+// bridge-parity 报「引用 215」、台账报「引用 213」，差 2 个方法名。
+// 两份实现各写一份必然漂移（裸 button 的 251/256 也是同一个病），改一处必须改另一处。
+const ALIAS_SRC = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:globalThis\.)?(?:window\??\.)?mjcode\b(?=\s*[;,)\]}\n]|\s*(?:\|\||\?\?)|\s+as\s)/g;
 
 function rendererReferences() {
   const used = new Set();

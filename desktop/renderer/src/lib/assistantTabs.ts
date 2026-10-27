@@ -20,7 +20,7 @@
 //     不再藏在助理里（一个能力不该同时有两个并列入口，否则「在哪管理」会有两个答案）；
 //   · complex   —— 它就是「发布任务」的类型之一（复杂任务），独立成 Tab 会与 publish
 //     抢同一个职责，且用户在两个地方都能派活时，「默认走哪条」变得不可解释。
-export type AssistantTab = 'directory' | 'publish' | 'aiTeam';
+export type AssistantTab = 'directory' | 'dispatch' | 'aiTeam';
 
 export interface AssistantTabDef {
   id: AssistantTab;
@@ -32,13 +32,13 @@ export interface AssistantTabDef {
 //   助理的主任务按设计文档 §0.2 收敛为「选助手与派活」——先有目录（发现），再有派单。
 //   目录数据源是真实的 `ecosystem:employees`（51 条数字员工），不是插件市场复制品。
 export const ASSISTANT_TABS: readonly AssistantTabDef[] = [
+  { id: 'dispatch', labelKey: 'assistant.tabDispatch' },
   { id: 'directory', labelKey: 'assistant.tabDirectory' },
-  { id: 'publish', labelKey: 'assistant.tabPublish' },
   { id: 'aiTeam', labelKey: 'assistant.tabAiTeam' },
 ];
 
 /** 助理页的默认 Tab：**助手目录**（进入助理先看到有哪些助手可派，而不是空白表单） */
-export const DEFAULT_ASSISTANT_TAB: AssistantTab = 'directory';
+export const DEFAULT_ASSISTANT_TAB: AssistantTab = 'dispatch';
 
 /** Tab id 合法性判定（外部输入不可信时用，避免把非法 id 塞进视图状态） */
 export function isAssistantTab(v: unknown): v is AssistantTab {

@@ -52,10 +52,15 @@ const RUNTIME_TONE: Record<RuntimeState, string> = {
 };
 
 export default function AssistantDirectory({
-  onDispatch,
+  onPickForDispatch,
 }: {
-  /** 派单出口：把（助手, 角色预设, 目标）交回既有的 recruit-expert 链路 */
-  onDispatch?: (payload: { employee: Employee; runtime: unknown; goal: string }) => void;
+  /**
+   * 「以此派活」出口：只把选中的助手回填到派活面板，**本页不再自己派活**。
+   * 2026-10-27：原来这里有一套「目标输入 + 提交任务」，与「发布任务」构成两个提交点，
+   * 用户不知道哪个才是真正发出去的那一下。现在派活只有一个出口（派活面板），
+   * 目录只负责"挑谁"。
+   */
+  onPickForDispatch?: (emp: Employee) => void;
 }) {
   const { t } = useI18n();
   const [status, setStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
@@ -135,22 +140,6 @@ export default function AssistantDirectory({
   const [dispatchErr, setDispatchErr] = useState('');
 
   const rt = selected ? (runtime[selected.id]?.state || 'unknown') : 'unknown';
-
-  function submit() {
-    if (!selected) return;
-    const g = goal.trim();
-    if (!g) { setDispatchErr(t('assistant.directory.dispatchNeedGoal')); return; }
-    setDispatchErr('');
-    setDispatching(true);
-    try {
-      // 交回既有链路；渲染层不构造 rolePreset 文本，只传主进程返回的同一份
-      onDispatch?.({ employee: selected, runtime: runtime[selected.id]?.detail ?? null, goal: g });
-    } catch (e) {
-      setDispatchErr(t('assistant.directory.dispatchFailed', { msg: String((e as Error)?.message || e) }));
-    } finally {
-      setDispatching(false);
-    }
-  }
 
   if (status === 'loading') {
     return <div className="p-4 text-caption text-text2" role="status">{t('assistant.directory.loading')}</div>;
@@ -310,25 +299,18 @@ export default function AssistantDirectory({
               </div>
             </div>
 
+            {/* 派活出口不在这里：目录只负责"挑谁"。点这一下把主体回填到派活面板，
+                真正的提交（含运行方式、目标、落点）统一在那边发生。 */}
             <div className="rounded-xl border border-border bg-surface p-3 space-y-2">
               <div className="text-xs font-medium text-text">{t('assistant.directory.dispatchTitle')}</div>
-              <textarea
-                value={goal}
-                onChange={(ev) => setGoal(ev.target.value)}
-                rows={3}
-                placeholder={t('assistant.directory.dispatchGoalPlaceholder')}
-                aria-label={t('assistant.directory.dispatchGoalLabel')}
-                className="w-full rounded-lg border border-border bg-bg px-2 py-1 text-sm"
-              />
-              <div className="text-caption text-text2">{t('assistant.directory.dispatchPresetHint')}</div>
-              {dispatchErr && <InlineAlert type="error" onDismiss={() => setDispatchErr('')}>{dispatchErr}</InlineAlert>}
+              <div className="text-caption leading-relaxed text-text2">{t('assistant.directory.pickHint')}</div>
               <Button
                 size="sm"
                 variant="primary"
-                disabled={dispatching || rt === 'unavailable'}
-                onClick={submit}
+                disabled={rt === 'unavailable'}
+                onClick={() => { if (selected) onPickForDispatch?.(selected); }}
               >
-                {dispatching ? t('assistant.directory.dispatchSubmitting') : t('assistant.directory.dispatchSubmit')}
+                {t('assistant.directory.pickAction')}
               </Button>
             </div>
           </div>

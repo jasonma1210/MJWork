@@ -7,9 +7,9 @@
       "source": "desktop/main/preload.js − desktop/renderer/src（口径同 test/bridge-parity.test.mjs）",
       "unit": "method",
       "total": 266,
-      "referenced": 213,
-      "dead": 53,
-      "ratio": 0.1992,
+      "referenced": 215,
+      "dead": 51,
+      "ratio": 0.1917,
       "groups": [
         {
           "prefix": "market",
@@ -27,12 +27,12 @@
           "disposition": "pending"
         },
         {
-          "prefix": "projects",
-          "count": 5,
+          "prefix": "git",
+          "count": 4,
           "disposition": "pending"
         },
         {
-          "prefix": "git",
+          "prefix": "projects",
           "count": 4,
           "disposition": "pending"
         },
@@ -103,11 +103,6 @@
         },
         {
           "prefix": "server",
-          "count": 1,
-          "disposition": "pending"
-        },
-        {
-          "prefix": "web",
           "count": 1,
           "disposition": "pending"
         },

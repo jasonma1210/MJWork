@@ -87,7 +87,14 @@ interface DraftCard {
 const SIZE_MIN = 1;
 const SIZE_MAX = 8;
 
-export default function AiTeamBuilder() {
+export default function AiTeamBuilder({ onUseTeam }: {
+  /**
+   * 「用这个团队派活」出口（2026-10-27）。
+   * 建团页只产出**编制**，不派活 —— 派活统一由派活面板发出（用户反馈：三个 Tab
+   * 各自都有"发布"，不知道哪个才算真正发出去）。
+   */
+  onUseTeam?: (teamId: string) => void;
+} = {}) {
   const { t } = useI18n();
   const [requirement, setRequirement] = useState('');
   const [size, setSize] = useState(3);
@@ -96,6 +103,7 @@ export default function AiTeamBuilder() {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [draft, setDraft] = useState<TeamDraft | null>(null);
   const [cards, setCards] = useState<DraftCard[]>([]);
+  const [savedTeamId, setSavedTeamId] = useState('');
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const [notice, setNotice] = useState('');
@@ -234,6 +242,7 @@ export default function AiTeamBuilder() {
       setNotice(failed.filter(Boolean).join(' / '));
     } else {
       setNotice(t('assistant.aiTeam.saved', { n: saved }));
+      setSavedTeamId(teamId);
       setCards((prev) => prev.map((c) => (c.status === 'accepted' ? { ...c, status: 'edited' } : c)));
     }
   }
@@ -374,10 +383,17 @@ export default function AiTeamBuilder() {
               )}
             </article>
           ))}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="primary" size="sm" loading={busy === 'save'} onClick={confirmDraft}>
               <IconPlus size={13} /> {t('assistant.aiTeam.confirm')}
             </Button>
+            {/* 落库之后才有下一步：把用户送到派活面板并预选这个团队。
+                建团页本身不发任务 —— 否则页面上又会出现第二个"发布"。 */}
+            {savedTeamId && onUseTeam && (
+              <Button variant="secondary" size="sm" onClick={() => onUseTeam(savedTeamId)}>
+                {t('assistant.aiTeam.useTeam')}
+              </Button>
+            )}
             <span className="text-caption text-text2">{t('assistant.aiTeam.confirmHint')}</span>
           </div>
         </section>

@@ -189,10 +189,12 @@ await check('A11 账本（ledger）优先于定时任务/助理/生态中心，�
 
 // ── B. 助理子页目录与挂载方式 ──
 
-await check('B1 助理子页目录恰为三个 Tab：助手目录（默认）/ 发布任务 / AI 建团', () => {
+await check('B1 助理子页目录恰为三个 Tab：派活（默认）/ 助手目录 / AI 建团', () => {
   const ids = ASSISTANT_TABS.map((x) => x.id);
-  // 第五版（2026-10-27）：默认页从 publish 改为 directory（§5.2 目录是发现入口）
-  assert.deepEqual(ids, ['directory', 'publish', 'aiTeam']);
+  // 第六版（2026-10-27）：'publish'（发布任务）下线 —— 它只能派给军团或自动，与助手毫无关系，
+  // 且与目录/建团各自都有一套提交。改为 'dispatch'（派活面板，唯一提交出口）。
+  assert.deepEqual(ids, ['dispatch', 'directory', 'aiTeam']);
+  assert.ok(!ids.includes('publish'), 'publish（发布任务）已下线，不应再出现');
   assert.ok(!ids.includes('teams'), '军团编制不应再是助理子 Tab（已迁入工作室）');
   // 定时任务已升回一级入口 ⇒ 不得再作为助理 Tab
   assert.ok(!ids.includes('scheduled'), '定时任务不应再是助理子 Tab');
@@ -205,10 +207,14 @@ await check('B2 每个 Tab 的文案键都存在且指向 assistant 模块（禁
   }
 });
 
-await check('B3 默认 Tab 是「助手目录」；isAssistantTab 对非法输入返回 false（防脏值进视图状态）', () => {
-  assert.equal(DEFAULT_ASSISTANT_TAB, 'directory', `默认 Tab 应为 directory，实际 ${DEFAULT_ASSISTANT_TAB}`);
+await check('B3 默认 Tab 是「派活」；isAssistantTab 对非法输入返回 false（防脏值进视图状态）', () => {
+  // 第六版（2026-10-27）：默认页改回发起面。用户实测「本该用来发布任务的那一页，进去后跟助手
+  // 没关系」—— 派活面板第一眼就是派给谁（主体三态 + 助手下拉），所以它才该默认落地；
+  // 目录作为资源面退到第二个 Tab。
+  assert.equal(DEFAULT_ASSISTANT_TAB, 'dispatch', `默认 Tab 应为 dispatch，实际 ${DEFAULT_ASSISTANT_TAB}`);
   assert.ok(isAssistantTab(DEFAULT_ASSISTANT_TAB), `默认 Tab 非法：${DEFAULT_ASSISTANT_TAB}`);
-  for (const ok of ['directory', 'publish', 'aiTeam']) assert.ok(isAssistantTab(ok), ok);
+  for (const ok of ['dispatch', 'directory', 'aiTeam']) assert.ok(isAssistantTab(ok), ok);
+  assert.equal(isAssistantTab('publish'), false, 'publish 已下线，必须判为非法');
   // 'teams' 现已**不是**助理 Tab（迁去工作室）⇒ 必须判为非法，防止脏值把编制塞回助理
   for (const bad of ['', null, undefined, 'teams', 'teams ', 'Teams', 'unknown', 'scheduled', 'complex', 0]) {
     assert.equal(isAssistantTab(bad), false, String(bad));
@@ -238,8 +244,8 @@ await check('B5 App 把视图标志（含 showScheduled）传给 Sidebar，并�
 await check('B6 AssistantPage 按 tab 条件挂载三个子视图，且不再有 scheduled/complex/teams 分支', () => {
   const page = stripComments(read('components/AssistantPage.tsx'));
   for (const pair of [
+    ["tab === 'dispatch'", '<AssistantDispatch'],
     ["tab === 'directory'", '<AssistantDirectory'],
-    ["tab === 'publish'", '<PublishTaskPage'],
     ["tab === 'aiTeam'", '<AiTeamBuilder'],
   ]) {
     const i = page.indexOf(pair[0]);
@@ -248,6 +254,8 @@ await check('B6 AssistantPage 按 tab 条件挂载三个子视图，且不再有
   }
   assert.ok(!page.includes("tab === 'scheduled'"), 'AssistantPage 不应再有 scheduled 分支（已升一级入口）');
   assert.ok(!page.includes('<ScheduledTasks'), 'AssistantPage 不应再挂 ScheduledTasks');
+  // 第六版：发布任务页已删。若这里又出现 PublishTaskPage，说明三处各自提交的形态回来了。
+  assert.ok(!page.includes('PublishTaskPage'), 'AssistantPage 仍引用 PublishTaskPage（发布任务已下线）');
   // 第四版（2026-10-27）：编制迁入工作室 ⇒ AssistantPage 不得再挂 TeamsPage（否则双入口）
   assert.ok(!page.includes('<TeamsPage'), 'AssistantPage 仍挂 TeamsPage（编制已迁工作室，会形成双入口）');
 });
@@ -345,18 +353,18 @@ await check('D1 目录走真实数字员工通道，且只在选中时查 runtim
   }
 });
 
-await check('D2 卡片点击只选中、不执行：执行出口有且只有「提交任务」', () => {
+await check('D2 目录不再有执行出口：卡片只选中，唯一出口是「以此派活」回填', () => {
   const dir = stripComments(read('components/AssistantDirectory.tsx'));
-  // 卡片 onClick 只能是 setSelectedId（选中），不能是任何派活/运行调用
   const cardBlock = dir.slice(dir.indexOf('filtered.map'), dir.indexOf('filtered.map') + 1200);
   assert.ok(cardBlock.length > 200, '未定位到目录卡片渲染段（片段为空 ⇒ 断言空过）');
   assert.match(cardBlock, /onClick=\{\(\) => setSelectedId\(e\.id\)\}/, '卡片 onClick 不是纯选中');
-  assert.ok(!/onDispatch|agentRun|recruit/i.test(cardBlock), '卡片点击路径里出现了执行调用');
-  // 全组件内 onDispatch 只能出现在 submit() 里（用户显式提交）
-  const dispatchUses = dir.match(/onDispatch\?\.\(/g) || [];
-  assert.equal(dispatchUses.length, 1, `onDispatch 调用点应为 1 处（提交按钮），实际 ${dispatchUses.length}`);
-  // 空目标必须拦截：不允许「没填目标就提交」
-  assert.match(dir, /if\s*\(!g\)\s*\{/, '提交前未校验任务目标');
+  assert.ok(!/onDispatch|onPickForDispatch|agentRun|recruit/i.test(cardBlock), '卡片点击路径里出现了派活调用');
+  // 2026-10-27 第六版：目录**不得**再有提交能力（原来它和"发布任务"各有一套提交，
+  // 用户不知道哪个才算真正发出去）。执行调用一律为零，回填出口恰好一处。
+  assert.ok(!/onDispatch\?\.\(|teamsDispatch|createScheduledTask|recruit-expert/.test(dir),
+    '目录里出现了执行/派活调用（它只该"挑谁"，不该"发出去"）');
+  const picks = dir.match(/onPickForDispatch\?\.\(/g) || [];
+  assert.equal(picks.length, 1, `onPickForDispatch 调用点应为 1 处，实际 ${picks.length}`);
 });
 
 await check('D3 运行条件不猜 ready：通道失败/员工缺失一律 unavailable，绝不显示可运行', () => {
@@ -366,8 +374,8 @@ await check('D3 运行条件不猜 ready：通道失败/员工缺失一律 unava
   const unavail = (dir.match(/state: 'unavailable'/g) || []).length;
   assert.equal(ready, 1, `置 ready 的分支应恰好 1 处，实际 ${ready}`);
   assert.ok(unavail >= 2, `失败/异常分支都应置 unavailable，实际 ${unavail}`);
-  // 不可用时应禁用提交按钮（不是「看着能点、点了才报错」）
-  assert.match(dir, /disabled=\{dispatching \|\| rt === 'unavailable'\}/, 'runtime 不可用时未禁用提交');
+  // 不可用时应禁用「以此派活」（不是「看着能点、点了才报错」）
+  assert.match(dir, /disabled=\{rt === 'unavailable'\}/, 'runtime 不可用时未禁用「以此派活」');
 });
 
 await check('D4 列表项必须是块级卡片，不许被 Button 的行内基础类压成一段文字', () => {
@@ -395,6 +403,49 @@ await check('D4 列表项必须是块级卡片，不许被 Button 的行内基�
         className="w-full !justify-start !items-start !h-auto !text-left" />
     ))`;
   assert.equal(isBlockCard(oldShape), false, '反向自检失败：旧实现也通过了这条断言，说明判据是空转');
+});
+
+// ── E. 派活收敛（2026-10-27）：一个动作 + 两个资源面 ──
+//
+// 用户实测的原始问题：「发布任务」进去后跟助手没关系；目录和建团又各自都有发布。
+// 收敛后必须守住两条：① 提交出口**有且只有一个**（派活面板）；② 资源面不得再长出执行调用。
+
+await check('E1 派活面板是唯一提交出口：三种主体各走既有通道，且都在 submit() 内分派', () => {
+  const dis = stripComments(read('components/AssistantDispatch.tsx'));
+  assert.ok(dis.includes('onDispatchAssistant'), '缺「派给助手」通道');
+  assert.ok(dis.includes('onDispatchTeam'), '缺「派给团队」通道');
+  assert.ok(dis.includes('onAutoRun'), '缺「交给系统」通道（判定器）');
+  // 三个分派必须发生在同一个 submit() 里：否则又是三条并行入口
+  const submitAt = dis.indexOf('async function submit(');
+  assert.ok(submitAt > 0, '未找到 submit()（片段为空 ⇒ 断言会空过）');
+  const tail = dis.slice(submitAt, submitAt + 900);
+  assert.ok(tail.length > 300, '提交段截取过短，断言可能空过');
+  for (const branch of ['dispatchAssistant(g)', 'dispatchTeam(g)', 'onAutoRun(g)']) {
+    assert.ok(tail.includes(branch), `submit() 内缺少分派分支 ${branch}`);
+  }
+});
+
+await check('E2 不支持的能力显式禁用：定时 + 指定助手必须被挡住（不静默降级）', () => {
+  const dis = stripComments(read('components/AssistantDispatch.tsx'));
+  assert.match(dis, /assistantBlockedBySchedule/, '未识别「定时 + 助手」这一非法组合');
+  assert.match(dis, /scheduledNoAssistant/, '未给出「定时不能指定助手」的说明');
+  // 必须参与提交可用性判定：只提示不禁用 = 用户仍能点，然后静默跑成别的形态
+  const canSubmitAt = dis.indexOf('const canSubmit');
+  assert.ok(canSubmitAt > 0, '未找到 canSubmit 判定');
+  assert.ok(dis.slice(canSubmitAt, canSubmitAt + 300).includes('assistantBlockedBySchedule'),
+    'canSubmit 未把「定时 + 助手」纳入判定');
+});
+
+await check('E3 资源面不得再长出执行调用（防「三处各自发布」回归）', () => {
+  // 发布任务页必须已删除：它执行的是「派给军团/自动」，名字却叫"发布任务"
+  assert.ok(!fs.existsSync(path.join(ROOT, 'renderer/src/components/PublishTaskPage.tsx')),
+    'PublishTaskPage 又回来了（发布任务已并入派活面板）');
+  for (const rel of ['components/AssistantDirectory.tsx', 'components/AiTeamBuilder.tsx']) {
+    const src = stripComments(read(rel));
+    for (const bad of ['teamsDispatch', 'createScheduledTask', 'recruit-expert', 'onAutoRun']) {
+      assert.ok(!src.includes(bad), `${rel} 出现执行调用 ${bad}（资源面只该"挑/造"，不该"发"）`);
+    }
+  }
 });
 
 console.log(`\nnav-state-dual-entry: ${pass} 通过 / ${fail} 失败`);

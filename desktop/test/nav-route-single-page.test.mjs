@@ -50,7 +50,8 @@ check('R4 切主页面 ⇒ 清空 overlay 且与新页面 tab 归位', () => {
   assert.equal(s.overlay, 'none', '切页面必须清空 overlay');
   assert.equal(s.overlayPayload, null, 'overlay payload 一并清空');
   assert.equal(s.studioTab, 'board', '显式给的 studio tab 应用上');
-  assert.equal(s.assistantTab, 'directory', '未指定助理 tab ⇒ 回落默认（directory），不串台');
+  // 2026-10-27 第六版：默认助理 tab 改为 dispatch（派活是唯一提交出口，落地即发起面）
+  assert.equal(s.assistantTab, 'dispatch', '未指定助理 tab ⇒ 回落默认（dispatch），不串台');
 });
 
 check('R5 非法 page 被忽略（外部输入不可信）', () => {

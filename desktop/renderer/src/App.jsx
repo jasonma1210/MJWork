@@ -221,19 +221,17 @@ export default function App() {
     setPaneTab, setPaneOpen, getThreads: () => threads, selectThread,
   }));
 
-  // 生态中心「招募」：开新会话并关闭设置/生态页，待 ChatArea 切到新会话
-  // （thread=null 清空 extras）的 effect 落定后，再派发 enable-expert 注入角色。
-  // 顺序不可颠倒：同步连发两条事件会被「切会话清空 sessionExtras」覆盖掉 expert；
-  // setTimeout(0) 是宏任务，保证在 React 提交渲染+effect 之后执行。
-  // 新会话首条消息创建线程后，ChatArea 的 extras 持久化会把 expert 落到新线程存档。
+  // 招募/派助手：**落点统一到当前会话**（2026-10-27）。enable-expert 是覆盖写 sessionExtras.expert，
+  // 有会话就地换助手，没有才新建 —— 原来第一句 setActiveThread(null) 让"派给助手"必然多开一个会话。
+  // setTimeout(0) 是宏任务，保证在 React 提交渲染+effect 之后注入，否则会被清空 extras 覆盖。
   useEffect(() => {
     const recruit = (e) => {
       if (!e.detail) return;
-      setActiveThread(null);
+      const detail = e.detail;
+      if (detail.newThread || !activeThreadRef.current) setActiveThread(null);
       goConversation();
       setShowSettings(false);
       setShowEcosystem(false);
-      const detail = e.detail;
       // 助手目录派单（2026-10-27）：detail.goal 存在时一并预填首条提示，于是「选助手 → 填目标 → 提交」落到带着目标的会话；先切会话再在宏任务里注入 expert（同步连发会被清空 extras 覆盖）。
       if (detail?.goal) setInitialPrompt(String(detail.goal));
       setTimeout(() => {
@@ -578,13 +576,14 @@ export default function App() {
         {showAssistant && <AssistantPage
   tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path}
   onAutoRun={(goal) => { newThreadInProject(null, goal); }}
-  onDispatchEmployee={({ employee, runtime, goal }) => {
+  onDispatchEmployee={({ employee, goal }) => {
     // 复用生态中心「用此角色开会话」的既有链路（mjcode:recruit-expert），
     // 不在助理页另起第二条派活实现；rolePreset 由主进程返回，渲染层不构造。
-    window.dispatchEvent(new CustomEvent('mjcode:recruit-expert', {
-      detail: { ...employee, runtime, goal },
-    }));
+    window.dispatchEvent(new CustomEvent('mjcode:recruit-expert', { detail: { ...employee, goal } }));
   }}
+  onDispatchTeam={async ({ teamId, goal }) => window.mjcode?.teamsDispatch?.({
+    teamId, goal, threadId: activeThreadId, projectPath: activeProject?.path || '',
+  })}
 />}{showScheduled && <ScheduledTasks />}{showStudio && <StudioPage
   threadId={activeThreadId} projectId={activeProject?.id || null} projectPath={activeProject?.path || null} projectName={activeProject?.name || null} onOpenFile={openFileInPane} onPickProject={() => setShowProjectPicker(true)} />}
         {showLedger && <LedgerPage projectId={activeProject?.id || null} />}
