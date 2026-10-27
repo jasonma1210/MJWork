@@ -22,7 +22,8 @@
     "lint:strict": "eslint main/ agent-core/ renderer/src/ chrome-extension/ --max-warnings=0",
     "format": "prettier --write \"main/**/*.js\" \"agent-core/**/*.js\" \"renderer/src/**/*.{js,jsx}\"",
     "format:check": "prettier --check \"main/**/*.js\" \"agent-core/**/*.js\" \"renderer/src/**/*.{js,jsx}\"",
-    "typecheck": "npm run typecheck --prefix renderer"
+    "typecheck": "npm run typecheck --prefix renderer",
+    "setup:ocr": "node scripts/install-ocr.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",
@@ -51,7 +52,24 @@
       "shared/**/*",
       "shared-ipc/**/*",
       "renderer/dist/**/*",
-      "package.json"
+      "package.json",
+      "!**/*.map",
+      "!**/*.d.ts",
+      "!**/*.d.mts",
+      "!**/*.d.cts",
+      "!**/*.md",
+      "!**/LICENSE*",
+      "!**/CHANGELOG*",
+      "!**/AUTHORS*",
+      "!**/NOTICE*",
+      "!**/{test,tests,__tests__,examples,example,benchmark,coverage}/**",
+      "!**/node_modules/zod/src/**",
+      "!**/node_modules/sql.js/dist/sql-asm*",
+      "!**/node_modules/sql.js/dist/sql-wasm-debug*",
+      "!**/node_modules/sql.js/dist/sql-wasm-inline*",
+      "!**/node_modules/sql.js/dist/sql-wasm-browser*",
+      "!**/node_modules/sql.js/dist/worker.*",
+      "!**/node_modules/sql.js/dist/*.zip"
     ],
     "asarUnpack": [
       "**/node_modules/sql.js/dist/sql-wasm.wasm"

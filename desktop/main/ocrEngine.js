@@ -24,17 +24,54 @@ const PREFERRED_LANGS = ['chi_sim', 'eng'];
 
 let cached = null;
 
-/** 在 PATH 里找可执行文件（不依赖 shell，避免 env 差异） */
+/**
+ * 找可执行文件。不能只查 PATH：
+ * 打包后的 .app 由 Finder 启动时，继承的是 launchd 的最小 PATH（/usr/bin:/bin:/usr/sbin:/sbin），
+ * **不包含** /opt/homebrew/bin —— 于是「本机明明装了 tesseract，App 里却显示 OCR 不可用」。
+ * 这是本地优先产品最典型的假故障，所以这里按「显式指定 → PATH → 常见安装位置 → 随应用打包位置」依次找。
+ */
 function which(bin) {
-  const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  for (const d of dirs) {
-    const p = path.join(d, bin);
+  const candidates = [];
+  const envKey = `MJCODE_${bin.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_BIN`;
+  if (process.env[envKey]) candidates.push(process.env[envKey]);
+  for (const d of String(process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
+    candidates.push(path.join(d, bin));
+  }
+  // Homebrew(Apple Silicon / Intel)、MacPorts、系统目录
+  for (const d of ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', '/usr/bin']) {
+    candidates.push(path.join(d, bin));
+  }
+  // 随应用打包的位置（将来若把二进制塞进 resources 也能直接用，无需改这里）
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'ocr', bin));
+    candidates.push(path.join(process.resourcesPath, 'tesseract', bin));
+  }
+  for (const p of candidates) {
     try {
-      if (fs.existsSync(p) && fs.statSync(p).isFile()) return p;
+      if (p && fs.existsSync(p) && fs.statSync(p).isFile()) return p;
     } catch { /* 权限/悬空链接：跳过 */ }
   }
   return null;
 }
+
+/** 数据目录：随应用打包的 tessdata 优先（保证版本一致），否则交给 tesseract 自己的默认查找 */
+function tessdataDir() {
+  const candidates = [];
+  if (process.env.TESSDATA_PREFIX) candidates.push(process.env.TESSDATA_PREFIX);
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'ocr', 'tessdata'));
+    candidates.push(path.join(process.resourcesPath, 'tesseract', 'tessdata'));
+  }
+  for (const d of candidates) {
+    try {
+      if (d && fs.existsSync(path.join(d, 'eng.traineddata'))) return d;
+    } catch { /* 忽略 */ }
+  }
+  return null;
+}
+
+/** 安装提示（界面与 capabilities 共用同一份文案，避免「提示里写的命令和实际不一致」） */
+const INSTALL_HINT = 'macOS: brew install tesseract tesseract-lang（Debian/Ubuntu: apt install tesseract-ocr tesseract-ocr-chi-sim）';
 
 /**
  * 探测 OCR 引擎（结果缓存；能力位与导入共用同一份判定，避免两处口径不一致）。
@@ -46,7 +83,9 @@ function detect({ refresh = false } = {}) {
   if (!bin) {
     cached = {
       available: false, engine: null,
-      reason: '本机未找到 tesseract（OCR 需要它）。安装方式：brew install tesseract tesseract-lang',
+      reason: `本机未找到 tesseract（OCR 需要它）。${INSTALL_HINT}`,
+      installHint: INSTALL_HINT,
+      searchedPath: true,
     };
     return cached;
   }
@@ -70,6 +109,7 @@ function detect({ refresh = false } = {}) {
     available: true,
     engine: 'tesseract',
     bin,
+    tessdataDir: tessdataDir(),
     langs,                 // 本机全部语种
     languages: fallback,   // 本次会用到的语种
     reason: null,
@@ -87,11 +127,12 @@ function ocrImage(filePath, { languages } = {}) {
   if (!eng.available) return Promise.resolve({ ok: false, code: 'OCR_UNAVAILABLE', reason: eng.reason });
   if (!fs.existsSync(filePath)) return Promise.resolve({ ok: false, code: 'FILE_NOT_FOUND' });
   const langArg = (languages && languages.length ? languages : eng.languages).join('+');
+  const dataDirArg = eng.tessdataDir ? ['--tessdata-dir', eng.tessdataDir] : [];
   const started = Date.now();
   return new Promise((resolve) => {
     execFile(
       eng.bin,
-      [filePath, 'stdout', '-l', langArg, '--psm', '3'],
+      [filePath, 'stdout', '-l', langArg, '--psm', '3', ...dataDirArg],
       { encoding: 'utf8', timeout: OCR_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 },
       (err, stdout, _stderr) => {
         const ms = Date.now() - started;
@@ -129,4 +170,4 @@ function writeTempImage(buf, ext) {
   return p;
 }
 
-module.exports = { detect, ocrImage, normalizeOcrText, writeTempImage, OCR_TIMEOUT_MS };
+module.exports = { detect, ocrImage, normalizeOcrText, writeTempImage, tessdataDir, which, INSTALL_HINT, OCR_TIMEOUT_MS };

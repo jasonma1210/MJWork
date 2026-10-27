@@ -207,6 +207,30 @@ if (!eng.available) {
   });
 }
 
+await check('⑨b 打包后的最小 PATH（Finder 启动）仍能定位 tesseract', () => {
+  // 真实故障形态：.app 由 Finder 启动时继承 launchd 的最小 PATH（不含 /opt/homebrew/bin），
+  // 于是「本机装了 tesseract，App 里却显示 OCR 不可用」。用子进程模拟最小 PATH 来卡这条。
+  const { spawnSync } = require('node:child_process');
+  const code = `
+    delete require.cache[require.resolve(${JSON.stringify(path.join(DESKTOP, 'main/ocrEngine.js'))})];
+    const ocr = require(${JSON.stringify(path.join(DESKTOP, 'main/ocrEngine.js'))});
+    const d = ocr.detect({ refresh: true });
+    process.stdout.write(JSON.stringify({ available: d.available, bin: d.bin || null }));
+  `;
+  const r = spawnSync(process.execPath, ['-e', code], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
+  });
+  const out = JSON.parse(r.stdout || '{}');
+  if (!eng.available) {
+    // 本机就没装引擎时，这条只验证「不会崩、且如实报不可用」
+    assert.equal(out.available, false);
+    return;
+  }
+  assert.equal(out.available, true, `最小 PATH 下探测失败（这会让打包版误报 OCR 不可用）：${r.stdout}${r.stderr}`);
+  assert.ok(out.bin && !out.bin.startsWith('/usr/bin:/'), 'bin 路径异常');
+});
+
 // ── 能力声明必须与真实探测一致（这条永远跑，防「声明支持但导入必失败」） ──
 await check('⑨ capabilities 如实反映 OCR 可用性与图片格式支持', () => {
   const caps = kb.capabilities();
