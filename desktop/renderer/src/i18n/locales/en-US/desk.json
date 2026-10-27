@@ -134,6 +134,7 @@
     "retry": "Retry",
     "flow": "Usage ledger (row-by-row detail and export)",
     "empty": "No token usage recorded yet",
-    "emptyHint": "Start a conversation and real usage will appear here by model and by task. Data comes from local message records only and is never uploaded."
+    "emptyHint": "Start a conversation and real usage will appear here by model and by task. Data comes from local message records only and is never uploaded.",
+    "truncated": "Many conversations: this page only counts the most recent 200 conversations (including archived ones)."
   }
 }

@@ -44,6 +44,8 @@ export interface DeskUsage {
   tasks: TaskUsageRow[];
   /** 任务维度的附加说明：'no-tasks' 无任务组 / 'no-ledger' 有任务但无配额流水 / '' 正常 */
   taskHint: 'no-tasks' | 'no-ledger' | '';
+  /** true = 会话数超过单次扫描上限，总量只覆盖最近 maxThreads 个会话（界面必须说明） */
+  truncated: boolean;
   reload: () => void;
 }
 
@@ -53,7 +55,7 @@ function bridge(): Bridge {
   return (window.mjcode || {}) as unknown as Bridge;
 }
 
-export function useDeskUsage(maxThreads = 40, taskLimit = 8): DeskUsage {
+export function useDeskUsage(maxThreads = 200, taskLimit = 8): DeskUsage {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState('');
   const [threads, setThreads] = useState<RawThread[]>([]);
@@ -62,6 +64,7 @@ export function useDeskUsage(maxThreads = 40, taskLimit = 8): DeskUsage {
   const [groupTaskIds, setGroupTaskIds] = useState<Map<string, string[]>>(new Map());
   const [taskTotals, setTaskTotals] = useState<Map<string, { tokens: number; count: number }>>(new Map());
   const [ledgerSeen, setLedgerSeen] = useState(false);
+  const [truncated, setTruncated] = useState(false);
   const [tick, setTick] = useState(0);
   const reqId = useRef(0);
 
@@ -79,8 +82,20 @@ export function useDeskUsage(maxThreads = 40, taskLimit = 8): DeskUsage {
 
     (async () => {
       // ① 会话 + 全部消息：这是「我用了多少 token」的唯一全量真实来源。
+      // **归档会话也要算**：用户问的是「我用掉多少」，归档只是从侧栏收起来，
+      // 不是把这段消耗作废。listThreads() 默认排除 archived，故显式再取一次并合并去重。
       const rawThreads = (await mj.localThreads!()) as RawThread[] | undefined;
-      const list = Array.isArray(rawThreads) ? rawThreads : [];
+      const rawArchived = mj.localArchivedThreads
+        ? (await mj.localArchivedThreads()) as RawThread[] | undefined
+        : undefined;
+      const seen = new Set<string>();
+      const list = [...(Array.isArray(rawThreads) ? rawThreads : []), ...(Array.isArray(rawArchived) ? rawArchived : [])]
+        .filter((t) => {
+          const id = String(t?.id || '');
+          if (!id || seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
       const pages = await Promise.all(list.slice(0, maxThreads).map(async (t) => {
         const tid = String(t?.id || '');
         if (!tid) return [] as RawMessage[];
@@ -90,6 +105,8 @@ export function useDeskUsage(maxThreads = 40, taskLimit = 8): DeskUsage {
       if (id !== reqId.current) return;
       setThreads(list);
       setMessages(pages.flat());
+      // 截断必须显形：宁可告诉用户"只统计了最近 N 个会话"，也不能给一个看起来完整的错数字
+      setTruncated(list.length > maxThreads);
       setStatus('ready');
       setError('');
 
@@ -166,6 +183,7 @@ export function useDeskUsage(maxThreads = 40, taskLimit = 8): DeskUsage {
     byThread: agg.byThread,
     tasks,
     taskHint,
+    truncated,
     reload,
   };
 }

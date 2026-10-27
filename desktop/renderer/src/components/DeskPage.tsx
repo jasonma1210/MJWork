@@ -206,6 +206,7 @@ export default function DeskPage({
           {usage.status === 'ready' ? (
             <div className="flex flex-col gap-4">
               <DeskUsageBoard totals={usage.totals} byModel={usage.byModel} byDay={usage.byDay} />
+              {usage.truncated ? <p className="text-caption text-text2">{t('desk.stats.truncated')}</p> : null}
 
               <DeskIntake
                 policies={policiesOf(t, approval)}
