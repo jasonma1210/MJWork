@@ -146,16 +146,53 @@ check('桥方法确实接到 knowledge:* 通道（不是空壳）', () => {
 });
 
 // ── 5) 面板用到的每个桥方法都被渲染层真实调用（防「桥暴露了没人用」的反向空洞）──
-check('KnowledgePanel 真实调用 8 条桥方法（不是只 import 不用）', () => {
-  const text = fs.readFileSync(path.join(SRC, 'components/KnowledgePanel.tsx'), 'utf8')
+check('KnowledgePanel / KnowledgeScope 真实调用 12 条桥方法（不是只 import 不用）', () => {
+  const text = ['components/KnowledgePanel.tsx', 'components/KnowledgeScope.tsx']
+    .map((f) => fs.readFileSync(path.join(SRC, f), 'utf8'))
+    .join('\n')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1');
   const used = [
     'knowledgeCapabilities', 'knowledgeImport', 'knowledgeList', 'knowledgeSearch',
     'knowledgeAuthorize', 'knowledgeDeauthorize', 'knowledgeDelete', 'knowledgePreviewContext',
+    'knowledgePlanCitations', 'knowledgePrunePlans',
+    'knowledgeCancelImport', 'onKnowledgeImportProgress',
   // 调用形态是 `mj?.knowledgeXxx?.(payload)`：属性可选链（?.）与方法可选调用（?.(）都要算
   ].filter((n) => new RegExp(`mj\\??\\.${n}\\??\\.\\(`).test(text));
-  assert.equal(used.length, 8, `面板只调用了 ${used.length}/8 条桥方法：${used.join(', ')}`);
+  assert.equal(used.length, 12, `只调用了 ${used.length}/12 条桥方法：${used.join(', ')}`);
+});
+
+// ── 6) 任务侧接线：选择器挂 Composer、载荷经 useAgentRun 下发、契约显式登记 ──
+check('Composer 挂载 KnowledgeScope 并传入 project / workspaceBound', () => {
+  const { sf } = parse(path.join(SRC, 'components/Composer.tsx'));
+  const el = jsxElements(sf).find((e) => e.name === 'KnowledgeScope');
+  assert.ok(el, 'Composer 未挂载 KnowledgeScope（任务侧无法选知识）');
+  assert.ok(el.attrs.get('project'), '未把 project 传给 KnowledgeScope（授权主体会丢）');
+  assert.ok(el.attrs.get('workspaceBound'), '未把 workspaceBound 传入（新建任务页会露出选择器）');
+});
+
+check('useAgentRun 把待用知识快照展开进 agent:run 载荷', () => {
+  const src = fs.readFileSync(path.join(SRC, 'hooks/useAgentRun.ts'), 'utf8');
+  assert.match(src, /\.\.\.pendingKnowledgePlanPayload\(\)/, '载荷未展开知识快照');
+  assert.match(src, /from '\.\.\/lib\/knowledgePlan'/, '缺少 knowledgePlan 模块导入');
+});
+
+check('IPC 契约显式登记 knowledgePlan 且要求 id+hash 成对', () => {
+  const src = fs.readFileSync(path.join(DESKTOP, 'shared-ipc/contract.mjs'), 'utf8');
+  assert.match(src, /knowledgePlan: z/, 'knowledgePlan 未在 agentRunPayloadSchema 显式登记');
+  assert.match(src, /planId: z\.string\(\)\.min\(1\)[\s\S]{0,240}?planHash: z\.string\(\)\.min\(1\)/,
+    'knowledgePlan 未要求 planId + planHash 成对');
+});
+
+check('§17.2：能力关闭时选择器与面板整块不渲染（不是渲染后禁用）', () => {
+  for (const f of ['components/KnowledgePanel.tsx', 'components/KnowledgeScope.tsx']) {
+    const src = fs.readFileSync(path.join(SRC, f), 'utf8');
+    // 两种等价写法都接受：面板用三态（capsReady / caps.enabled===false），
+    // 选择器用 `!enabled` 短路。判据是「关闭态走 return null 提前退出」，不是「按钮 disabled」。
+    assert.match(src, /enabled\s*===\s*false\)\s*return null|!enabled\b[^\n]*return null/,
+      `${f} 缺少「关闭态整块不渲染」的提前 return`);
+    assert.ok(!/disabled=\{!enabled/.test(src), `${f} 用的是「渲染后禁用」而不是「整块不渲染」`);
+  }
 });
 
 console.log(`\nknowledge-ui-wiring: ${pass}/${pass + fail} 通过`);

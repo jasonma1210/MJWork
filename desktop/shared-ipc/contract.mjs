@@ -219,6 +219,18 @@ export const agentRunPayloadSchema = z
         model: z.string().max(160).nullable().optional(),
       })
       .optional(),
+    // M3 §8.6：知识注入快照。形状**必须成对**（planId + planHash）：
+    // 只给 planId 无法证明「校验的是同一个快照」，故不接受单字段用法。
+    // 与 verification / skillDisclosure 的处理**刻意相反**：那两个是可选档位，非法值回落默认档
+    // 以免「写错一个可选字段就发不出消息」；知识快照非法则必须整轮拒绝 ——
+    // 静默回落成「不注入」等于让用户以为用了知识、实际没有（与「少注入一段」同病）。
+    knowledgePlan: z
+      .object({
+        planId: z.string().min(1).max(120),
+        planHash: z.string().min(1).max(120),
+      })
+      .nullable()
+      .optional(),
   })
   .passthrough();
 

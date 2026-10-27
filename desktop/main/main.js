@@ -1776,7 +1776,7 @@ initProjectsIpc({
   audit,
 });
 // DS Bots / T6-10：工件只读域装配（与 projects 同源 getter，不引入新存储实例）
-registerDomainIpc({ artifactStore, projectStore, teamStore, taskStore, taskDb, audit, mainWindow });
+registerDomainIpc({ artifactStore, projectStore, teamStore, taskStore, taskDb, audit, mainWindow, getFlags: () => featureFlags });
 initTeamsIpc({
   getTeamStore: () => teamStore,
   // M5 / T5-6：对话内团队事件流按 thread_id 反查 run（task_groups 是「run 属于哪个会话」的

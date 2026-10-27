@@ -8,6 +8,7 @@ import ComposerControls from './ComposerControls';
 import { projectDisplayName } from '../lib/projectName';
 import { useI18n, tGlobal } from '../i18n';
 import Button from './ui/Button';
+import KnowledgeScope from './KnowledgeScope';
 
 // T2-2：输入区组件（自主进程 ChatArea.jsx 原样搬移，props 接口不变）。
 // 历史事故纪律（保留原文注释）：Composer 是独立 function 组件，拿不到父组件词法作用域，
@@ -211,6 +212,9 @@ export default function Composer({
           )}
         </div>
       )}
+      {/* M3 §8.2：任务侧只做「选范围 / 预览 / 看引用」，管理面在工作室 → 空间 → 知识库。
+          与派活目标条同属「这一发带上什么」的意图行，故并列放在输入框上方。 */}
+      <KnowledgeScope project={project} workspaceBound={workspaceBound} />
       {/* R-15 产品边界：派活目标条——选中军团后常驻的一行「这一发发给谁」。
           原 10rem 截断小徽标升级为独立行：团队名完整可见 + 成员数 + 预算，
           ✕ 一键退出派活态。用 Button 原种关闭，不新增裸 button。

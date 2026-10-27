@@ -411,12 +411,22 @@ contextBridge.exposeInMainWorld('mjcode', {
   // 渲染层无权自行判定「快照仍然有效」。
   knowledgeCapabilities: () => ipcRenderer.invoke('knowledge:capabilities'),
   knowledgeImport: (payload) => ipcRenderer.invoke('knowledge:import', payload || {}),
+  // §8.4：导入是可取消的多阶段任务——取消按 jobId（进度事件里带回来）
+  knowledgeCancelImport: (payload) => ipcRenderer.invoke('knowledge:cancel-import', payload || {}),
+  onKnowledgeImportProgress: (cb) => {
+    const handler = (_, d) => cb(d);
+    ipcRenderer.on('knowledge:import-progress', handler);
+    return () => ipcRenderer.removeListener('knowledge:import-progress', handler);
+  },
   knowledgeList: (payload) => ipcRenderer.invoke('knowledge:list', payload || {}),
   knowledgeSearch: (payload) => ipcRenderer.invoke('knowledge:search', payload || {}),
   knowledgeAuthorize: (payload) => ipcRenderer.invoke('knowledge:authorize', payload || {}),
   knowledgeDeauthorize: (payload) => ipcRenderer.invoke('knowledge:deauthorize', payload || {}),
   knowledgeDelete: (payload) => ipcRenderer.invoke('knowledge:delete', payload || {}),
   knowledgePreviewContext: (payload) => ipcRenderer.invoke('knowledge:preview-context', payload || {}),
+  // 「查看引用」按快照回读（不返回正文，只回引用元数据）；清理只删「又老又没被引用过」的快照
+  knowledgePlanCitations: (payload) => ipcRenderer.invoke('knowledge:plan-citations', payload || {}),
+  knowledgePrunePlans: (payload) => ipcRenderer.invoke('knowledge:prune-plans', payload || {}),
   artifactsIndex: (payload) => ipcRenderer.invoke('artifacts:index', payload || {}),
   artifactsSection: (payload) => ipcRenderer.invoke('artifacts:section', payload || {}),
   artifactsVersions: (payload) => ipcRenderer.invoke('artifacts:versions', payload || {}),

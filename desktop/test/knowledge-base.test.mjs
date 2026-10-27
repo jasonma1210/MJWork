@@ -31,7 +31,7 @@ async function main() {
 
   // ── T1 导入 ──
   const f1 = writeTmp('kb-a.txt', '本地知识库中文检索测试：产品需求与技术方案。知识库用于检索业务资料。');
-  const r1 = kb.importDocument({ db, storageDir, workspaceId: 'ws1', projectId: 'A', filePath: f1, actorId: 'owner' });
+  const r1 = await kb.importDocument({ db, storageDir, workspaceId: 'ws1', projectId: 'A', filePath: f1, actorId: 'owner' });
   ok(r1.ok && r1.status === 'ready' && r1.chunks > 0, 'T1 导入文本成功且产生分块');
   const srcA = r1.sourceId;
 
@@ -54,7 +54,7 @@ async function main() {
 
   // ── T4 英文词元 ──
   const f2 = writeTmp('kb-b.txt', 'The knowledge base indexes business documents for retrieval.');
-  const r2 = kb.importDocument({ db, storageDir, projectId: 'A', filePath: f2, actorId: 'owner' });
+  const r2 = await kb.importDocument({ db, storageDir, projectId: 'A', filePath: f2, actorId: 'owner' });
   const s4 = kb.search({ db, projectId: 'A', query: 'knowledge', limit: 10 });
   ok(s4.items.length > 0, 'T4 英文词元 knowledge 命中');
 
@@ -66,7 +66,7 @@ async function main() {
 
   // ── T6 片段 HTML 转义（防注入） ──
   const f3 = writeTmp('kb-c.txt', '正常内容 <script>alert(1)</script> 危险文本应被转义显示。');
-  const r3 = kb.importDocument({ db, storageDir, projectId: 'A', filePath: f3, actorId: 'owner' });
+  const r3 = await kb.importDocument({ db, storageDir, projectId: 'A', filePath: f3, actorId: 'owner' });
   const s6 = kb.search({ db, projectId: 'A', query: '危险文本', limit: 10 });
   ok(s6.items.length > 0, 'T6 含 HTML 的文档可被检索');
   ok(!s6.items[0].snippet.includes('<script>'), 'T6 片段未原样输出 <script>（已转义）');
@@ -97,7 +97,7 @@ async function main() {
 
   // ── T10 撤权后再授权 → 旧 plan 因 revision 递增而 STALE ──
   const f4 = writeTmp('kb-d.txt', '另一份资料用于验证授权版本号递增。');
-  const r4 = kb.importDocument({ db, storageDir, projectId: 'A', filePath: f4, actorId: 'owner' });
+  const r4 = await kb.importDocument({ db, storageDir, projectId: 'A', filePath: f4, actorId: 'owner' });
   const srcD = r4.sourceId;
   const plan2 = kb.buildContextPlan({ db, projectId: 'A', actorId: 'owner', sourceIds: [srcD], budgetTokens: 1000 });
   kb.deauthorize({ db, sourceId: srcD, projectId: 'A' });
@@ -117,8 +117,8 @@ async function main() {
   // ── T12 重复文件 → 独立授权 ──
   const dup1 = writeTmp('kb-dup1.txt', '重复内容用于验证独立授权');
   const dup2 = writeTmp('kb-dup2.txt', '重复内容用于验证独立授权');
-  const rd1 = kb.importDocument({ db, storageDir, projectId: 'A', filePath: dup1, actorId: 'owner' });
-  const rd2 = kb.importDocument({ db, storageDir, filePath: dup2, actorId: 'owner' }); // 未授权（未传 projectId）
+  const rd1 = await kb.importDocument({ db, storageDir, projectId: 'A', filePath: dup1, actorId: 'owner' });
+  const rd2 = await kb.importDocument({ db, storageDir, filePath: dup2, actorId: 'owner' }); // 未授权（未传 projectId）
   ok(rd1.sourceId !== rd2.sourceId, 'T12a 同内容导入为两个独立 source');
   kb.authorize({ db, sourceId: rd1.sourceId, projectId: 'A', actorId: 'owner' });
   const s12 = kb.search({ db, projectId: 'A', query: '重复内容', limit: 10 });

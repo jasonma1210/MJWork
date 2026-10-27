@@ -487,6 +487,27 @@ const MIGRATIONS = [
       db.exec(KB_SCHEMA);
     },
   },
+  {
+    // 2026-10-27（M3 注入配套）：运行期注入事实表。v15 建的是「计划」，注入需要「事实」——
+    // 既要能事后追「这轮答复依据了哪些片段」，也要让快照清理能保护被引用过的计划。
+    // 单开一条迁移而不是改 v15：已升到 v15 的库不会再跑 v15，改它等于对存量库无效。
+    version: 16,
+    name: 'knowledge-plan-uses',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS kb_plan_uses (
+          run_id     TEXT NOT NULL,
+          plan_id    TEXT NOT NULL,
+          project_id TEXT,
+          chunk_ids  TEXT NOT NULL DEFAULT '[]',
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (run_id, plan_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_kb_plan_uses_plan ON kb_plan_uses(plan_id);
+        CREATE INDEX IF NOT EXISTS idx_kb_plan_uses_time ON kb_plan_uses(created_at);
+      `);
+    },
+  },
 ];
 
 function openDb(dataDir) {

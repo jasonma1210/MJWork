@@ -47,6 +47,10 @@ interface KbPlan {
 interface KbCaps {
   supportedExtensions: string[];
   maxFileBytes: number;
+  /** §17.2 特性开关：默认关闭，直到运行期注入与性能验收通过 */
+  enabled?: boolean;
+  indexKind?: string;
+  hasFts5?: boolean;
 }
 
 // 桥面别名：门禁 test/bridge-parity.test.mjs 按「整桥别名」识别渲染层对 window.mjcode 的调用
@@ -59,6 +63,17 @@ function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+interface ImportProgress { jobId?: string; file?: string; stage?: string }
+
+/**
+ * 订阅导入进度（§8.4）。返回退订函数；桥不存在时返回空退订（非 Electron 宿主不报错）。
+ * 单独抽函数而不是内联，是为了让「桥方法名」在文件里只出现一次，便于门禁逐条核对。
+ */
+function subscribeImportProgress(cb: (p: ImportProgress) => void): () => void {
+  const off = mj?.onKnowledgeImportProgress?.((d: unknown) => cb((d || {}) as ImportProgress));
+  return typeof off === 'function' ? (off as () => void) : () => {};
 }
 
 export interface KnowledgePanelProps {
@@ -80,9 +95,16 @@ export default function KnowledgePanel({ projectId = null }: KnowledgePanelProps
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // §8.4：导入进度 / 可取消 / 逐项结果
+  const [importJob, setImportJob] = useState<string | null>(null);
+  const [importStage, setImportStage] = useState<{ file: string; stage: string } | null>(null);
+  const [importSummary, setImportSummary] = useState<{ ok: number; fail: number; details: string[] } | null>(null);
   // 支持格式与大小上限一律读主进程 capabilities（§8.2），不在渲染层复制一份常量：
   // 复制的那份迟早与解析器真实能力漂移，用户会照着过期提示去导入必然失败的文件。
   const [caps, setCaps] = useState<KbCaps | null>(null);
+  // capsReady 与 caps 分开：`caps === null` 既可能表示「还没问到」也可能表示「问失败了」，
+  // 二者必须区分——前者不能先渲染出一个马上要消失的面板，后者则不该被当成「功能被关」。
+  const [capsReady, setCapsReady] = useState(false);
 
   useEffect(() => {
     Promise.resolve(mj?.knowledgeCapabilities?.())
@@ -90,7 +112,8 @@ export default function KnowledgePanel({ projectId = null }: KnowledgePanelProps
         const res = raw as { ok?: boolean; capabilities?: KbCaps } | undefined;
         if (res?.ok && res.capabilities) setCaps(res.capabilities);
       })
-      .catch(() => setCaps(null)); // 读不到就不显示这条提示，不编造能力
+      .catch(() => setCaps(null)) // 读不到就不显示能力提示，也不编造能力
+      .finally(() => setCapsReady(true));
   }, []);
 
   const load = useCallback(() => {
@@ -119,34 +142,75 @@ export default function KnowledgePanel({ projectId = null }: KnowledgePanelProps
   function codeText(code?: string): string {
     const map: Record<string, string> = {
       FILE_TOO_LARGE: 'knowledge.errorFileTooLarge',
+      INDEX_TOO_LARGE: 'knowledge.errorIndexTooLarge',
       UNSUPPORTED_TYPE: 'knowledge.errorUnsupportedType',
       EMPTY_CONTENT: 'knowledge.errorEmptyContent',
       READ_FAILED: 'knowledge.errorReadFailed',
       FILE_NOT_FOUND: 'knowledge.errorFileNotFound',
       NOT_A_FILE: 'knowledge.errorNotAFile',
       INVALID_PATH: 'knowledge.errorInvalidPath',
+      // §8.2：解析失败/加密/编码不可信必须是**明确失败**，不能显示成「已导入但没有内容」
+      ENCRYPTED: 'knowledge.errorEncrypted',
+      UNSUPPORTED_ENCODING: 'knowledge.errorUnsupportedEncoding',
+      PARSE_FAILED: 'knowledge.errorParseFailed',
+      CANCELED: 'knowledge.errorCanceled',
     };
     const key = map[code || ''];
     return key ? t(key) : t('knowledge.errorGeneric');
   }
 
+  const stageText = (stage?: string): string => {
+    const map: Record<string, string> = {
+      parsing: 'knowledge.stageParsing', chunking: 'knowledge.stageChunking',
+      indexing: 'knowledge.stageIndexing', ready: 'knowledge.stageReady',
+    };
+    const key = map[stage || ''];
+    return key ? t(key) : (stage || '');
+  };
+
+  // §8.4：导入是可取消的多阶段任务。进度事件里带回 jobId（取消要用它），
+  // 且进度只更新「当前文件 + 当前阶段」，不把每个分块都刷到界面上。
+  useEffect(() => subscribeImportProgress((p) => {
+    if (p.jobId) setImportJob(p.jobId);
+    if (p.file) setImportStage({ file: p.file, stage: p.stage || '' });
+  }), []);
+
   function doImport() {
     setBusy('import');
     setNotice(null);
+    setImportJob(null);
+    setImportStage(null);
+    setImportSummary(null);
     Promise.resolve(mj?.knowledgeImport?.({ projectId: pid }))
       .then((raw) => {
-        const res = raw as { ok?: boolean; code?: string } | undefined;
-        if (res?.ok) {
-          setNotice({ kind: 'info', text: t('knowledge.imported') });
-          load();
-          return;
-        }
+        const res = raw as {
+          ok?: boolean; code?: string; imported?: number; failed?: number;
+          results?: Array<{ file?: string; ok?: boolean; code?: string; chunks?: number }>;
+        } | undefined;
         // 用户取消对话框不是错误：不弹红条，保留原界面
         if (res?.code === 'CANCELED') return;
-        setNotice({ kind: 'error', text: codeText(res?.code) });
+        if (!res?.results) {
+          setNotice({ kind: 'error', text: codeText(res?.code) });
+          return;
+        }
+        // 一个失败不吞掉其他成功项：逐行列出失败项的原因
+        const failures = res.results.filter((r) => !r.ok);
+        setImportSummary({
+          ok: res.imported || 0,
+          fail: res.failed || 0,
+          details: failures.map((r) => t('knowledge.importFailLine', { file: r.file || '', reason: codeText(r.code) })),
+        });
+        if ((res.imported || 0) > 0) load();
       })
       .catch(() => setNotice({ kind: 'error', text: t('knowledge.errorGeneric') }))
-      .finally(() => setBusy(''));
+      .finally(() => { setBusy(''); setImportStage(null); setImportJob(null); });
+  }
+
+  function cancelImport() {
+    if (!importJob) return;
+    Promise.resolve(mj?.knowledgeCancelImport?.({ jobId: importJob }))
+      .then(() => setNotice({ kind: 'info', text: t('knowledge.importCanceled') }))
+      .catch(() => setNotice({ kind: 'error', text: t('knowledge.errorGeneric') }));
   }
 
   function doSearch() {
@@ -234,6 +298,12 @@ export default function KnowledgePanel({ projectId = null }: KnowledgePanelProps
   const scopeLabel = (s: Scope) => (s === 'project'
     ? t('knowledge.scopeProject') : s === 'all' ? t('knowledge.scopeAll') : t('knowledge.scopeUnassigned'));
 
+  // §17.2：能力默认关闭。关闭时**整块不渲染**（不是渲染后再禁用）——否则会出现一个
+  // 每点一次都报 FEATURE_DISABLED 的面板，把「功能没开」演成「功能坏了」。
+  // capsReady 为真之前不渲染，避免「先出现再消失」的闪烁。
+  if (!capsReady) return null;
+  if (caps && caps.enabled === false) return null;
+
   return (
     <section className="rounded-2xl border border-border bg-surface p-3">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
@@ -267,6 +337,28 @@ export default function KnowledgePanel({ projectId = null }: KnowledgePanelProps
           </Button>
         ))}
         <Button size="xs" variant="ghost" onClick={load}>{t('knowledge.refresh')}</Button>
+        {/* 快照只增不删（保留历史判据所需），故给一个人工清理入口：
+            只清「30 天前且从未被任何运行引用过」的快照，规则在主进程。 */}
+        <Button
+          size="xs"
+          variant="ghost"
+          loading={busy === 'prune'}
+          onClick={() => {
+            setBusy('prune');
+            Promise.resolve(mj?.knowledgePrunePlans?.({ olderThanDays: 30 }))
+              .then((raw) => {
+                const res = raw as { ok?: boolean; deleted?: number } | undefined;
+                setNotice(res?.ok
+                  ? { kind: 'info', text: t('knowledge.pruneDone', { n: res.deleted || 0 }) }
+                  : { kind: 'error', text: t('knowledge.errorGeneric') });
+                load();
+              })
+              .catch(() => setNotice({ kind: 'error', text: t('knowledge.errorGeneric') }))
+              .finally(() => setBusy(''));
+          }}
+        >
+          {busy === 'prune' ? t('knowledge.pruning') : t('knowledge.prune')}
+        </Button>
       </div>
 
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -294,6 +386,22 @@ export default function KnowledgePanel({ projectId = null }: KnowledgePanelProps
       {notice && (
         <div className="mb-2">
           <InlineAlert type={notice.kind} onDismiss={() => setNotice(null)}>{notice.text}</InlineAlert>
+        </div>
+      )}
+
+      {importStage && (
+        <div className="mb-2 flex items-center gap-2 text-caption text-text2">
+          <span className="truncate">
+            {t('knowledge.importProgress', { file: importStage.file, stage: stageText(importStage.stage) })}
+          </span>
+          <Button size="xs" variant="ghost" onClick={cancelImport}>{t('knowledge.importCancel')}</Button>
+        </div>
+      )}
+
+      {importSummary && (
+        <div className="mb-2 text-caption text-text2">
+          <div>{t('knowledge.importSummary', { ok: importSummary.ok, fail: importSummary.fail })}</div>
+          {importSummary.details.map((d) => <div key={d} className="truncate">{d}</div>)}
         </div>
       )}
 

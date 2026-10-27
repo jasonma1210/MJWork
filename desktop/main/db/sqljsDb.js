@@ -105,9 +105,15 @@ async function openSqliteJsDb(filePath) {
 
   function schedulePersist() {
     dirty = true;
+    // 批量写入保护（2026-10-27）：`flush()` 会 `export()` **整个内存库**（全量拷贝）。
+    // 知识库导入是「几千次写入」的批量场景，若每次写入都重排一次落盘，
+    // 导入期间会出现反复的全库拷贝 —— 实测 2MB 高熵文本即被操作系统杀掉（exit 137）。
+    // 挂起期间只置 dirty，不安排定时器；恢复时补一次即可（数据不丢：dirty 仍为 true）。
+    if (suspendDepth > 0) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(flush, PERSIST_DEBOUNCE_MS);
   }
+  let suspendDepth = 0;
 
   // 一次性注册 exit 兜底：防抖窗口内进程退出也不丢数据（flush 幂等）
   process.on('exit', () => { try { flush(); } catch { /* 退出期尽力而为 */ } });
@@ -121,6 +127,16 @@ async function openSqliteJsDb(filePath) {
     __driver: 'sqljs',
     // 打开期的降级说明（库损坏/已重建/已从快照恢复）——由 db/index.js 转交 dbStatus
     __openWarning: openWarning,
+
+    /**
+     * 挂起/恢复落盘调度（批量写入用）。可嵌套；恢复后若仍有未落盘变更，安排一次 flush。
+     * 只影响「何时落盘」，不影响任何写入语义 —— 挂起期间数据仍在内存库里可读可写。
+     */
+    suspendPersist() { suspendDepth += 1; },
+    resumePersist() {
+      suspendDepth = Math.max(0, suspendDepth - 1);
+      if (suspendDepth === 0 && dirty) schedulePersist();
+    },
 
     exec(sql) {
       sqldb.exec(sql);

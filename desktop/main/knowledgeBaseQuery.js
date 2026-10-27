@@ -14,9 +14,50 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5MB（首里程碑文本类）
-const SUPPORTED_EXT = new Set(['.txt', '.md', '.markdown', '.json', '.csv', '.log', '.text']);
-const SUPPORTED_MIME = new Set(['text/plain', 'text/markdown', 'application/json', 'text/csv']);
+// 2MB（文本类与 PDF/DOCX 同限）。**这不是拍脑袋的保守值，是性能验收量出来的**：
+// sql.js 是内存库，倒排条数≈正文字符数（中文 bigram，每个字一条 posting）。本机实测
+// （darwin / M4 Pro / node 22）：1MB 高熵中文 → 9.6 万 posting / 271MB RSS / 0.6s；
+// 2MB → 19.2 万 / 390MB / 1.1s；**3MB 起进程被系统杀掉（exit 137）**，且此时
+// 「索引预算」还没触发 —— 说明瓶颈在内存库本身，不在索引条数。
+// 因此把文件上限压到实测可用的 2MB，并在超限时明确报 FILE_TOO_LARGE（提示拆分），
+// 而不是让主进程 OOM（用户只会看到应用闪退、且不知道为什么）。
+const MAX_FILE_BYTES = 2 * 1024 * 1024;
+// 索引预算（2026-10-27 性能验收的结论，不是拍脑袋）：
+// sql.js 是**内存库**，倒排条数 ≈ 正文字符数（中文按 bigram，每个字产生 1 条 posting）。
+// 实测（本机 darwin/M4，node 22）：1MB 高熵中文 → 9.6 万 posting / 271MB RSS / 0.6s；
+// 2MB → 19.2 万 / 390MB / 1.2s；**5MB 直接被系统杀掉（exit 137）**。
+// 所以「文件 5MB 上限」不能等同于「一定能索引」：给一条显式的倒排预算，
+// 超限返回 INDEX_TOO_LARGE（附建议），而不是让主进程 OOM —— 后者用户只会看到应用闪退。
+const MAX_INDEX_POSTINGS = 200000;
+const TEXT_EXT = new Set(['.txt', '.md', '.markdown', '.json', '.csv', '.log', '.text']);
+const SUPPORTED_EXT = new Set([...TEXT_EXT, '.pdf', '.docx']);
+const SUPPORTED_MIME = new Set([
+  'text/plain', 'text/markdown', 'application/json', 'text/csv',
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
+const EXT_MIME = {
+  '.md': 'text/markdown', '.markdown': 'text/markdown', '.json': 'application/json',
+  '.csv': 'text/csv', '.pdf': 'application/pdf',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+/**
+ * 按扩展名解析出可索引正文。
+ * 失败一律返回**明确错误码**（ENCRYPTED / EMPTY_CONTENT / UNSUPPORTED_ENCODING / PARSE_FAILED），
+ * 绝不返回「空字符串 + ok」——那会把「解析不了」伪装成「已索引但没内容」（§8.2 明令禁止）。
+ */
+function parseContent(ext, buf) {
+  if (TEXT_EXT.has(ext)) {
+    // 文本类：带 BOM 的按 UTF-8 去 BOM；不做智能编码猜测（猜错比报错更坏）
+    let text = buf.toString('utf8');
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    return { ok: true, text };
+  }
+  if (ext === '.docx') return require('./kbDocx').parseDocx(buf);
+  if (ext === '.pdf') return require('./kbPdf').parsePdf(buf);
+  return { ok: false, code: 'UNSUPPORTED_TYPE', reason: `不支持的扩展名 ${ext}` };
+}
 
 function sha1(s) {
   return crypto.createHash('sha1').update(String(s)).digest('hex');
@@ -95,23 +136,47 @@ function chunkText(text, maxChars = 1000, overlap = 200) {
 }
 
 // ── 索引（倒排） ──
+// 2026-10-27（性能验收驱动）：改为**批处理**。此前每处理一个词元就发三条语句
+// （保 term 行 / 写 posting / df+1），一份 500KB 高熵中文文档会产生 ~64 万条 posting ⇒
+// 近 200 万次语句执行，实测 25.8s（5MB 直接不可用）。
+// 现在每个分块只发 3 条语句（按 200 个词元一组）：INSERT OR IGNORE(多值) / INSERT posting(多值) /
+// UPDATE df(IN 列表)。语义完全不变（df 仍按「出现该词的分块数」计），只是把往返次数从 O(词元) 降到 O(组)。
+// 分组上限 200：三条语句的参数数分别为 200 / 600 / 200，都低于 SQLite 的 999 变量上限。
+const INDEX_BATCH = 200;
+
 function indexChunk(db, chunkId, text) {
   const counts = new Map();
   for (const t of tokenize(text)) counts.set(t, (counts.get(t) || 0) + 1);
-  for (const [term, tf] of counts) {
-    q(db).run('INSERT OR IGNORE INTO knowledge_index_terms(term, df) VALUES (?, 0)', [term]);
+  const entries = [...counts.entries()];  for (let i = 0; i < entries.length; i += INDEX_BATCH) {
+    const batch = entries.slice(i, i + INDEX_BATCH);
+    const terms = batch.map((e) => e[0]);
     q(db).run(
-      'INSERT INTO knowledge_index_postings(term, chunk_id, tf) VALUES (?, ?, ?) '
-      + 'ON CONFLICT(term, chunk_id) DO UPDATE SET tf = excluded.tf',
-      [term, chunkId, tf],
+      `INSERT OR IGNORE INTO knowledge_index_terms(term, df) VALUES ${batch.map(() => '(?, 0)').join(',')}`,
+      terms,
     );
-    q(db).run('UPDATE knowledge_index_terms SET df = df + 1 WHERE term = ?', [term]);
+    const postingParams = [];
+    for (const [term, tf] of batch) postingParams.push(term, chunkId, tf);
+    q(db).run(
+      `INSERT INTO knowledge_index_postings(term, chunk_id, tf) VALUES ${batch.map(() => '(?, ?, ?)').join(',')} `
+      + 'ON CONFLICT(term, chunk_id) DO UPDATE SET tf = excluded.tf',
+      postingParams,
+    );
+    q(db).run(
+      `UPDATE knowledge_index_terms SET df = df + 1 WHERE term IN (${terms.map(() => '?').join(',')})`,
+      terms,
+    );
   }
+  return entries.length;
 }
 function deindexChunk(db, chunkId) {
-  const toks = q(db).all('SELECT term FROM knowledge_index_postings WHERE chunk_id = ?', [chunkId]);
-  for (const t of toks) {
-    q(db).run('UPDATE knowledge_index_terms SET df = MAX(0, df - 1) WHERE term = ?', [t.term]);
+  const terms = q(db).all('SELECT term FROM knowledge_index_postings WHERE chunk_id = ?', [chunkId])
+    .map((r) => r.term);
+  for (let i = 0; i < terms.length; i += INDEX_BATCH) {
+    const group = terms.slice(i, i + INDEX_BATCH);
+    q(db).run(
+      `UPDATE knowledge_index_terms SET df = MAX(0, df - 1) WHERE term IN (${group.map(() => '?').join(',')})`,
+      group,
+    );
   }
   q(db).run('DELETE FROM knowledge_index_postings WHERE chunk_id = ?', [chunkId]);
 }
@@ -133,29 +198,47 @@ function getActorEpoch(db, actorId) {
 }
 
 // ── 导入（§8.4 流程） ──
-function importDocument({ db, storageDir, workspaceId = '', projectId = null, filePath, actorId = 'owner' }) {
+// ── 导入（§8.4 流程：parsing → chunking → indexing → ready）──
+// 为什么是 async：§8.4 要求「多文件逐项显示状态、可取消、UI 不假死」。
+// 同步实现下 stage 回调只会在函数返回时一起到达（事件循环被占死），那等于**假进度**。
+// 这里每处理 yieldEvery 个分块让出一次事件循环，取消检查也落在同样的粒度上。
+const YIELD_EVERY = 50;
+const tick = () => new Promise((r) => setImmediate(r));
+
+async function importDocument({
+  db, storageDir, workspaceId = '', projectId = null, filePath, actorId = 'owner',
+  onStage = null, shouldCancel = null, yieldEvery = YIELD_EVERY,
+}) {
+  const stage = (name) => { try { if (onStage) onStage(name); } catch { /* 进度回调异常不得影响导入 */ } };
+  const cancelled = () => { try { return !!(shouldCancel && shouldCancel()); } catch { return false; } };
+
   if (!filePath || typeof filePath !== 'string') return { ok: false, code: 'INVALID_PATH' };
   if (!fs.existsSync(filePath)) return { ok: false, code: 'FILE_NOT_FOUND' };
   const stat = fs.statSync(filePath);
   if (!stat.isFile()) return { ok: false, code: 'NOT_A_FILE' };
   if (stat.size > MAX_FILE_BYTES) return { ok: false, code: 'FILE_TOO_LARGE', size: stat.size, max: MAX_FILE_BYTES };
   const ext = path.extname(filePath).toLowerCase();
-  const mime = SUPPORTED_EXT.has(ext) ? (SUPPORTED_MIME.has('text/markdown') && /md|markdown/.test(ext) ? 'text/markdown' : 'text/plain') : 'text/plain';
-  if (!SUPPORTED_EXT.has(ext)) return { ok: false, code: 'UNSUPPORTED_TYPE', ext, mime };
-  let content;
+  if (!SUPPORTED_EXT.has(ext)) return { ok: false, code: 'UNSUPPORTED_TYPE', ext };
+  const mime = EXT_MIME[ext] || 'text/plain';
+
+  stage('parsing');
+  let parsed;
   try {
-    content = fs.readFileSync(filePath, 'utf8');
+    parsed = parseContent(ext, fs.readFileSync(filePath));
   } catch (e) {
     return { ok: false, code: 'READ_FAILED', error: e.message };
   }
+  if (!parsed.ok) return { ok: false, code: parsed.code || 'PARSE_FAILED', reason: parsed.reason };
+  const content = String(parsed.text || '');
   if (!content.trim()) return { ok: false, code: 'EMPTY_CONTENT' };
+  if (cancelled()) return { ok: false, code: 'CANCELED' };
 
   const hash = sha1(content);
   fs.mkdirSync(storageDir, { recursive: true });
-  const storedName = `${hash}${ext}`;
-  const storedPath = path.join(storageDir, storedName);
+  const storedPath = path.join(storageDir, `${hash}${ext}`);
   // 复制进应用托管存储；**绝不删除/改动用户原始文件**（§8.4：删除也只清索引，不动原文件）
-  if (!fs.existsSync(storedPath)) fs.copyFileSync(filePath, storedPath);
+  const copiedNow = !fs.existsSync(storedPath);
+  if (copiedNow) fs.copyFileSync(filePath, storedPath);
 
   const now = Date.now();
   const sourceId = randomId('kb');
@@ -163,7 +246,7 @@ function importDocument({ db, storageDir, workspaceId = '', projectId = null, fi
   q(db).run(
     `INSERT INTO knowledge_sources(id, workspace_id, title, original_name, content_hash, current_source_version,
        mime_type, parser_version, status, error_code, size_bytes, stored_path, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 1, ?, 'v1', 'ready', NULL, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, 1, ?, 'v1', 'indexing', NULL, ?, ?, ?, ?)`,
     [sourceId, workspaceId, title, path.basename(filePath), hash, mime, stat.size, storedPath, now, now],
   );
   if (projectId) {
@@ -174,16 +257,53 @@ function importDocument({ db, storageDir, workspaceId = '', projectId = null, fi
     bumpProjectRevision(db, projectId);
   }
 
+  stage('chunking');
   const chunks = chunkText(content);
-  for (const c of chunks) {
-    const chunkId = randomId('kc');
-    q(db).run(
-      `INSERT INTO knowledge_chunks(id, source_id, source_version, ordinal, text, token_count, locator_json, content_hash)
-       VALUES (?, ?, 1, ?, ?, ?, '{}', ?)`,
-      [chunkId, sourceId, c.ordinal, c.text, c.text.length, hash],
-    );
-    indexChunk(db, chunkId, c.text);
+  stage('indexing');
+  // 批量写入期间挂起落盘调度：sql.js 的 flush 会全量 export 内存库，
+  // 导入几千个分块时反复全量拷贝会把内存打爆（实测 2MB 高熵文本 exit 137）。
+  // 这里挂起、循环结束后恢复并落盘一次；非 sqljs 驱动没有该 API 时自然跳过。
+  const pausePersist = typeof db.suspendPersist === 'function';
+  if (pausePersist) db.suspendPersist();
+  let postings = 0;
+  try {
+    for (let i = 0; i < chunks.length; i += 1) {
+      const c = chunks[i];
+      const chunkId = randomId('kc');
+      q(db).run(
+        `INSERT INTO knowledge_chunks(id, source_id, source_version, ordinal, text, token_count, locator_json, content_hash)
+         VALUES (?, ?, 1, ?, ?, ?, '{}', ?)`,
+        [chunkId, sourceId, c.ordinal, c.text, c.text.length, hash],
+      );
+      postings += indexChunk(db, chunkId, c.text);
+      if (postings > MAX_INDEX_POSTINGS) {
+        // 先清理再报错：留下半份索引比没有更糟（检索命中一半，用户以为文件就是这样）
+        deleteSource({ db, sourceId });
+        if (copiedNow && !q(db).get('SELECT id FROM knowledge_sources WHERE stored_path = ?', [storedPath])) {
+          try { fs.unlinkSync(storedPath); } catch { /* 副本删除失败不影响结果判定 */ }
+        }
+        return {
+          ok: false, code: 'INDEX_TOO_LARGE', postings, max: MAX_INDEX_POSTINGS,
+          reason: `文档索引规模超出上限（约 ${MAX_INDEX_POSTINGS} 条倒排），请拆分后再导入`,
+        };
+      }
+      if (yieldEvery > 0 && (i + 1) % yieldEvery === 0) {
+        await tick();
+        if (cancelled()) {
+          // 取消 = 撤掉本次未提交的资产（chunks/索引/授权/副本登记），**不动用户原文件**
+          deleteSource({ db, sourceId });
+          if (copiedNow && !q(db).get('SELECT id FROM knowledge_sources WHERE stored_path = ?', [storedPath])) {
+            try { fs.unlinkSync(storedPath); } catch { /* 副本删除失败不影响取消语义 */ }
+          }
+          return { ok: false, code: 'CANCELED', chunksDone: i };
+        }
+      }
+    }
+  } finally {
+    if (pausePersist) db.resumePersist();
   }
+  q(db).run("UPDATE knowledge_sources SET status = 'ready', updated_at = ? WHERE id = ?", [Date.now(), sourceId]);
+  stage('ready');
   return { ok: true, sourceId, title, chunks: chunks.length, contentHash: hash, status: 'ready' };
 }
 
@@ -351,6 +471,113 @@ function validateContextPlanForRun({ db, planId, planHash, actorId }) {
   return { ok: true, planId, projectId: plan.project_id, snapshot: chunkMap };
 }
 
+// ── 快照正文解析（§8.6：注入要的是「文本 + 可追溯引用」，不只是校验结论） ──
+// 与 validateContextPlanForRun 的分工：那个只回答「还能不能用」，这个回答「用的话具体注入什么」。
+// 顺序上**先重验再取正文**——绝不能先读正文再判失效（那等于失效快照也能被注入）。
+const INJECT_MAX_CHARS = 6000; // 引擎侧 appendSystemPrompt 总上限 8000，留出通道自带追加的余量
+
+function resolvePlanContext({ db, planId, planHash, actorId = 'owner', maxChars = INJECT_MAX_CHARS }) {
+  const v = validateContextPlanForRun({ db, planId, planHash, actorId });
+  if (!v.ok) return v; // CONTEXT_PLAN_STALE / FORBIDDEN / PLAN_NOT_FOUND / PLAN_HASH_MISMATCH 原样上抛
+  const ids = Object.keys(v.snapshot || {});
+  if (ids.length === 0) return { ok: true, chunks: [], citations: [], chars: 0, truncated: false };
+  const rows = q(db).all(
+    `SELECT c.id, c.source_id, c.ordinal, c.text, c.source_version, s.title, s.original_name
+     FROM knowledge_chunks c LEFT JOIN knowledge_sources s ON s.id = c.source_id
+     WHERE c.id IN (${ids.map(() => '?').join(',')})
+     ORDER BY c.source_id, c.ordinal`,
+    ids,
+  );
+  // 快照里登记过但库里已查不到的 chunk（并发删除）→ 视为失效，不静默少注入
+  if (rows.length !== ids.length) {
+    return { ok: false, code: 'CONTEXT_PLAN_STALE', reason: 'chunk_missing', expected: ids.length, actual: rows.length };
+  }
+  const chunks = [];
+  const citations = [];
+  let used = 0;
+  let truncated = false;
+  for (const r of rows) {
+    const remain = maxChars - used;
+    if (remain <= 0) { truncated = true; break; }
+    const text = String(r.text || '');
+    const slice = text.length > remain ? text.slice(0, remain) : text;
+    if (slice.length < text.length) truncated = true;
+    chunks.push({ chunkId: r.id, sourceId: r.source_id, text: slice, ordinal: r.ordinal });
+    citations.push({
+      chunkId: r.id, sourceId: r.source_id, sourceVersion: r.source_version,
+      title: r.title || r.original_name || r.source_id, ordinal: r.ordinal,
+    });
+    used += slice.length;
+  }
+  return { ok: true, chunks, citations, chars: used, truncated };
+}
+
+/** 按 planId 读回快照的引用清单（「查看引用」用；不依赖运行是否还在） */
+function listPlanCitations({ db, planId }) {
+  const plan = q(db).get('SELECT chunk_map FROM context_plans WHERE plan_id = ?', [planId]);
+  if (!plan) return { ok: false, code: 'PLAN_NOT_FOUND' };
+  const map = safeParse(plan.chunk_map, {});
+  const ids = Object.keys(map);
+  if (ids.length === 0) return { ok: true, items: [] };
+  const rows = q(db).all(
+    `SELECT c.id, c.source_id, c.ordinal, c.source_version, s.title, s.original_name
+     FROM knowledge_chunks c LEFT JOIN knowledge_sources s ON s.id = c.source_id
+     WHERE c.id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  // 已删除的 chunk 不出现在清单里（但它仍占着快照 → 该快照会被判 STALE，不会假装还有效）
+  const items = rows
+    .map((r) => ({
+      chunkId: r.id, sourceId: r.source_id, sourceVersion: r.source_version,
+      title: r.title || r.original_name || r.source_id, ordinal: r.ordinal,
+    }))
+    .sort((a, b) => (a.sourceId === b.sourceId ? a.ordinal - b.ordinal : String(a.sourceId).localeCompare(String(b.sourceId))));
+  return { ok: true, items, missing: ids.length - rows.length };
+}
+
+/**
+ * 记录「某次运行真正注入了哪个快照的哪些片段」。
+ * 为什么单独记表而不是只靠 context_plans：快照是「计划」，运行是「事实」——
+ * 事后追「这轮答复依据了哪些片段」只能靠这张表；清理策略也据此避免删掉被引用过的快照。
+ */
+function recordPlanUse({ db, runId, planId, projectId = null, chunkIds = [] }) {
+  if (!runId || !planId) return { ok: false, code: 'INVALID_ARGS' };
+  const now = Date.now();
+  q(db).run(
+    `INSERT OR REPLACE INTO kb_plan_uses(run_id, plan_id, project_id, chunk_ids, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [runId, planId, projectId, JSON.stringify(chunkIds), now],
+  );
+  return { ok: true };
+}
+
+/** 某次运行的注入记录（渲染层「查看引用」也可走 planId 那条，这里保留给审计口径） */
+function listRunCitations({ db, runId }) {
+  const row = q(db).get('SELECT plan_id, chunk_ids, created_at FROM kb_plan_uses WHERE run_id = ?', [runId]);
+  if (!row) return { ok: true, items: [], planId: null };
+  return { ok: true, planId: row.plan_id, createdAt: row.created_at, items: safeParse(row.chunk_ids, []) };
+}
+
+/**
+ * 快照清理（§8.4 的配套）：context_plans 只增不删，需要一条明确的保留策略。
+ * 规则（两条同时满足才删）：
+ *   · 早于 olderThanMs（默认 30 天）；
+ *   · 没有被 kb_plan_uses 引用（引用过的快照承载「历史事实」，删掉等于悄悄改写历史）。
+ * 注意与 deleteSource 的区别：删文档时快照**故意保留**（让旧快照被判 STALE）；
+ * 这里删的是「又老又没用过」的快照，目的是不让表无限增长。
+ */
+function pruneContextPlans({ db, olderThanMs = 30 * 24 * 3600 * 1000, now = Date.now() } = {}) {
+  const cutoff = now - olderThanMs;
+  const rows = q(db).all(
+    `SELECT plan_id FROM context_plans
+     WHERE created_at < ?
+       AND plan_id NOT IN (SELECT plan_id FROM kb_plan_uses)`,
+    [cutoff],
+  );
+  for (const r of rows) q(db).run('DELETE FROM context_plans WHERE plan_id = ?', [r.plan_id]);
+  return { ok: true, deleted: rows.length, cutoff };
+}
+
 // ── 删除（§8.4：幂等；移除索引/chunks/授权；不动用户原文件） ──
 function deleteSource({ db, sourceId }) {
   const src = q(db).get('SELECT id FROM knowledge_sources WHERE id = ?', [sourceId]);
@@ -389,9 +616,21 @@ function capabilities() {
     supportedExtensions: [...SUPPORTED_EXT],
     supportedMimeTypes: [...SUPPORTED_MIME],
     maxFileBytes: MAX_FILE_BYTES,
+    // 「文件多大」与「能不能索引」是两件事：sql.js 是内存库，倒排条数≈正文字符数，
+    // 5MB 高熵中文会直接撑爆进程。超限返回 INDEX_TOO_LARGE，界面据此提示拆分。
+    maxIndexPostings: MAX_INDEX_POSTINGS,
     hasFts5: false,
     indexKind: 'bigram-inverted',
-    version: 'v1',
+    // 解析能力的诚实边界（§8.2「具体格式以主进程 capabilities 返回为准」）：
+    // PDF 需要 ToUnicode 或纯 ASCII，扫描件/加密件/缺映射的会明确失败而不是产出乱码。
+    parsers: {
+      text: { ok: true },
+      docx: { ok: true, note: 'word/document.xml 正文；不含页眉页脚/批注' },
+      pdf: { ok: true, note: '需未加密且有文本层；复合字体需 ToUnicode' },
+    },
+    importStages: ['parsing', 'chunking', 'indexing', 'ready'],
+    cancellable: true,
+    version: 'v2',
   };
 }
 
@@ -470,10 +709,24 @@ const KB_SCHEMA = `
     created_at             INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_context_plans_project ON context_plans(project_id);
+
+  -- 2026-10-27（v16）：运行期注入事实表。context_plans 是「计划」，这张是「事实」。
+  -- 用途：①「这一轮答复依据了哪些片段」可追溯；② 快照清理时保护被引用过的计划。
+  CREATE TABLE IF NOT EXISTS kb_plan_uses (
+    run_id     TEXT NOT NULL,
+    plan_id    TEXT NOT NULL,
+    project_id TEXT,
+    chunk_ids  TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (run_id, plan_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_kb_plan_uses_plan ON kb_plan_uses(plan_id);
+  CREATE INDEX IF NOT EXISTS idx_kb_plan_uses_time ON kb_plan_uses(created_at);
 `;
 
 module.exports = {
   KB_SCHEMA,
+  INJECT_MAX_CHARS,
   tokenize,
   importDocument,
   search,
@@ -481,6 +734,12 @@ module.exports = {
   deauthorize,
   buildContextPlan,
   validateContextPlanForRun,
+  // M3 注入（§8.6）：正文解析 / 引用回读 / 使用记录 / 快照清理
+  resolvePlanContext,
+  listPlanCitations,
+  recordPlanUse,
+  listRunCitations,
+  pruneContextPlans,
   deleteSource,
   listSources,
   capabilities,

@@ -16,6 +16,7 @@ import { buildVisionParts } from '../lib/visionInput';
 import { tGlobal } from '../i18n';
 // A4：恢复决策（状态驱动）——纯函数，跨宿主共享（shared/resumeIntent.mjs），有单测覆盖
 import { resumeDecision } from '../../../shared/resumeIntent.mjs';
+import { pendingKnowledgePlanPayload } from '../lib/knowledgePlan';
 
 // T2-2：Agent 运行流程 hook（自主进程 ChatArea.jsx 原样搬移，行为不变）——
 // 发送/中止/引导/排队/清空/规划模式/运行模式/上下文压缩 + 快捷键监听。
@@ -593,12 +594,11 @@ export default function useAgentRun(d) {
         // （agent-core/index.js:2503-2508）——所以只传 skills 就能按需加载，两个宿主都已传。
         skillDisclosure: 'summary',
         ...(modelOverrides ? { modelOverrides } : {}),
+        ...pendingKnowledgePlanPayload(), // M3 §8.6：知识快照（只传 id+hash，正文由主进程重验后自取）
         signal: abortRef.current.signal,
-        // V05：使用运行开始时解析的执行根目录（隔离目录/worktree 或项目目录），
-        // 全程一致；effectiveProject 变化不得覆盖进行中 run 的工作根
+        // V05：用运行开始时解析的执行根目录（worktree 或项目目录），全程一致；effectiveProject 变化不得覆盖进行中 run 的工作根
         cwd: executionRoot,
-        // P0-1：记忆归档的空间分区键（= 项目路径，与召回侧 ChatArea/Worker 同一键）。
-        // 与 cwd 分开：cwd 在 worktree 模式下是临时隔离目录，按它归档的记忆不会被召回。
+        // P0-1：记忆归档分区键 = 项目路径（与召回侧同键）；不用 cwd —— worktree 下它是临时目录，按它归档永不被召回
         projectPath: effectiveProject?.path || '',
         agentsMd,
         skills: fileSkills,

@@ -22,6 +22,8 @@ const verifyPolicy = require('./verifyPolicy');
 const intentMcp = require('./intentMcpPrewarm');
 // N9：治理命中率观测——意图预热的 runs/targets/connected/toolsAdded/misses 计数落点。
 const { governanceStats } = require('./governanceStats');
+// M3 §8.6：知识注入（快照重验 + 正文渲染 + 使用记账）。纯函数模块，不碰 Electron。
+const knowledgeInject = require('./knowledgeInject');
 
 // T0-2：IPC 边界契约（单一事实来源 shared-ipc/contract.mjs）。
 // Electron 主进程是 CJS 且 Node 20 无法同步 require ESM，沿用 loadAgentCore 的动态 import 模式：
@@ -311,6 +313,26 @@ function startAgentRun(payload, sender) {
   runApprovalModes.set(runId, runApprovalMode);
   runConversations.set(runId, String(payload.conversationId || ''));
 
+  // ── M3 §8.6 / §8.6.4：知识注入在**启动前**解析（fail-closed）──
+  // 位置：runId 已知之后、后台循环之前。为什么不放进循环里「少注入一段继续跑」：
+  // 快照失效意味着「授权或文档版本在用户选择之后变了」，此时带着旧内容继续跑，
+  // 用户会得到一份看起来有依据、实际已越权的答复。失败必须表现为「这次没起来 + 原因」。
+  const kbInjection = knowledgeInject.buildInjection({ knowledgePlan: payload.knowledgePlan, actorId: 'owner' });
+  if (!kbInjection.ok) {
+    console.warn(`[agentRunner] 知识注入被拒绝 runId=${runId} code=${kbInjection.code}`);
+    // 回滚本次 run 的登记：否则 runs 里留一个永远不会结束的 run（取消/看门狗都会误判）
+    runs.delete(runId);
+    runApprovalModes.delete(runId);
+    runConversations.delete(runId);
+    return { ok: false, error: kbInjection.reason, code: kbInjection.code };
+  }
+  if (kbInjection.planId) {
+    // 记「事实」而不是只留「计划」：事后追「这轮答复依据了哪些片段」只能靠这张表。
+    // 失败只告警：注入已经成功，记账失败不该反过来废掉这次运行。
+    const rec = knowledgeInject.recordUse({ runId, injection: kbInjection, projectId: payload.projectId || null });
+    if (!rec.ok) console.warn(`[agentRunner] 知识使用记录失败 runId=${runId}: ${rec.code}`);
+  }
+
   // 后台执行：不 await（IPC handle 需立即返回，渲染层靠事件流驱动 UI）
   (async () => {
     let doneSent = false;
@@ -418,6 +440,10 @@ function startAgentRun(payload, sender) {
       model: payload.model,
       // 渲染层本已重建的 mcpTools 在前，意图预热补入的在后；按 function.name 去重（base 优先）。
       mcpTools: mergeToolDefs(payload.mcpTools || [], dynamicMcpTools),
+      // M3 §8.6：知识片段追加在 BASE_PROMPT 之后（appendSystemPrompt 是**追加**语义，
+      // 不是替换——替换会丢掉「能用哪些工具 / 默认目录 / 路径怎么给」整段，见 append-system-prompt 事故）。
+      // 未选知识时为 undefined，引擎侧行为与注入前完全一致（零影响）。
+      appendSystemPrompt: kbInjection.block || undefined,
       enabledSkills: payload.enabledSkills || [],
       skills: payload.skills || [],
       // P1-6 / P1-11：渲染层已下发，但此前被本白名单整体丢弃 → 主进程真机路径两项都不生效

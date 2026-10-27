@@ -9,6 +9,11 @@ const DEFAULTS = Object.freeze({
   miniprogram: false, // 微信小程序控制面
   cua: true,          // Computer Use（桌面端能力，保留）
   ecosystem: true,    // 生态资产目录（数字员工/连接器/技能，桌面端能力，保留）
+  // 2026-10-27（方法论文档 §17.2）：「新数据读取与知识能力使用独立 feature flag，
+  // 默认关闭直至对应验收完成」。知识库 M3 目前**只完成到「快照可生成/可预览/可判失效」**，
+  // 运行期注入与性能验收未过 → 按文档要求默认关闭，验收通过后再改默认值。
+  // 打开方式：MJCODE_FEATURES='{"knowledge":true}'。
+  knowledge: false,
 });
 
 // 从环境变量解析覆盖项：MJCODE_FEATURES='{"collab":true}'。
