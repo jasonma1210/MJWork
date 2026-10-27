@@ -88,7 +88,10 @@ export default function StudioPage({
       />
       {/* 只挂载活动 Tab（§4.4）：同时挂四个会让四份列表一起发请求 */}
       <div className="min-h-0 flex-1 overflow-hidden">
-        {active === 'space' && <TeamSpace spaceId={projectPath} />}
+        {/* 空间 = 项目资产区：看板/审批（TeamSpace）+ 知识库（§8.2：知识库挂在这里，不另立一级入口）。
+            projectId 与 spaceId 是两个键（§4.2.1）：spaceId 是空间键，projectId 是授权主体，
+            知识库的授权/撤权只认后者，不能拿目录路径顶替。 */}
+        {active === 'space' && <TeamSpace spaceId={projectPath} projectId={projectId} />}
         {active === 'roster' && <TeamsPage />}
         {active === 'board' && <StudioBoard projectPath={projectPath} onOpenFile={onOpenFile} />}
         {active === 'artifacts' && (

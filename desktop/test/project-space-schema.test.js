@@ -25,9 +25,15 @@ function indexNames(db) {
   const db = await openDbAsync(dir, { driver: 'sqljs' });
 
   // ── 版本链与目标版本 ──
+  // 判据不用字面量 14：迁移链每个里程碑都会往后长（v14 之后已有 v15 知识库），
+  // 把「当刻的末版号」写成等值断言，等于让下一个人每加一条迁移就来手改常量，
+  // 而真正的回归（最后一条迁移没登记 / 新库停在旧版本）反而没被告知。
+  // 现在断言的是**两条不变量**：末版号必须等于登记表的最大版本且不低于 v14；
+  // 新库 user_version 必须等于该末版号。
   const target = MIGRATIONS[MIGRATIONS.length - 1].version;
-  check('迁移链末版为 v14', target === 14, `实际 v${target}`);
-  check('新库 user_version=14', db.pragma('user_version', { simple: true }) === 14);
+  const maxRegistered = MIGRATIONS.reduce((m, x) => Math.max(m, x.version), 0);
+  check('迁移链末版 = 登记表最大版本，且不低于 v14', target === maxRegistered && target >= 14, `实际 v${target}`);
+  check('新库 user_version = 迁移链末版', db.pragma('user_version', { simple: true }) === target, `实际 ${db.pragma('user_version', { simple: true })}`);
 
   // ── 7 张表存在（设计稿 §4：project_spaces / project_artifacts / artifact_sections /
   //    artifact_section_versions / quota_buckets / quota_consumptions / project_runs）──
@@ -104,14 +110,15 @@ function indexNames(db) {
     WHERE project_id = ? AND created_at > ?`).get('prj_1', now - 6 * 3600 * 1000);
   check('滑动窗口求和剔除 6h 外记录', win.s === 2500, `窗口内合计 ${win.s}`);
 
-  // ── 幂等：重复执行 v14（模拟「列/表已存在、user_version 落后」的老库）──
+  // ── 幂等：把 user_version 拨回 v13（模拟「表/列已存在、版本号落后」的老库）──
+  // 重开库后必须一路补到末版（现行 v15），且已有数据不被重复迁移破坏。
   db.pragma('user_version = 13');
   const rowCountBefore = db.prepare('SELECT COUNT(*) AS c FROM project_spaces').get().c;
   db.flush();
   db.close();
 
   const db2 = await openDbAsync(dir, { driver: 'sqljs' });
-  check('旧版本号重开库自动升级到 v14', db2.pragma('user_version', { simple: true }) === 14);
+  check('旧版本号重开库自动升级到末版', db2.pragma('user_version', { simple: true }) === target, `实际 v${db2.pragma('user_version', { simple: true })}`);
   const rowCountAfter = db2.prepare('SELECT COUNT(*) AS c FROM project_spaces').get().c;
   check('重复迁移不丢数据（项目空间行数不变）', rowCountAfter === rowCountBefore,
     `${rowCountBefore} → ${rowCountAfter}`);

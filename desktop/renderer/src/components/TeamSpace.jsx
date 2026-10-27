@@ -9,6 +9,7 @@ import {
   listApprovals, recordApproval, syncDoc, fetchMembers, touchPresence,
 } from '../lib/collab';
 import InlineAlert from './InlineAlert';
+import KnowledgePanel from './KnowledgePanel';
 import { confirm } from './feedback';
 import { IconCheck, IconClock, IconPlus, IconRefresh, IconUser, IconX } from './icons';
 import { useI18n, tGlobal } from '../i18n';
@@ -29,7 +30,13 @@ function approvalClass(decision) {
   return 'text-text2';
 }
 
-export default function TeamSpace({ spaceId = 'default' }) {
+/**
+ * @param {{ spaceId?: string, projectId?: string|null }} props
+ *   spaceId  空间键（项目目录），驱动看板/审批的 Y.Doc 文档 id；
+ *   projectId 授权主体（§4.2.1 与 spaceId 不是同义词），知识库授权/撤权只认它。
+ *   本文件是冻结的 .jsx（no-new-jsx 门禁），JSDoc 是它对外唯一的类型声明来源。
+ */
+export default function TeamSpace({ spaceId = 'default', projectId = null }) {
   const { t } = useI18n();
   // 看板列显示名：collab.BOARD_COLUMNS 只存 i18n key，渲染期解析（切语言即时生效）
   const colLabel = (key) => {
@@ -307,6 +314,11 @@ export default function TeamSpace({ spaceId = 'default' }) {
           ))}
         </div>
       </section>
+
+      {/* 知识库（M3，§8.2）：项目资产区的一部分，故挂在「空间」内，不新增一级入口。
+          只在有 projectId 时挂载：没有授权主体时「当前项目视图」必然是空的，
+          那不是「没有文档」，是「没有项目」，不能拿空态冒充权限结果。 */}
+      {projectId ? <KnowledgePanel projectId={projectId} /> : null}
     </div>
   );
 }

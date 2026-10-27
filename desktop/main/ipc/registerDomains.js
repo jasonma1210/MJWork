@@ -4,6 +4,7 @@
 const { initArtifactsIpc } = require('./artifacts');
 const { initStudioIpc } = require('./studio');
 const { initLedgerIpc } = require('./ledger');
+const { initKnowledgeIpc } = require('./knowledgeBase');
 
 // 三个域都只吃 getter（闭包注入），不持有存储：装配顺序解耦；且账本与配额共用同一个 SQLite
 // 连接（单一事实源），不另开连接 —— 否则两条连接读到不同快照，明细/汇总对账立刻就废。
@@ -14,6 +15,8 @@ function registerDomainIpc({ artifactStore, projectStore, teamStore, taskStore, 
   initStudioIpc({ getTeamStore: () => teamStore, getTaskStore: () => taskStore });
   // 账本与配额共用同一个 SQLite 连接（单一事实源）：getDb 由 initDb 回调注入
   initLedgerIpc({ getDb: () => taskDb, audit, getWindow: () => mainWindow });
+  // M3 本地知识库：同样复用 taskDb（单一事实源），文件对话框在 main 侧打开
+  initKnowledgeIpc({ getDb: () => taskDb, audit, getWindow: () => mainWindow, getActor: () => 'owner' });
 }
 
 module.exports = { registerDomainIpc };

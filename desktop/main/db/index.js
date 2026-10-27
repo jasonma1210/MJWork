@@ -478,6 +478,15 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    // M3 本地知识库（设计文档 §8）：FTS5 在 sql.js 1.15.1 未编译，改用 bigram 倒排索引（普通表）。
+    version: 15,
+    name: 'knowledge-base-m3',
+    up: (db) => {
+      const { KB_SCHEMA } = require('../knowledgeBaseQuery');
+      db.exec(KB_SCHEMA);
+    },
+  },
 ];
 
 function openDb(dataDir) {

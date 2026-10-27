@@ -405,6 +405,19 @@ contextBridge.exposeInMainWorld('mjcode', {
   ledgerQuery: (payload) => ipcRenderer.invoke('ledger:query', payload || {}),
   // 导出路径由主进程的系统保存对话框给出 —— 渲染层**不传**文件路径
   ledgerExport: (payload) => ipcRenderer.invoke('ledger:export', payload || {}),
+  // 本地知识库（M3，§8）：导入 / 列表 / 检索 / 项目授权 / 注入快照预览 / 删除。
+  // 安全约束（§8.7）：渲染层**不传文件路径**——导入目标由主进程系统对话框给出；
+  // 删除只清索引、分块与授权，绝不删除用户原始文件（§8.4）。
+  // knowledge:validate-context 有意**不在此暴露**：快照重验只发生在主进程的运行前检查里，
+  // 渲染层无权自行判定「快照仍然有效」。
+  knowledgeCapabilities: () => ipcRenderer.invoke('knowledge:capabilities'),
+  knowledgeImport: (payload) => ipcRenderer.invoke('knowledge:import', payload || {}),
+  knowledgeList: (payload) => ipcRenderer.invoke('knowledge:list', payload || {}),
+  knowledgeSearch: (payload) => ipcRenderer.invoke('knowledge:search', payload || {}),
+  knowledgeAuthorize: (payload) => ipcRenderer.invoke('knowledge:authorize', payload || {}),
+  knowledgeDeauthorize: (payload) => ipcRenderer.invoke('knowledge:deauthorize', payload || {}),
+  knowledgeDelete: (payload) => ipcRenderer.invoke('knowledge:delete', payload || {}),
+  knowledgePreviewContext: (payload) => ipcRenderer.invoke('knowledge:preview-context', payload || {}),
   artifactsIndex: (payload) => ipcRenderer.invoke('artifacts:index', payload || {}),
   artifactsSection: (payload) => ipcRenderer.invoke('artifacts:section', payload || {}),
   artifactsVersions: (payload) => ipcRenderer.invoke('artifacts:versions', payload || {}),
