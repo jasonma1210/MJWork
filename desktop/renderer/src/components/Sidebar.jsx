@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import ThreadList from './ThreadList';
-import { IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock, IconList, IconFolder } from './icons';
+import { IconEdit, IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock, IconList, IconFolder, IconChart } from './icons';
 import { activeNavOf } from '../lib/navState';
 import logo from '../assets/logo.png';
 import { useI18n } from '../i18n';
@@ -21,7 +21,7 @@ import { useI18n } from '../i18n';
 //     删掉就断了「招募数字员工 → 组成军团」这条主链路。
 export default function Sidebar({
   threads, activeThread, onSelect, onNew, onDelete, onRenameThread, onAssignThread, onOpenArchive,
-  onOpenAssistant, onOpenScheduled, onOpenDesk, onOpenStudio, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
+  onOpenAssistant, onOpenScheduled, onOpenDesk, onOpenStudio, onOpenLedger, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
   projects, activeProject, onSelectProject, onRemoveProject, onRenameProject,
   onNewThread, filter, view,
 }) {
@@ -73,6 +73,8 @@ export default function Sidebar({
         <NavItem icon={<IconUsers size={16} />} label={t('sidebar.assistant')} onClick={onOpenAssistant} active={activeNav === 'assistant'} />
         <NavItem icon={<IconClock size={16} />} label={t('sidebar.scheduled')} onClick={onOpenScheduled} active={activeNav === 'scheduled'} />
         <NavItem icon={<IconFolder size={16} />} label={t('sidebar.studio')} onClick={onOpenStudio} active={activeNav === 'studio'} />
+        {/* 账本（2026-10-27）：Token 用量的唯一完整面；工作台只保留摘要与深链 */}
+        <NavItem icon={<IconChart size={16} />} label={t('sidebar.ledger')} onClick={onOpenLedger} active={activeNav === 'ledger'} />
       </div>
 
       {/* 会话（项目 → 会话 二级结构） */}

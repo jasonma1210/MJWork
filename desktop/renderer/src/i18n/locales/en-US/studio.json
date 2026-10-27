@@ -2,5 +2,16 @@
   "title": "Studio",
   "tabSpace": "Project space",
   "tabRoster": "Roster",
-  "tabArtifacts": "Artifacts"
+  "tabBoard": "Board",
+  "tabArtifacts": "Artifacts",
+  "noProjectTitle": "No project selected",
+  "noProjectDesc": "All four Studio tabs work on the same project. Pick a project first so assets never land in the wrong place.",
+  "noProjectAction": "Select project",
+  "boardEmpty": "No tasks recorded for this project yet",
+  "boardEmptyHint": "After you dispatch a task, real task states and transitions show up here.",
+  "boardLoading": "Loading board…",
+  "boardError": "Failed to read the board",
+  "boardRetry": "Retry",
+  "boardNoRunsYet": "No runs yet",
+  "unauthorized": "You do not have access to this project"
 }

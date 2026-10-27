@@ -396,6 +396,15 @@ contextBridge.exposeInMainWorld('mjcode', {
   projectsQuotaLedger: (payload) => ipcRenderer.invoke('projects:quotaLedger', payload || {}),
   // T6-10：工件只读域（侧面板）——写通道只有模型经 artifact_* 原生工具，渲染层无写入能力
   artifactsForProject: (payload) => ipcRenderer.invoke('artifacts:forProject', payload || {}),
+  // 2026-10-27：Studio 看板 —— 当前项目的真实 run 投影（与对话内团队卡同一份装配内核）。
+  // 只读；projectPath 为空时返回 runs:[] + empty:'no-project'（不回落全局列表，避免串项目）。
+  studioProjectRuns: (payload) => ipcRenderer.invoke('studio:projectRuns', payload || {}),
+  // Token 用量账本（2026-10-27，§7）：只读流水 + 同快照汇总 + CSV 导出。
+  // 口径纪律：这是 **token 消耗**，不是金额；全仓无价格数据，不得折算成钱。
+  ledgerCapabilities: () => ipcRenderer.invoke('ledger:capabilities'),
+  ledgerQuery: (payload) => ipcRenderer.invoke('ledger:query', payload || {}),
+  // 导出路径由主进程的系统保存对话框给出 —— 渲染层**不传**文件路径
+  ledgerExport: (payload) => ipcRenderer.invoke('ledger:export', payload || {}),
   artifactsIndex: (payload) => ipcRenderer.invoke('artifacts:index', payload || {}),
   artifactsSection: (payload) => ipcRenderer.invoke('artifacts:section', payload || {}),
   artifactsVersions: (payload) => ipcRenderer.invoke('artifacts:versions', payload || {}),

@@ -905,8 +905,9 @@ const { createArtifactToolHandlers } = require('./artifactTools');
 const { initTeamsIpc, postTeamMessage } = require('./ipc/teams');
 // DS Bots / T6-2：项目空间 IPC 域（projects:create/list/get/updateStatus）
 const { initProjectsIpc } = require('./ipc/projects');
-// DS Bots / T6-10：工件只读 IPC 域（侧面板订阅）；写通道仍只有模型侧 artifact_* 原生工具
-const { initArtifactsIpc } = require('./ipc/artifacts');
+// 2026-10-27：只读域 IPC 注册聚合（artifacts / studio / ledger，均只吃 getter、不持有存储）。
+// 集中到 main/ipc/registerDomains.js，避免 main.js 贴着 1500 行硬档继续膨胀。
+const { registerDomainIpc } = require('./ipc/registerDomains');
 // 2026-10-21 团队调试日志：初始化与 IPC 域（teams:debug*）。
 const teamDebug = require('./teamDebugLog');
 const { initTeamDebugIpc } = require('./ipc/teamDebug');
@@ -1775,10 +1776,7 @@ initProjectsIpc({
   audit,
 });
 // DS Bots / T6-10：工件只读域装配（与 projects 同源 getter，不引入新存储实例）
-initArtifactsIpc({
-  getArtifactStore: () => artifactStore,
-  getProjectStore: () => projectStore,
-});
+registerDomainIpc({ artifactStore, projectStore, teamStore, taskStore, taskDb, audit, mainWindow });
 initTeamsIpc({
   getTeamStore: () => teamStore,
   // M5 / T5-6：对话内团队事件流按 thread_id 反查 run（task_groups 是「run 属于哪个会话」的

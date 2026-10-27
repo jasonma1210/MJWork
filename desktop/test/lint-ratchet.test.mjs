@@ -18,7 +18,9 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 // react-hooks/exhaustive-deps 5 / 其它 2）。**只允许下调**：清理一批后同步把这里与 package.json 一起改小。
 // 2026-10-21（第八轮收尾）实测 159：D-804 双栈那批赋值改用 Object.assign 后不再触发
 // require-atomic-updates，团队记忆开关改用 ui/Button 原语也不再新增 unused 告警 ⇒ 161 → 159。
-const LINT_WARNINGS_BASELINE = 159;
+// 2026-10-27 复测 157：artifacts/studio/ledger 三个只读域 IPC 收口到 registerDomains.js 后，
+// 原 main.js 内的若干 unused 告警随冗余装配代码一并消失 ⇒ 159 → 157（棘轮只降不升）。
+const LINT_WARNINGS_BASELINE = 157;
 
 let pass = 0;
 let fail = 0;

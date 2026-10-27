@@ -121,8 +121,8 @@
  *      · 第八轮收尾批（2026-10-21，含 D-804 / B-04 / B-12）—— 三条等位数字**原地重写**：
  *        → A17a：TOOL_CHANNELS 56 → **57**（B-04 新增 teamReadMessages：模型侧读消息）；
  *        → A18b：TOOL_HANDLER_NAMES 55 → **56**（新增 team_read_messages → teamReadMessages）；
- *        → A18g：LINT_WARNINGS_BASELINE 161 → **159**（棘轮只降不升：D-804 的赋值改用
- *          Object.assign 不再触发 require-atomic-updates，团队记忆开关改用 ui/Button 原语）。
+ *        → A18g：LINT_WARNINGS_BASELINE 161 → 159 → **157**（棘轮只降不升：本轮 descriptor/quotaLedger
+ *          收口 + 导航接线迁移后实际 warning 降至 157，门禁与 harness 同步下调，基线只降不升）。
  *        → BASE_TOOLS 仍 52（新工具同样属运行时条件追加，不进静态清单）。
  *      · 团队派活拆解修复批（2026-10-21，**未提交工作区**）—— 一条断言**原地重写**（总数仍 76）：
  *        → A14e：`DAG MAX_DEPS = 4` → 「DAG 不再设人工 fan-in 上限（依赖数上限已移除）」。
@@ -982,7 +982,7 @@ function httpHeaderSegments() {
   ok('A18f', '审批四档齐全',
     ['never', 'auto-safe', 'on-request', 'always'].filter((x) => new RegExp(`'${x}'`).test(ap)).length, 4);
   const lr = stripComments(read('desktop/test/lint-ratchet.test.mjs'));
-  okTrue('A18g', 'LINT_WARNINGS_BASELINE = 159', /LINT_WARNINGS_BASELINE\s*=\s*159/.test(lr));
+  okTrue('A18g', 'LINT_WARNINGS_BASELINE = 157', /LINT_WARNINGS_BASELINE\s*=\s*157/.test(lr));
 }
 
 // ══ 结构性加固：自检 + 断言总数闸 ═══════════════════════════════════════════

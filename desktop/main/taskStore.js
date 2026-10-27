@@ -125,6 +125,31 @@ class TaskStore {
       .map((g) => ({ ...g, dag: safeParse(g.dag_json), result: safeParse(g.result_json) }));
   }
 
+  /**
+   * 项目看板（2026-10-27）：按项目归属列任务组 —— Studio「看板」Tab 的**唯一**数据源。
+   *
+   * 为什么单开一个方法而不是复用 listGroups 后在内存里 filter：
+   *   · listGroups 是 LIMIT 30 的全局最近列表，先截断再过滤会**漏掉本项目的老 run**
+   *     （真实缺陷形态：项目看板只显示最近 30 条里碰巧属于本项目的几条）；
+   *   · 过滤必须发生在 SQL 侧，才能让 LIMIT 作用在本项目的结果集上。
+   *
+   * 历史组回落（与 db/index.js:179 同口径）：`project_path` 是后加的列，历史行可能是
+   * NULL —— 这类组按 `cwd` 匹配。不做「NULL 一律归项目」的兜底（那会把无关组串进来）。
+   *
+   * 全部参数化：projectPath 来自渲染层，绝不拼接进 SQL（设计文档 §7.3）。
+   */
+  listGroupsByProject(projectPath, { limit = 50 } = {}) {
+    const p = String(projectPath == null ? '' : projectPath).trim();
+    if (!p) return [];
+    const cap = Math.min(200, Math.max(1, Math.trunc(Number(limit) || 50)));
+    return this.db.prepare(`
+      SELECT * FROM task_groups
+      WHERE project_path = ? OR (project_path IS NULL AND cwd = ?)
+      ORDER BY created_at DESC
+      LIMIT ?`).all(p, p, cap)
+      .map((g) => ({ ...g, dag: safeParse(g.dag_json), result: safeParse(g.result_json) }));
+  }
+
   // R6（2026-10-16，用户实测反馈）：删除任务组——否则终态组永远留在任务面板。
   // fail-closed：running 组不可直接删（先取消/强制关闭，避免账目悬空）；
   // 事务级联清理 side_effects + sub_tasks + 组本体。

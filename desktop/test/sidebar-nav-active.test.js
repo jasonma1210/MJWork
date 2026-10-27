@@ -145,8 +145,10 @@ const sidebar = blankComments(SIDEBAR);
     // 不再把整个对象形状钉死（钉死会让每次加一个视图标志都变成改测试）。
     assert.match(app, /view=\{\{\s*showAssistant,\s*assistantTab,\s*showScheduled,\s*showDashboard,\s*showEcosystem[^}]*\}\}/,
       '缺少 view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, … }}');
-    // 第四版（2026-10-26）：工作室标志也必须喂进判定，故末尾字段变为 showDesk, showStudio
-    assert.match(app, /showEcosystem,\s*showDesk,\s*showStudio\s*\}\}/, 'view 未把 showDesk/showStudio 传给 Sidebar');
+    // 第四版（2026-10-26）：工作室标志也必须喂进判定，故末尾字段变为 showDesk, showStudio；
+    // 第五版（2026-10-27，M2）：新增一级入口「用量账本」，末尾字段再追加 showLedger。
+    // 断言必须随 view 对象形状演进——若有人把 showLedger 从 view 里删掉，本条应当转红。
+    assert.match(app, /showEcosystem,\s*showDesk,\s*showStudio,\s*showLedger\s*\}\}/, 'view 未把 showDesk/showStudio/showLedger 传给 Sidebar');
   });
 
   await check('Sidebar 用 activeNavOf 计算，且入口各自绑定字面量', () => {

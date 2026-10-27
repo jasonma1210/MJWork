@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import SettingsModal from './components/SettingsModal';
@@ -23,7 +23,7 @@ import TaskSummaryPanel from './components/TaskSummaryPanel';
 import BrowserPanel from './components/BrowserPanel';
 import SideChatPanel from './components/SideChatPanel';
 import ArtifactPanel from './components/ArtifactPanel';
-import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions'; import TopBarTitle from './components/TopBarTitle'; import DeskPage from './components/DeskPage'; import StudioPage from './components/StudioPage';
+import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions'; import TopBarTitle from './components/TopBarTitle'; import DeskPage from './components/DeskPage'; import StudioPage from './components/StudioPage'; import LedgerPage from './components/LedgerPage';
 import { api, setLocalMode, isLocalMode } from './lib/api';
 import { restoreMcpTools } from './lib/mcpTools';
 import { loadAgentsMd } from './lib/agentsMd';
@@ -38,7 +38,7 @@ import { useThreadModel } from './hooks/useThreadModel';
 import { useForkThread } from './hooks/useForkThread';
 import THEMES from './lib/themes.json';
 import { useI18n } from './i18n';
-import { DEFAULT_ASSISTANT_TAB } from './lib/assistantTabs';
+import { INITIAL_ROUTE, navReducer, routeToLegacyView } from './lib/navRoute';
 
 // 登录系统已移除：恒用本机数据层（local-first）。
 // 模块级置位，确保任何 api 请求发起前本地路由已生效。
@@ -59,15 +59,11 @@ export default function App() {
     return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   });
   const [showSettings, setShowSettings] = useState(false);
-  const [showDashboard, setShowDashboard] = useState(false);
-  // 接单台（desk）：开工前一屏。**默认 false**（不抢 ChatArea 的落地位），由侧栏/命令面板进入。
-  const [showDesk, setShowDesk] = useState(false);
-  // 双入口重组（2026-10-24）：一级导航 2 项 ——「新建任务」+「助理」；
-  // assistantTab = 助理内部子页（子页清单见 lib/assistantTabs.ts）。
-  const [showAssistant, setShowAssistant] = useState(false);
-  const [showScheduled, setShowScheduled] = useState(false); // 定时任务：一级入口（2026-10-24 用户要求恢复）
-  const [showStudio, setShowStudio] = useState(false); // 工作室：一级入口（2026-10-26，对齐原型 studio.js）
-  const [assistantTab, setAssistantTab] = useState(DEFAULT_ASSISTANT_TAB);
+  // 一级导航单一事实来源（设计文档 §4.3）：route 一个 page 字段 + reducer，非法组合不可表示；布尔视图由 routeToLegacyView 派生，旧组件签名不动；ecosystem/settings 由独立弹层/命令驱动，保留各自布尔开关。
+  const [route, setRoute] = useState(INITIAL_ROUTE);
+  const navDispatch = useCallback((action) => setRoute((s) => navReducer(s, action)), []);
+  const { showDashboard, showDesk, showAssistant, showScheduled, showStudio, showLedger } = routeToLegacyView(route, !!activeThread);
+  const assistantTab = route.assistantTab;
   const [showEcosystem, setShowEcosystem] = useState(false); // 生态中心（D8：降级为弹层，入口在侧栏底部次级区）
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   // T6-9：项目空间创建（+ 菜单入口派发 mjcode:new-project-space）
@@ -235,6 +231,8 @@ export default function App() {
       setShowSettings(false);
       setShowEcosystem(false);
       const detail = e.detail;
+      // 助手目录派单（2026-10-27）：detail.goal 存在时一并预填首条提示，于是「选助手 → 填目标 → 提交」落到带着目标的会话；先切会话再在宏任务里注入 expert（同步连发会被清空 extras 覆盖）。
+      if (detail?.goal) setInitialPrompt(String(detail.goal));
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('mjcode:enable-expert', { detail }));
       }, 0);
@@ -419,8 +417,7 @@ export default function App() {
   }
 
   function resetView() {
-    setShowDashboard(false);
-    setShowScheduled(false); setShowAssistant(false); setShowDesk(false); setShowStudio(false);
+    setRoute(INITIAL_ROUTE);
   }
 
   // 选择/切换项目：写入最近项目列表（去重，最多保留 10 个）
@@ -497,8 +494,8 @@ export default function App() {
     <div className="flex flex-col h-screen bg-bg text-text">
       {splash}
       <header className="flex items-center gap-2 pl-[var(--titlebar-inset)] pr-3 h-11 shrink-0 border-b border-border">
-        <TopBarActions onToggleSidebar={() => setSidebarOpen((v) => !v)} onOpenSearch={() => setPaletteOpen(true)} paneOpen={paneOpen} onTogglePane={() => { if (activeThreadRef.current) setPaneOpen((v) => !v); }} hasActiveThread={!!activeThread} onCycleTheme={cycleTheme} themeLabel={themeLabel()}         localMode={localMode} showDashboard={showDashboard} onOpenDashboard={() => { resetView(); setShowDashboard(true); }}
-        leadingTitle={<TopBarTitle view={{ showDesk, showDashboard, showEcosystem, showScheduled, showAssistant, showStudio }} projectName={activeProject?.name} />}
+        <TopBarActions onToggleSidebar={() => setSidebarOpen((v) => !v)} onOpenSearch={() => setPaletteOpen(true)} paneOpen={paneOpen} onTogglePane={() => { if (activeThreadRef.current) setPaneOpen((v) => !v); }} hasActiveThread={!!activeThread} onCycleTheme={cycleTheme} themeLabel={themeLabel()}         localMode={localMode} showDashboard={showDashboard} onOpenDashboard={() => navDispatch({ type: 'page', page: 'dashboard' })}
+        leadingTitle={<TopBarTitle view={{ showDesk, showDashboard, showEcosystem, showScheduled, showAssistant, showStudio, showLedger }} projectName={activeProject?.name} />}
       />
       </header>
       <div className="flex flex-1 min-h-0 relative">
@@ -508,7 +505,7 @@ export default function App() {
       <Sidebar
         threads={threads}
         activeThread={activeThread}
-        view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, showDesk, showStudio }}
+        view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, showDesk, showStudio, showLedger }}
         onSelect={selectThread}
         onNew={() => { setActiveThread(null); resetView(); }}
         onNewThread={newThreadInProject}
@@ -557,7 +554,7 @@ export default function App() {
           if (r?.ok) loadData();
         }}
         onOpenArchive={localMode ? () => setArchiveOpen(true) : undefined}
-        onOpenAssistant={() => { resetView(); setShowAssistant(true); }} onOpenScheduled={() => { resetView(); setShowScheduled(true); }} onOpenDesk={() => { resetView(); setShowDesk(true); }} onOpenStudio={() => { resetView(); setShowStudio(true); }} onOpenEcosystem={() => setShowEcosystem(true)}
+        onOpenAssistant={() => navDispatch({ type: 'page', page: 'assistant' })} onOpenScheduled={() => navDispatch({ type: 'page', page: 'scheduled' })} onOpenDesk={() => navDispatch({ type: 'page', page: 'desk' })} onOpenStudio={() => navDispatch({ type: 'page', page: 'studio' })} onOpenLedger={() => navDispatch({ type: 'page', page: 'ledger' })} onOpenEcosystem={() => setShowEcosystem(true)}
         onOpenProjectPicker={() => setShowProjectPicker(true)}
         onOpenSettings={() => setShowSettings(true)}
         projects={projects}
@@ -569,9 +566,21 @@ export default function App() {
       )}
       <div className="flex-1 min-w-0 flex flex-col">
         {showDashboard && <Dashboard threadId={activeThreadId} />}
-        <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => { resetView(); setShowAssistant(true); if (a === 'open_assistant_scheduled') setAssistantTab('scheduled'); }} />
+        <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => navDispatch({ type: 'page', page: 'assistant', tab: a === 'open_assistant_scheduled' ? 'scheduled' : undefined })} />
         {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}
-        {showAssistant && <AssistantPage tab={assistantTab} onTab={setAssistantTab} threadId={activeThreadId} projectPath={activeProject?.path} onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }} />}{showScheduled && <ScheduledTasks />}{showStudio && <StudioPage threadId={activeThreadId} onOpenFile={openFileInPane} />}
+        {showAssistant && <AssistantPage
+  tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path}
+  onAutoRun={(goal) => { resetView(); setInitialPrompt(goal); }}
+  onDispatchEmployee={({ employee, runtime, goal }) => {
+    // 复用生态中心「用此角色开会话」的既有链路（mjcode:recruit-expert），
+    // 不在助理页另起第二条派活实现；rolePreset 由主进程返回，渲染层不构造。
+    window.dispatchEvent(new CustomEvent('mjcode:recruit-expert', {
+      detail: { ...employee, runtime, goal },
+    }));
+  }}
+/>}{showScheduled && <ScheduledTasks />}{showStudio && <StudioPage
+  threadId={activeThreadId} projectId={activeProject?.id || null} projectPath={activeProject?.path || null} projectName={activeProject?.name || null} onOpenFile={openFileInPane} onPickProject={() => setShowProjectPicker(true)} />}
+        {showLedger && <LedgerPage projectId={activeProject?.id || null} />}
         {/* 接单台（desk）：默认不落地（showDesk 初值 false），仅由侧栏入口/命令面板进入。
             派单与 AssistantPage.onAutoRun 完全同构 —— 只把目标交回主链路（setInitialPrompt），
             不新增任何派活分支；「打开工件」复用右栏既有的 paneTab/paneOpen 两态。 */}
@@ -588,7 +597,7 @@ export default function App() {
         {/* 任务编排已并入对话流（orchestrate_task 工具 + AgentDock 胶囊），不再有独立面板入口 */}
         {/* E4：ChatArea 常驻挂载（数据/助理视图下用 hidden 隐藏而非卸载）——
             条件渲染会卸载 ChatArea，导致生态中心「在当前会话启用」事件静默丢失，也避免重挂载带来的消息重拉。 */}
-        <div className={showDashboard || showAssistant || showScheduled || showDesk || showStudio ? 'hidden' : 'contents'}>
+        <div className={showDashboard || showAssistant || showScheduled || showDesk || showStudio || showLedger ? 'hidden' : 'contents'}>
           <ChatArea
             thread={activeThread}
             agentsMd={agentsMd}
@@ -745,14 +754,14 @@ export default function App() {
           { label: tr('app.cmdNewThread'), hint: '⌘N', run: () => { setActiveThread(null); resetView(); } },
           { label: tr('app.cmdOpenProject'), hint: '⌘O', run: () => setShowProjectPicker(true) },
           { label: tr('app.cmdOpenSettings'), hint: '⌘,', run: () => setShowSettings(true) },
-          { label: tr('app.cmdDesk'), run: () => { resetView(); setShowDesk(true); } },
-          { label: tr('app.cmdUsage'), run: () => { resetView(); setShowDashboard(true); } },
+          { label: tr('app.cmdDesk'), run: () => navDispatch({ type: 'page', page: 'desk' }) },
+          { label: tr('app.cmdUsage'), run: () => navDispatch({ type: 'page', page: 'dashboard' }) },
           { label: tr('app.cmdChanges'), hint: '⌘⌥B', run: () => { if (activeThread) { setPaneTab('diff'); setPaneOpen(true); } } },
           { label: tr('app.cmdFiles'), run: () => { if (activeThread) { setPaneTab('files'); setPaneOpen(true); } } },
           { label: tr('app.cmdSummary'), run: () => { if (activeThread) { setPaneTab('subtasks'); setPaneOpen(true); } } },
           { label: tr('app.cmdTerminal'), run: () => { if (activeThread) { setPaneTab('terminal'); setPaneOpen(true); } } },
           { label: tr('app.cmdToggleSidebar'), hint: '⌘B', run: () => setSidebarOpen((v) => !v) },
-          { label: tr('app.cmdScheduled'), run: () => { resetView(); setShowAssistant(true); setAssistantTab('scheduled'); } },
+          { label: tr('app.cmdScheduled'), run: () => navDispatch({ type: 'page', page: 'assistant', tab: 'scheduled' }) },
           { label: tr('app.cmdTheme', { name: themeLabel() }), run: cycleTheme },
         ]}
       />

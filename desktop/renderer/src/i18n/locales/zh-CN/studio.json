@@ -2,5 +2,16 @@
   "title": "工作室",
   "tabSpace": "项目空间",
   "tabRoster": "编制",
-  "tabArtifacts": "工件"
+  "tabBoard": "看板",
+  "tabArtifacts": "工件",
+  "noProjectTitle": "尚未选择项目",
+  "noProjectDesc": "工作室的四个页签都围绕同一个项目展开。请先选择一个项目，避免把资产写进错误的位置。",
+  "noProjectAction": "选择项目",
+  "boardEmpty": "该项目还没有任务记录",
+  "boardEmptyHint": "派发一个任务后，这里会显示真实的任务状态与流转。",
+  "boardLoading": "正在载入看板…",
+  "boardError": "看板读取失败",
+  "boardRetry": "重试",
+  "boardNoRunsYet": "暂无运行记录",
+  "unauthorized": "没有访问该项目的权限"
 }

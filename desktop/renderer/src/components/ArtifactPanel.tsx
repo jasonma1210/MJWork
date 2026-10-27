@@ -1,9 +1,9 @@
 // DS Bots / T6-10：工件侧面板（设计稿 §12.1 / §12.3）。
 //
-// 定位：右侧常驻面板的一个 tab（不新增全屏页），三段内容：
+// 定位：右侧常驻面板的一个 tab（不新增全屏页），两段内容：
 //   ① 文档：只读当前版本（或选定历史版本）+ 章节导航；
-//   ② 版本：版本快照列表（点击后回到「文档」按该版本只读回放）；
-//   ③ 待办：复用 TeamBoardBody（与弹层看板同一份渲染，不另写一套列逻辑）。
+//   ② 版本：版本快照列表（点击后回到「文档」按该版本只读回放）。
+// （原 ③「待办」内嵌看板已按 D-03 移出：完整看板归 Studio → 看板 Tab，此处不复制第二套。）
 //
 // 三条约束：
 //   · 默认收起，**首次生成工件后自动展开一次**（§12.3）——由 onAutoOpen 交父层切 tab + 开面板；
@@ -13,8 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 import Button from './ui/Button';
-import { TeamBoardBody, type TeamBoardCard } from './TeamBoard';
-import { projectTeamRuns } from '../../../shared/teamStream.mjs';
+// D-03：TeamBoardBody / projectTeamRuns 的导入随内嵌看板一并移除（无消费方的依赖不该留）。
 import { formatTokens } from '../../../shared/teamTrace.mjs';
 
 const REFRESH_DEBOUNCE_MS = 500;
@@ -67,13 +66,16 @@ interface SectionRead {
   nextOffset: number | null;
 }
 
-type TabId = 'doc' | 'versions' | 'todo';
+// D-03（2026-10-27）：原「待办」tab 在此内嵌了一整套 TeamBoardBody 看板，与 Studio 新增的
+// board Tab 重复。按「保留真实看板能力、消除重复而非造空壳」：完整看板归 Studio → 看板，
+// 本面板收敛回工件本身（文档 / 版本）。关联任务通过 Studio 看板的 taskId 深链进入，
+// 不在这里复制第二套列与状态口径（否则两处状态会漂移）。
+type TabId = 'doc' | 'versions';
 
 // 静态 key 表：i18n 语言包 key 存在性校验只认字面量，动态拼接的 key 校验不到
 const PANEL_TAB_ITEMS: Array<{ id: TabId; key: string }> = [
   { id: 'doc', key: 'projectSpace.panelTabDoc' },
   { id: 'versions', key: 'projectSpace.panelTabVersions' },
-  { id: 'todo', key: 'projectSpace.panelTabTodo' },
 ];
 
 interface ArtifactPanelProps {
@@ -90,7 +92,6 @@ export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen }: Arti
   const [artifactId, setArtifactId] = useState<string | null>(null);
   const [index, setIndex] = useState<ArtifactIndex | null>(null);
   const [versions, setVersions] = useState<VersionInfo[]>([]);
-  const [runs, setRuns] = useState<unknown[]>([]);
   const [tab, setTab] = useState<TabId>('doc');
   const [sectionKey, setSectionKey] = useState<string | null>(null);
   const [previewVersion, setPreviewVersion] = useState<string | null>(null);
@@ -102,10 +103,10 @@ export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen }: Arti
   useEffect(() => { autoOpenRef.current = onAutoOpen; }, [onAutoOpen]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // 会话 → 项目 → 工件 / 索引 / 版本 / 团队 run（一次并行，不串行往返）
+  // 会话 → 项目 → 工件 / 索引 / 版本（一次并行，不串行往返）
   const load = useCallback(async () => {
     if (!threadId) {
-      setProject(null); setArtifacts([]); setArtifactId(null); setIndex(null); setVersions([]); setRuns([]);
+      setProject(null); setArtifacts([]); setArtifactId(null); setIndex(null); setVersions([]);
       return;
     }
     try {
@@ -128,17 +129,16 @@ export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen }: Arti
         autoOpenedRef.current = threadId;
         autoOpenRef.current?.();
       }
-      const [idxRaw, versRaw, runRaw] = await Promise.all([
+      // D-03：此处原先还并行拉一次 teamsListThreadRuns 只为渲染内嵌看板。看板归 Studio 后
+      // 这次请求已无消费方 —— 留着就是每次开面板多打一次无界 N+1，故一并摘除。
+      const [idxRaw, versRaw] = await Promise.all([
         window.mjcode?.artifactsIndex?.({ artifactId: first.artifactId, projectId: first.projectId }),
         window.mjcode?.artifactsVersions?.({ artifactId: first.artifactId }),
-        window.mjcode?.teamsListThreadRuns?.({ threadId }),
       ]);
       const idx = idxRaw as { ok?: boolean; index?: ArtifactIndex; error?: string } | undefined;
       const vers = versRaw as { ok?: boolean; versions?: VersionInfo[] } | undefined;
-      const runRes = runRaw as { ok?: boolean; runs?: unknown[] } | undefined;
       setIndex(idx?.ok ? (idx.index || null) : null);
       setVersions(vers?.ok ? (vers.versions || []) : []);
-      setRuns(runRes?.ok ? (runRes.runs || []) : []);
     } catch (e) {
       setError((e as Error)?.message || '');
     }
@@ -191,8 +191,8 @@ export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen }: Arti
     return () => { alive = false; };
   }, [artifactId, sectionKey, previewVersion, project?.projectId]);
 
-  const card = runs.length > 0 ? (projectTeamRuns(runs) as TeamBoardCard[]) : [];
-  const latestCard = card.length > 0 ? card[card.length - 1] : null;
+  // D-03：完整看板已归 Studio → 看板 Tab，这里不再投影「最新 run 卡」渲染第二套看板
+  // （连带 `runs` 状态与 teamsListThreadRuns 拉取一并移除 —— 无消费方的请求就是纯开销）。
 
   if (!threadId) return <div className="p-3 text-caption text-text2">{t('projectSpace.panelNoThread')}</div>;
   if (!project) {
@@ -314,14 +314,6 @@ export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen }: Arti
                 )}
               </Button>
             ))}
-          </div>
-        )}
-
-        {tab === 'todo' && (
-          <div className="p-3">
-            {latestCard
-              ? <TeamBoardBody card={latestCard} onOpenFile={onOpenFile} />
-              : <div className="text-caption text-text2">{t('projectSpace.panelNoTodo')}</div>}
           </div>
         )}
       </div>
