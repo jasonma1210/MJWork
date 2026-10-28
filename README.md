@@ -87,8 +87,10 @@ Tagging `v*` runs the three-platform matrix in `.github/workflows/ci.yml` and pu
 - **Windows sandbox** — the OS-level backend ships with the app but needs a one-time administrator setup.
   Until that setup has been run, OS-level isolation is not yet wired, and command execution falls back to
   the command-level blocklist.
-- **Code signing** — release artifacts are currently unsigned, so macOS Gatekeeper / Windows SmartScreen
-  will ask for confirmation on first launch.
+- **Code signing** — the `.app` inside is signed with an Apple Development identity but not notarized,
+  and the `.dmg` container itself carries no signature; on other people's Macs Gatekeeper may still block
+  the first launch (right-click → Open). Windows and Linux artifacts come from CI and are unsigned while
+  no signing secrets are configured, so SmartScreen will warn too.
 
 ## MCP tools profile
 

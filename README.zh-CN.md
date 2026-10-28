@@ -86,7 +86,9 @@ node scripts/doc-fact-check.mjs    # 设计文档里的数字必须与源码一�
 
 - **Windows 沙箱** — OS 级后端已随包分发，但需要先跑一次管理员设置；未执行前 OS 级隔离尚未接线，
   命令执行回落为命令级黑名单。
-- **代码签名** — 目前发行的制品未经签名，macOS Gatekeeper 与 Windows SmartScreen 首次启动会要求确认。
+- **代码签名** — 包内 `.app` 用 Apple Development 标识签名但**未公证**，`.dmg` 容器本身无签名；
+  在他人机器上首次启动仍可能被 Gatekeeper 拦下（右键 → 打开）。Windows / Linux 制品由 CI 产出，
+  未配置签名密钥时同样未签名，SmartScreen 也会提示。
 
 ## MCP tools profile 口径
 
