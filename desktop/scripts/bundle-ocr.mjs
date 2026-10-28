@@ -30,8 +30,13 @@ const LANGS = langArg.split(',').map((s) => s.trim()).filter(Boolean);
 // 只在 macOS 上有意义：otool / install_name_tool / codesign 都是 Darwin 工具，
 // dylib 路径改写这套做法在别的平台根本不成立。提前说清楚，别让 dist:win/linux 撞上来才报「命令不存在」。
 if (process.platform !== 'darwin') {
-  console.error(`❌ bundle-ocr 仅支持 macOS（当前 ${process.platform}）。其他平台请走各自的分发方式。`);
-  process.exit(1);
+  // B5（2026-10-28）：非 darwin 不再阻断构建。随包 OCR 是**可选能力**（系统装了 tesseract 仍可用），
+  // 而 dist:win / dist:linux 不该因为一个 macOS 专属步骤就无法跑 —— 此前 exit 1 会让
+  // 任何非 mac 开发机上的 `npm run build` 第一步就红，连演练和排障都做不了。
+  // 改为明确跳过 + 说清影响面，而不是静默成功。
+  console.warn(`⚠ bundle-ocr 仅支持 macOS（当前 ${process.platform}）：跳过，本平台产物不含随包 OCR。`);
+  console.warn('  受影响：图片/PDF 文字识别退回系统 tesseract；未安装则该能力不可用（主进程会给出安装提示）。');
+  process.exit(0);
 }
 
 const isSystem = (p) => p.startsWith('/usr/lib/') || p.startsWith('/System/');

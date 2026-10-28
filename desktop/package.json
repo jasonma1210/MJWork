@@ -1,6 +1,6 @@
 {
   "name": "mj-code-desktop",
-  "version": "0.7.0-beta",
+  "version": "0.8.0-beta",
   "description": "MJ Code - AI coding assistant",
   "main": "main/main.js",
   "scripts": {
@@ -97,7 +97,7 @@
       "target": "nsis",
       "icon": "renderer/src/assets/logo.png",
       "artifactName": "MJCode-${version}-${os}-${arch}.${ext}",
-      "verifyUpdateCodeSignature": true
+      "verifyUpdateCodeSignature": false
     },
     "linux": {
       "target": "AppImage",

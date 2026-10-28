@@ -212,6 +212,18 @@ jobs:
         with:
           node-version: 22
 
+      # 发布前置检查（元数据门禁）。**必须放在 Sync version from tag 之前**，两个理由：
+      #   ① 该 step 末尾的 `npm version` 只改 desktop/package.json（working-directory: desktop），
+      #      renderer 与 server 两处不会跟着变 —— 它会**破坏**「三处版本一致」契约。
+      #      前置本检查 = 强制「先升版本再打 tag」，于是 Sync 退化为 --allow-same-version 的
+      #      幂等空操作，三处一致性自然保持。
+      #   ② 它是「忘升版本号就打 tag」的唯一拦截点。没有它，CI 会自动把版本改成 tag 的值，
+      #      错误被静默抹平，而 CHANGELOG 与包内版本从此对不上。
+      - name: Release preflight
+        working-directory: desktop
+        shell: bash
+        run: node scripts/preflight-release.mjs
+
       # ── X22：通道解析（beta 通道更新元数据的前提）──
       # 修复前 CI 只产出 latest.yml，从不产出 beta.yml，于是「发 beta 给部分用户先升」
       # 在物理上无法执行——包传上去了，客户端拿不到 beta 的更新描述。
@@ -258,6 +270,22 @@ jobs:
           npm ci
           cd renderer && npm ci && npm run build
 
+      # B4（2026-10-28）：macOS 的随包 OCR 必须在这里现做，否则 CI 产物必然缺 Resources/ocr。
+      # 成因：build/ocr 被 .gitignore 排除（平台相关二进制不入库），而下面 Package 直接调
+      # electron-builder、**不经过** npm run build（那条链才含 bundle:ocr）⇒ 双轨，
+      # 表现为「本地打的包有 OCR、CI 发的包没有」。冒烟 R7 会拦住它，但在这里先失败更好定位。
+      - name: Bundle OCR (macOS only)
+        if: matrix.os == 'macos-latest'
+        working-directory: desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install tesseract tesseract-lang
+          node scripts/bundle-ocr.mjs --force
+          # 就地自检：二进制必须可执行、语言数据必须存在（缺任一，后面冒烟必红）
+          test -x build/ocr/tesseract
+          ls build/ocr/tessdata/*.traineddata
+
       # 通道相关三个 -c.* 覆盖（X22）：
       #   -c.publish.channel        → 决定产出 <channel>.yml（beta → beta.yml，latest → latest.yml）
       #   -c.publish.releaseType    → beta 必须发成 GitHub prerelease，便于 latest 客户端过滤
@@ -281,6 +309,22 @@ jobs:
             -c.publish.releaseType="$RELEASE_TYPE" \
             -c.generateUpdatesFilesForAllChannels=true \
             --publish ${{ vars.PUBLISH_RELEASE == 'true' && 'always' || 'never' }}
+
+      # B6（2026-10-28）：打包产物冒烟 —— 针对**真实产物**的唯一验证。
+      # 源码级 300+ 套件拦不住「打包态才出现」的问题：better-sqlite3 SIGSEGV、safeStorage 不可用、
+      # asarUnpack 失效、OCR 缺语言数据、Info.plist 版本与包内 package.json 不一致。
+      #
+      # ⚠ 已知局限（必须知道）：--publish always 在**上面的 Package step 内**就完成了上传，
+      #   所以发布流水线里本步骤失败时，坏包已经挂在 Releases 上，需要人工下架。
+      #   非发布流程（PR / push，PUBLISH_RELEASE 非 true）不受影响 —— 坏包不会进入制品。
+      #   彻底解法是把 publish 拆成独立 step 并在本步骤之后执行（需真机验证，见交付报告残余项）。
+      #
+      # 仅 macOS：win/linux 的 unpacked 目录形态尚未真机验证，不引入未验证的 CI 失败。
+      - name: Smoke test packaged artifact (macOS)
+        if: matrix.os == 'macos-latest'
+        working-directory: desktop
+        shell: bash
+        run: node scripts/smoke-packaged.mjs
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

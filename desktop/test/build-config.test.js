@@ -85,15 +85,26 @@ check('macOS 产物含 dmg（分发）+ zip（自动更新消费）',
 check('win/linux 产物保持 nsis / AppImage',
   pkg.build?.win?.target === 'nsis' && pkg.build?.linux?.target === 'AppImage',
   `${pkg.build?.win?.target}/${pkg.build?.linux?.target}`);
-// P1-23：显式开启更新包签名校验，fail-closed——校验失败拒绝安装。
+// P1-23：更新包签名校验，fail-closed——校验失败拒绝安装。
 // 2026-10-17 修正：verifyUpdateCodeSignature 是 **Windows 专有**字段
 // （schema: WindowsConfiguration.properties）。原实现写在 build.mac 下，
 // electron-builder 25 的 schema 校验会直接失败（unknown property），
 // 导致「测试绿、npm run build 红」——整个打包命令跑不起来。
 // macOS 侧由 Squirrel.Mac 原生校验更新包签名，没有对应开关，故只保留 Windows 侧断言。
-check('Windows 更新启用发布者签名校验（verifyUpdateCodeSignature）',
-  pkg.build?.win?.verifyUpdateCodeSignature === true,
-  String(pkg.build?.win?.verifyUpdateCodeSignature));
+//
+// 2026-10-28 修订（B6 打包冒烟发现的真实缺陷）：原断言只要求开关为 true，但
+// electron-updater 的 NsisUpdater.verifySignature() 在**读不到 publisherName 时直接 return null
+// 跳过校验** —— 于是「true + 无 publisherName」是空转，比 false 更糟：它给了假的满足感。
+// 现改为**条件断言**：想开就必须同时具备 publisherName；未签名阶段允许显式关闭。
+// ⚠ 签名证书就位后必须改回 true 并补 build.win.publisherName（值须与证书 Subject CN 完全一致），
+//   两者缺一都会导致 Windows 更新失效 —— 打包冒烟 R9 会拦住这个组合。
+const winVerifyOn = pkg.build?.win?.verifyUpdateCodeSignature === true;
+const winHasPublisher = !!pkg.build?.win?.publisherName;
+check('Windows 更新签名校验配置自洽（开启则必须有 publisherName，否则校验空转）',
+  !winVerifyOn || winHasPublisher,
+  winVerifyOn
+    ? `verify=on, publisherName=${pkg.build?.win?.publisherName || '缺失 ⇒ 校验被跳过（空转）'}`
+    : 'verify=off（未签名阶段；证书就位后须改回 on 并补 publisherName）');
 check('macOS 配置不再包含该 Windows 专有字段（否则 schema 校验会拒绝整个构建）',
   !('verifyUpdateCodeSignature' in (pkg.build?.mac || {})));
 
