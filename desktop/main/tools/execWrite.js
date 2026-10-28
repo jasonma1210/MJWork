@@ -107,30 +107,52 @@ async function executeWriteTool(toolName, { path: p, content, search, replace, p
     const child = spawn('patch', ['-p1', '--batch', '--forward', '--no-backup-if-mismatch', '-r', '/dev/null', ...extraArgs], { cwd: cwd || process.cwd() });
     let stdout = '';
     let stderr = '';
+    // P0-4：timer 必须先声明 —— spawn 失败的 'error' 与 setTimeout 赋值存在竞态（TDZ）。
+    // settled 收口：error / timeout / close 三条路径只认第一条，同时避免定时器与句柄泄漏。
+    let timer = null;
+    let settled = false;
+    const finish = (payload) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(payload);
+    };
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.stderr.on('data', (d) => { stderr += d.toString(); });
-    const timer = setTimeout(() => {
+    // P0-4：此前没有 'error' 监听。Windows 默认没有 GNU patch ⇒ spawn ENOENT ⇒
+    // ChildProcess 派发无人监听的 'error' ⇒ 主进程未捕获异常直接崩溃（全部会话丢失）。
+    // 同项目 execFileDetached 早已正确处理同一情形，此处是裸 spawn 未沿用同一纪律。
+    child.on('error', (e) => {
+      finish({
+        stdout: stdout.slice(0, 10000),
+        stderr: `patch 不可用（${e.code || e.message}）：本机缺少 GNU patch。请改用 edit_file 精确替换，或先安装 patch。`,
+        exitCode: -1,
+        error: 'patch-unavailable',
+      });
+    });
+    timer = setTimeout(() => {
       child.kill();
-      resolve({ stdout: stdout.slice(0, 10000), stderr: 'patch 执行超时', error: 'timeout', exitCode: -1 });
+      finish({ stdout: stdout.slice(0, 10000), stderr: 'patch 执行超时', error: 'timeout', exitCode: -1 });
     }, PATCH_IMPL_TIMEOUT_MS);
     child.on('close', (code) => {
-      clearTimeout(timer);
       // 已应用过的补丁：--forward 会跳过（hunk ignored），语义上应视为幂等成功。
       // 若当失败返回，模型会反复重试同一个补丁直到轮次耗尽（repeat 熔断）。
       // 注意：GNU patch 的「Reversed / hunk ignored」提示走 **stdout** 而非 stderr（实测），
       // 所以两个流都要查。
       const out = `${stdout}\n${stderr}`;
       if (/previously applied|hunk ignored/i.test(out)) {
-        resolve({ stdout: stdout.slice(0, 10000), stderr: stderr.slice(0, 5000), exitCode: 0, alreadyApplied: true, error: null });
+        finish({ stdout: stdout.slice(0, 10000), stderr: stderr.slice(0, 5000), exitCode: 0, alreadyApplied: true, error: null });
         return;
       }
-      resolve({
+      finish({
         stdout: stdout.slice(0, 10000),
         stderr: stderr.slice(0, 5000),
         exitCode: code ?? 0,
         error: code ? `patch exit ${code}` : null,
       });
     });
+    // EPIPE：子进程已退出（上面 error 路径）时写 stdin 会抛，必须降级为一条日志。
+    child.stdin.on('error', (e) => console.warn('[patch] stdin write failed:', e.code || e.message));
     child.stdin.write(patch);
     child.stdin.end();
   });
@@ -142,6 +164,12 @@ async function executeWriteTool(toolName, { path: p, content, search, replace, p
     const retry = await runPatchProcess(['-l']);
     if (!retry.exitCode || retry.alreadyApplied) {
       return { ...retry, lenientWhitespace: true, note: '严格模式应用失败后已按宽松空白匹配重试成功。' };
+    }
+    // P0-4：两次都失败时先判「工具本身不可用」（spawn ENOENT，exitCode=-1）。
+    // 若套用下面「补丁上下文与文件当前内容不一致」的文案，会把用户的排障方向从
+    // 「装 patch」带偏成「改补丁」—— 真因被上层文案掩盖，与本项目一贯的 fail-closed 叙事相反。
+    if (retry.error === 'patch-unavailable' || result.error === 'patch-unavailable') {
+      return { ok: false, exitCode: -1, error: retry.stderr || result.stderr, target: null };
     }
     // 两次都失败：必须可行动（与 editFile 未命中诊断同一原则）——
     // 回传目标绝对路径 + 当前内容（截断）+ 最近锚点行，模型据此改用

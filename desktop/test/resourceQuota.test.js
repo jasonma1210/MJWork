@@ -59,10 +59,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   for (let i = 0; i < OVERLOAD_THRESHOLD; i += 1) q4.reportError('p1');
   check(`连续 ${OVERLOAD_THRESHOLD} 次错误后熔断开启`, q4.throttleState() === 'overloaded');
   check('熔断期间 bg 全停（bgAllowed=false）', q4.bgAllowed() === false);
-  check('熔断期间 fg acquire 也被阻塞', await Promise.race([
-    q4.acquire('fg', 'p1').then(() => false),
-    sleep(300).then(() => true),
+  // P0-1 修订（2026-10-28）：原断言「熔断期间 fg 也被阻塞」**锁的正是缺陷本身**。
+  // provider 连续报错后，用户主会话 / 手动派活 / 定时任务会在 5 分钟里每次干等 30s
+  // 再抛「资源槽位等待超时…熔断中」——用户感知是「应用整体卡死」。
+  // 而本模块文件头的规格写的是「overload … bg 全停，**fg 照常**（用户自己会看到错误）」。
+  // 现语义：熔断只降级可牺牲的后台流量，前台照常拿到槽位（并发仍受 providerLimit 约束）。
+  check('熔断期间 fg acquire 不受影响（只降级 bg）', await Promise.race([
+    q4.acquire('fg', 'p1').then(() => true),
+    sleep(300).then(() => false),
   ]));
+  // 反向守护：不能为了「让 fg 通」把熔断整体关掉——bg 必须仍然被挡（见上面 bgAllowed 断言）
+  check('熔断期间 bg 仍被挡（熔断机制本身未被削弱）', q4.bgAllowed() === false);
   const q5 = new ResourceQuotaCenter({ providerLimit: 8, fgReserve: 2 });
   q5.reportError('p1'); q5.reportError('p1');
   q5.reportSuccess('p1');

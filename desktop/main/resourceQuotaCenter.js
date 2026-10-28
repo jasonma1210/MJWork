@@ -72,16 +72,18 @@ class ResourceQuotaCenter extends EventEmitter {
     for (;;) {
       const total = p.inFlightFg + p.inFlightBg;
       const breakerOpen = p.openUntil > Date.now();
-      if (!breakerOpen) {
-        if (isFg) {
-          if (total < this.providerLimit) { p.inFlightFg += 1; break; }
-        } else {
-          const bgCeiling = this.providerLimit - this.fgReserve; // 预算隔离：bg 不吃预留槽
-          const bgRunning = p.inFlightBg;
-          const busy = p.inFlightFg > 0;
-          const bgCap = busy ? Math.min(1, bgCeiling) : bgCeiling; // busy 态 bg 让路（P3-3）
-          if (bgRunning < bgCap) { p.inFlightBg += 1; break; }
-        }
+      if (isFg) {
+        // P0-1：前台**不受**熔断门禁约束 —— 熔断只降级可牺牲的后台流量。
+        // 此前 fg 分支被包在 !breakerOpen 内：provider 连续 5 次错误后，用户主会话 /
+        // 手动派活 / 定时任务全部在 5 分钟里干等 30s 再抛「资源槽位等待超时…熔断中」，
+        // 用户感知是「应用整体卡死」。而本文件头规格写的是「bg 全停，fg 照常（用户自己会看到错误）」。
+        if (total < this.providerLimit) { p.inFlightFg += 1; break; }
+      } else if (!breakerOpen) {
+        const bgCeiling = this.providerLimit - this.fgReserve; // 预算隔离：bg 不吃预留槽
+        const bgRunning = p.inFlightBg;
+        const busy = p.inFlightFg > 0;
+        const bgCap = busy ? Math.min(1, bgCeiling) : bgCeiling; // busy 态 bg 让路（P3-3）
+        if (bgRunning < bgCap) { p.inFlightBg += 1; break; }
       }
       if (Date.now() - start > timeoutMs) {
         throw new Error(`资源槽位等待超时（${kind}/${providerId}，limit=${this.providerLimit}${breakerOpen ? '，熔断中' : ''}）`);

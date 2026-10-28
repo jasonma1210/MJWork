@@ -28,6 +28,7 @@ const { audit } = require('./audit/auditLog');
 const approval = require('./approval');
 const writeGuard = require('./writeGuard');
 const { isPrivateHost } = require('./webTools');
+const { guardedLookup } = require('./ssrfGuard');
 const { openSqliteJsDb } = require('./db/sqljsDb');
 
 let deps = null;
@@ -119,6 +120,17 @@ function outboundBlock(u) {
   if (isPrivateHost(u.hostname)) return `出于安全考虑禁止访问内网/本机地址：${u.hostname}`;
   return null;
 }
+// P0-7：DNS 层复检。fetch（undici）不支持 lookup 钩子，所以上面的 outboundBlock 只看得见
+// 字面量主机名 —— evil.com 首次解析公网、实际连接时落到 127.0.0.1 这类 DNS rebinding 挡不住。
+// 这里在每一跳 fetch 之前做 resolve-then-validate，与 webTools 走 guardedLookup 是同一判据
+// （SSRF 单一事实来源），语义为「全部解析结果都通过才放行」。
+// 诚实标注残余风险：预检与实际连接之间理论上仍有权威应答轮换的窗口，故这是纵深防御而非绝对边界；
+// 要彻底关闭需换成 http.request + lookup 钩子（webTools 已这样实现），属后续重构项。
+function assertResolvedPublic(hostname) {
+  return new Promise((resolve, reject) => {
+    guardedLookup(hostname, { all: true }, (err) => (err ? reject(err) : resolve()));
+  });
+}
 async function toolHttpRequest(args = {}) {
   let method = String(args.method || 'GET').toUpperCase();
   const rawUrl = String(args.url || '').trim();
@@ -140,6 +152,9 @@ async function toolHttpRequest(args = {}) {
   try {
     // 手动跟随重定向：每一跳都过 outboundBlock 复检（redirect:'follow' 会静默跳过校验，是旁路）。
     for (let hop = 0; ; hop += 1) {
+      // P0-7：每一跳都先做 DNS 复检（含重定向后的新主机），字面量检查不足以挡 rebinding。
+      try { await assertResolvedPublic(current.hostname); }
+      catch (e) { return { ok: false, error: `${e.message}（DNS 层拦截）` }; }
       const res = await fetch(current.toString(), { method, headers, body, redirect: 'manual', signal });
       const loc = res.headers.get('location');
       if (res.status >= 300 && res.status < 400 && loc) {

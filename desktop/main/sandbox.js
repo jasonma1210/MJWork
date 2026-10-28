@@ -63,7 +63,13 @@ const FALLBACK_DANGEROUS = DANGEROUS_PATTERNS;
 // 是**不带** platform 的（它取 process.platform，正确），两处看着不一致但都对；
 // 为了「两处写法统一」把这个参数删掉，缓存键会退化成 not-linux:darwin，结果测试绿、真机错。
 function defaultOsSandboxAvailable(platform, execExists) {
-  if (platform === 'darwin') return !!execExists;
+  // P0-2：darwin 也要与执行判定同源。此前只看 `sandbox-exec` 二进制是否存在，
+  // 于是「probe 已判定不可用（嵌套沙箱 / profile 被系统拒绝）」时守卫仍认为有沙箱 ⇒ 跳过黑名单，
+  // 与 detectBackend / describeCapability 的判断相反。有探测结果时一律以它为准；
+  // 尚未探测时退回「二进制存在」的保守推断（不在这里做同步 spawn，理由见文件末尾不做预热的注释）。
+  // 注：execFallback 这条真实调用链本身已显式传 backendAvail=false，不受本分支影响 —— 本次修的是
+  // 「将来有人用默认参数调用」以及 probe 与 execExists 结论打架的窗口。
+  if (platform === 'darwin') return seatbeltProbe ? seatbeltProbe.ok === true : !!execExists;
   if (platform === 'linux') return !!linuxBackend.linuxSandboxStatusCached({ platform }).available;
   return false;
 }

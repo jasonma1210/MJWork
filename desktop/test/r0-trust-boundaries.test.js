@@ -43,9 +43,15 @@ function check(name, ok, detail = '') {
 function runUnconfinedTests() {
   const approval = require('../main/approval');
   check('V03: unconfined_exec 判级 L1', approval.toolLevel('unconfined_exec', { command: 'ls' }) === 'L1');
-  // V12 真值表校准：never = 用户显式「全不询问」（对一切工具生效）；
-  // unconfined_exec 的单次审批由 exec 层直调 requestApproval，不经 needsApproval 档位判断。
-  check('V03/V12: never 档不询问（用户显式选择）', approval.needsApproval({ tool: 'unconfined_exec', args: { command: 'ls' }, approvalMode: 'never', alwaysRules: [], conversationRules: [] }).need === false);
+  // V12 真值表校准（2026-10-28 修订，P0-6）：原语义「never = 对一切工具不询问」被推翻。
+  // 事故形态：never 档下 rm -rf / curl|sh / git push --force 零确认直接执行，而 Worker 路径因
+  // 强制 stricterApproval(…, 'auto-safe') 反而会问 —— 交互路径比无人值守更松，与设计意图相反。
+  // 现语义：**L1 是硬地板**，任何档位都询问（与 unconfined_exec / computer_use 的「任何档位都弹卡」同纪律）；
+  // L2 及以下仍按档位放行。注意 unconfined_exec 的实际审批由 exec 层直调 requestApproval，
+  // 本条只是真值表断言 —— 它的运行时行为不因此改变。
+  check('V03/V12: never 档对 L1 仍询问（硬地板，2026-10-28 修订）', approval.needsApproval({ tool: 'unconfined_exec', args: { command: 'ls' }, approvalMode: 'never', alwaysRules: [], conversationRules: [] }).need === true);
+  // 配套反向守护：修 L1 不能把 never 档变成全档拦截 —— L2 文件写必须仍放行
+  check('V03/V12: never 档对 L2 仍不询问（档位语义未被过度收紧）', approval.needsApproval({ tool: 'write_file', args: { path: 'a.txt' }, approvalMode: 'never', alwaysRules: [], conversationRules: [] }).need === false);
   check('V03/V12: always 档 L1 必询问', approval.needsApproval({ tool: 'unconfined_exec', args: { command: 'ls' }, approvalMode: 'always', alwaysRules: [], conversationRules: [] }).need === true);
   check('V03/V12: L1 危险命令不受 always 规则豁免', approval.needsApproval({ tool: 'shell', args: { command: 'rm -rf /' }, approvalMode: 'auto-safe', alwaysRules: [{ tool: 'shell', pattern: 'rm -rf /' }], conversationRules: [] }).need === true);
   const summary = approval.approvalSummary('unconfined_exec', { command: 'rm -rf /tmp/x' });

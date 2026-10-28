@@ -162,6 +162,16 @@ const CODE_DANGER_PATTERNS = [
   /\bexec(?:Sync)?\s*\(/,
   /\bspawn(?:Sync)?\s*\(/,
   /\bexecFile\b/,
+  // A-P0-3（2026-10-28）：沙箱逃逸原语。此前只拦子进程字面量，而真正绕过模块白名单的
+  // 一行 payload 是「借宿主构造函数取回 process」—— 实测 isDangerousCode 对下面两条都返回 false，
+  // 即沙盒与 Code Mode 会把它当普通计算直接放行：
+  //   Buffer.constructor.constructor('return process')()
+  //   require('path').join.constructor.constructor('return process')()
+  // 命中后判 L1（恒逐次确认、规则不可豁免）。误伤面很小：这三类写法在正常业务代码里几乎不出现。
+  /\bconstructor\s*\.\s*constructor\b/,      // Function 构造器自救（vm 逃逸经典形态）
+  /\b__proto__\b/,                           // 原型链改写（可用来取回宿主构造器）
+  /\.\s*mainModule\b/,                       // process.mainModule.require 绕过模块白名单
+  /\b(?:globalThis|global)\s*\.\s*process\b/,
 ];
 
 /**

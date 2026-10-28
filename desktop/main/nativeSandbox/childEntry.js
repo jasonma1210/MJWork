@@ -68,16 +68,24 @@ async function run(opts = {}) {
   const allowFs = opts.allowFs === true;
   const stdoutBuf = [];
   const push = (...args) => { stdoutBuf.push(args.map(fmtConsoleArg).join(' ')); };
+  // P0-3（2026-10-28）：**不得注入宿主 realm 的对象/函数**。
+  // 此前注入了宿主 Buffer 与 process.hrtime.bigint，逃逸只需一行：
+  //   Buffer.constructor.constructor('return process')()   // Buffer.constructor 是宿主的 Function
+  // 拿到宿主 process 后即可 process.mainModule.require('child_process')，绕过全部模块白名单。
+  // 现改为：Buffer 不再注入（需要二进制就用上下文原生的 Uint8Array），hrtime 换成纯函数。
+  // ⚠ 残余风险（如实标注，不粉饰）：vm **不是**安全边界（Node 官方明确声明）。只要 require
+  // 白名单还放行任何模块，`require('path').join.constructor.constructor('return process')()`
+  // 这类通路就依然存在（已实测）。本模块的定位因此是「防误用 + 抬高门槛」，真正的隔离边界
+  // 必须由 OS 级沙箱（seatbelt/bwrap）承担，见 docs 审查报告 A-P0-3 的后续项。
   const sandbox = {
     console: { log: push, info: push, warn: push, error: push, debug: push, trace: push },
     require: makeRestrictedRequire({ allowNetwork, allowFs }),
-    Buffer,
     process: {
       platform: process.platform,
       version: process.version,
       env: {},              // 沙盒内不暴露宿主环境变量（防凭证泄漏）
       cwd: () => '/',
-      hrtime: process.hrtime.bigint,
+      hrtime: () => BigInt(Date.now()) * 1000000n, // 纯函数，不注入宿主 hrtime
     },
   };
   const ctx = vm.createContext(sandbox);

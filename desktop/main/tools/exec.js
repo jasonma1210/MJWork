@@ -255,6 +255,13 @@ async function runShellTool(args) {
           console.warn(`[sandbox] Windows 沙箱未就绪（${st.reason}），落到命令守卫`);
         }
         runFallback(resolve).catch((e) => resolve({ stdout: '', stderr: `命令执行异常：${e?.message || e}`, exitCode: -1, error: String(e?.message || e), errorCode: 'exec-failed' }));
+      }).catch((e) => {
+        // P0-5：windowsSandboxReady() reject、applyWorkspaceAcl 抛、execAsSandboxUser 抛
+        // 三条路径此前都让外层 Promise 永不 settle ⇒ IPC tool:shell 永久挂起，
+        // 模型侧只能等引擎 600s 看门狗，且报的是「执行超时」，真正原因被完全掩盖。
+        // 与上面的 runFallback 分支同构：沙箱通道异常 → 落命令守卫（仍过危险命令黑名单），不静默、不伪造成功。
+        console.warn('[sandbox] Windows 沙箱通道异常，落到命令守卫:', e?.message || e);
+        runFallback(resolve).catch((e2) => resolve({ stdout: '', stderr: `命令执行异常：${e2?.message || e2}`, exitCode: -1, error: String(e2?.message || e2), errorCode: 'exec-failed' }));
       });
     });
   }
