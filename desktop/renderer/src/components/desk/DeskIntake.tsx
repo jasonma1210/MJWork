@@ -22,7 +22,7 @@
 //     三处确实无落点，改为点击即提示（不留静默按钮）：
 //       语音输入（麦克风由会话侧 voice 句柄驱动）、工作模式（runMode 是 ChatArea 内部 state，
 //       不持久化，无法带到新线程）。
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { KeyboardEvent } from 'react';
 import Button from '../ui/Button';
 import IconButton from '../ui/IconButton';
@@ -76,6 +76,9 @@ export default function DeskIntake({
   // 派单前选中的会话内扩展（数字员工 / 技能 / 连接器）—— 与 PlusMenu 的 extras 同形，
   // 派单时随目标一起交给 App，由 App 写入新线程的 extras 存档（详见文件头落点说明）。
   const [extras, setExtras] = useState<DeskExtras>({});
+  // 加号按钮的锚点：PlusMenu 用它算 portal 的 fixed 位置（接单台在 overflow-y-auto 容器里，
+  // 绝对定位向上展开会被祖先裁掉，见 PlusMenu 里 anchorEl 的说明）。
+  const plusAnchorRef = useRef<HTMLDivElement | null>(null);
   const trimmed = goal.trim();
   const dispatch = () => { if (trimmed) onDispatch?.(trimmed, extras); };
 
@@ -149,9 +152,10 @@ export default function DeskIntake({
 
         {/* 加号：**复用主输入框的 PlusMenu**（不再自建菜单）—— 菜单项、分组、子面板、
             搜索框全部与会话内一致，避免两套菜单各自漂移。
-            容器的 relative 决定弹层定位：PlusMenu 用 `absolute left-0 bottom-full`，
-            因此它会从整条工具条的左边缘向上弹出（与主输入框的观感一致）。 */}
-        <div className="relative ml-auto shrink-0">
+            传 anchorEl ⇒ PlusMenu 走 portal + fixed 定位：本卡片所在的 DeskPage 有
+            overflow-y-auto 滚动容器，absolute + bottom-full 向上展开会被祖先裁掉
+            （实测只露出「技能」以下四项，上面全被切）。portal 后不受任何祖先 overflow 影响。 */}
+        <div className="ml-auto shrink-0" ref={plusAnchorRef}>
           <IconButton
             label={t('desk.intake.addTip')}
             active={plusOpen}
@@ -163,6 +167,7 @@ export default function DeskIntake({
           </IconButton>
           {plusOpen && (
             <PlusMenu
+              anchorEl={plusAnchorRef.current}
               open={plusOpen}
               onClose={() => setPlusOpen(false)}
               onPickFiles={addFiles}

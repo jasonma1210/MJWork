@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   IconBot, IconBranch, IconChevronRight, IconCheck, IconFile, IconFilePlus, IconMessage, IconMic,
   IconPlug, IconSearch, IconUser, IconUsers, IconX, IconZap,
@@ -64,6 +65,12 @@ export default function PlusMenu({
   // 派活参数（目标/模式/预算/成员/工作目录）全部由 ChatArea 在发送时按缺省回落补齐，
   // 故此处不再需要 threadId / projectPath。
   activeTeamId = null, onSelectTeam,
+  // 2026-10-28：可选锚点。传了就 portal 到 body + fixed 定位（脱离任何祖先的 overflow 裁剪）；
+  // 不传则保持原 absolute 行为（Composer 用，父级已经给了足够空间）。
+  // 背景：接单台在 DeskPage 的 overflow-y-auto 滚动容器里，absolute + bottom-full 向上展开
+  // 会被祖先裁掉——实测只露出「技能」以下四项，上面全被切（截图证实）。
+  // 刻意不写 `= null` 默认值：那会让 TS 把类型收窄成 `null`，调用方传 HTMLElement 直接报错。
+  anchorEl,
 }) {
   // 本文件 matchText 回调参数名为 t（文本项），解构改名 tr 避免遮蔽
   const { t: tr } = useI18n();
@@ -129,7 +136,13 @@ export default function PlusMenu({
   // 点击外部 / Esc 关闭
   useEffect(() => {
     if (!open) return;
-    const onDown = (e) => { if (!rootRef.current?.contains(e.target)) onClose?.(); };
+    // anchorEl（portal 模式）也算「内部」：否则点按钮时先被判外部而 onClose，紧接着按钮
+    // onClick 又 toggle 成 true ⇒ 菜单永远关不掉。锚点的开关交给它自己的 onClick。
+    const onDown = (e) => {
+      if (rootRef.current?.contains(e.target)) return;
+      if (anchorEl && anchorEl.contains(e.target)) return;
+      onClose?.();
+    };
     const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose?.(); } };
     // 非模态 popover 用捕获阶段监听，避免与 Composer 的 Esc 处理冲突
     document.addEventListener('mousedown', onDown);
@@ -138,7 +151,7 @@ export default function PlusMenu({
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey, true);
     };
-  }, [open, onClose]);
+  }, [open, onClose, anchorEl]);
 
   // 二级面板 A：会话中出现过的文件（tool_calls 参数路径 + 用户 @ 引用）
   const referencedFiles = useMemo(() => {
@@ -200,6 +213,37 @@ export default function PlusMenu({
   const lazySkill = useLazyList(skillList.length, resetKey);
   const lazyConn = useLazyList(connList.length, resetKey);
 
+  // anchorEl 模式（portal）的定位：跟随锚点，必要时翻转方向并夹回视口。
+  // 放在提前 return 之前 —— 提前 return 之后调 hook 会违反 Rules of Hooks。
+  const [fixedPos, setFixedPos] = useState(null);
+  useLayoutEffect(() => {
+    if (!open || !anchorEl) { setFixedPos(null); return undefined; }
+    const calc = () => {
+      const r = anchorEl.getBoundingClientRect();
+      const W = 290; const GAP = 8; const MIN_H = 220;
+      // 水平：左对齐锚点，越界则贴右边（菜单固定 290 宽，不越出视口）
+      const left = Math.max(GAP, Math.min(r.left, window.innerWidth - W - GAP));
+      const above = r.top - GAP;
+      const below = window.innerHeight - r.bottom - GAP;
+      // 优先**向下**：接单台的 + 在卡片底部、上方只剩 header，向上弹 400+ 高的菜单会顶出视口
+      // （portal 只解决祖先 overflow 裁剪，解决不了视口边界）。向下不够 MIN_H 才向上翻。
+      // maxHeight 取「可用空间」与 80vh 的较小值：保证菜单始终在视口内且能内部滚动。
+      if (below >= MIN_H || below >= above) {
+        setFixedPos({ left, top: r.bottom + GAP, maxHeight: Math.max(MIN_H, Math.min(below, window.innerHeight * 0.8)) });
+      } else {
+        setFixedPos({ left, bottom: window.innerHeight - r.top + GAP, maxHeight: Math.max(MIN_H, Math.min(above, window.innerHeight * 0.8)) });
+      }
+    };
+    calc();
+    // 滚动/缩放时锚点位置会变，必须跟（捕获阶段监听，覆盖内部滚动容器）
+    window.addEventListener('resize', calc);
+    window.addEventListener('scroll', calc, true);
+    return () => {
+      window.removeEventListener('resize', calc);
+      window.removeEventListener('scroll', calc, true);
+    };
+  }, [open, anchorEl]);
+
   if (!open) return null;
 
   function insertRef(p) {
@@ -252,12 +296,10 @@ export default function PlusMenu({
 
   const expert = extras?.expert || null;
 
-  return (
-    <div
-      ref={rootRef}
-      className="absolute left-0 bottom-full mb-2 w-[290px] bg-raise border border-border rounded-xl shadow-[var(--shadow-pop)] overflow-hidden z-palette"
-      role="menu"
-    >
+  // 菜单主体抽成变量：anchorEl / 非 anchorEl 两条路径共用同一份内容，
+  // 避免为了改定位而复制整个面板树（复制会立刻产生两份会各自漂移的菜单）。
+  const menuBody = (
+    <>
       {!panel && (
         <div className="py-2">
           <MenuRow Icon={IconFilePlus} label={tr('plusMenu.addFiles')} onClick={() => { onPickFiles?.(); onClose?.(); }} />
@@ -539,7 +581,35 @@ export default function PlusMenu({
           <TeamDispatchPanel onClose={onClose} activeTeamId={activeTeamId} onSelectTeam={onSelectTeam} />
         </SubPanel>
       )}
-    </div>
+    </>
+  );
+
+  // 不传 anchorEl：保持原 absolute 行为（Composer 路径，零行为变化）。
+  if (!anchorEl) {
+    return (
+      <div
+        ref={rootRef}
+        className="absolute left-0 bottom-full mb-2 w-[290px] bg-raise border border-border rounded-xl shadow-[var(--shadow-pop)] overflow-hidden z-palette"
+        role="menu"
+      >
+        {menuBody}
+      </div>
+    );
+  }
+
+  // 传了 anchorEl：portal 到 body + fixed，彻底脱离祖先 overflow 裁剪。
+  // fixedPos 首帧还没算出来时返回 null —— 宁可晚一帧，也不要先闪到视口左上角。
+  if (!fixedPos) return null;
+  return createPortal(
+    <div
+      ref={rootRef}
+      style={{ ...fixedPos, overflowY: 'auto' }}
+      className="fixed w-[290px] bg-raise border border-border rounded-xl shadow-[var(--shadow-pop)] z-palette"
+      role="menu"
+    >
+      {menuBody}
+    </div>,
+    document.body,
   );
 }
 
