@@ -49,6 +49,11 @@ function loadAll() {
     loadError = null; // 加载成功即清除错误态（用户可能已从备份恢复）
     return j && typeof j === 'object' ? j : {};
   } catch (e) {
+    // P0-8（2026-10-28）：ENOENT = 文件尚不存在（全新安装 / 首次保存），**不是损坏**。
+    // 此前一律按损坏处理 ⇒ 新用户第一次存断点就会打 ERROR、getLoadError() 返回非 null，
+    // 诊断页/UI 据此显示「断点存储损坏」—— 纯假告警，用户会以为数据出了问题。
+    // 只有「文件存在但读不出 / JSON 解析失败」才是真损坏，才需要留副本 + 错误态。
+    if (e && e.code === 'ENOENT') { loadError = null; return {}; }
     // P1-15：fail-closed——不静默丢弃。损坏文件留副本（可人工恢复），错误态可查询，
     // 控制台给可行动指引；返回空 map 让调用方不崩溃，但「丢失」这件事不再无声。
     let backup = null;
@@ -93,6 +98,10 @@ function saveCheckpoint(threadKey, data, opts = {}) {
   const keys = Object.keys(map);
   const unpinned = keys.filter((k) => !map[k] || map[k].pinned !== true);
   if (!map[key] && unpinned.length >= MAX_ENTRIES) {
+    // P0-8 附带：按 savedAt 淘汰**真正的**「最久未更新」。此前直接取 unpinned[0]，那是
+    // Object.keys 的**插入顺序**——长期活跃但创建得早的会话会先被淘汰，而刚建的一次性会话
+    // 反而保留，与「LRU」的语义相反（本函数注释一直写着 LRU，实现却是 FIFO）。
+    unpinned.sort((a, b) => Number(map[a]?.savedAt || 0) - Number(map[b]?.savedAt || 0));
     delete map[unpinned[0]];
   }
   map[key] = { ...data, ...(pinned ? { pinned: true } : {}), savedAt: Date.now() };

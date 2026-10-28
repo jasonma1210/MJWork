@@ -106,5 +106,72 @@ check('渲染层恢复分支按 kind 分流（engine-exit / timeout / 预算）'
     && /任务暂停原因：单任务 token 预算触顶/.test(useRunSrc);
 })());
 
+// ══════════ P0-8（2026-10-28）：首次运行误判 + LRU 语义 + 同步契约 ══════════
+
+// ── ① 首次运行（文件尚不存在）不得被当成「损坏」 ──
+// 事故形态：loadAll() 的 catch 把 ENOENT 与 JSON 解析失败一视同仁 ⇒ 全新用户第一次存断点
+// 就打 ERROR、getLoadError() 非 null、还试图备份一个不存在的文件（再打一条 warn）。
+// 诊断页据此显示「断点存储损坏」——纯假告警。
+{
+  const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-cp-fresh-'));
+  delete require.cache[require.resolve('../main/checkpointStore')];
+  const cpFresh = require('../main/checkpointStore');
+  cpFresh.initCheckpointStore(freshDir);
+  const ok = cpFresh.saveCheckpoint('first', { summary: '首次断点' });
+  check('P0-8 首次运行 save 成功', ok === true);
+  check('P0-8 首次运行不产生损坏错误态（ENOENT ≠ 损坏）', cpFresh.getLoadError() === null,
+    JSON.stringify(cpFresh.getLoadError()));
+  check('P0-8 首次运行不生成 .corrupt 副本', !fs.readdirSync(freshDir).some((f) => f.includes('.corrupt-')),
+    fs.readdirSync(freshDir).join(','));
+  check('P0-8 首次运行断点可读回', cpFresh.getCheckpoint('first')?.summary === '首次断点');
+  // 反向确认：真损坏（文件存在但 JSON 坏）仍必须报错 —— 修 ENOENT 不能把真损坏一起放过
+  fs.writeFileSync(path.join(freshDir, 'agent-checkpoints.json'), '{still broken', 'utf8');
+  cpFresh.getCheckpoint('any');
+  check('P0-8 真损坏（JSON 解析失败）仍产生错误态（未被一并放过）',
+    cpFresh.getLoadError() !== null && cpFresh.getLoadError().backup !== null);
+  fs.rmSync(freshDir, { recursive: true, force: true });
+}
+
+// ── ② LRU 必须按 savedAt 淘汰「最久未更新」，不是插入顺序 ──
+// 判据设计：让插入顺序与 savedAt 顺序**相反** —— 旧实现（取 Object.keys[0]）淘汰 k0，
+// 新实现（按 savedAt 升序）淘汰 k49。两者结论不同，才能区分实现。
+{
+  const lruDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-cp-lru-'));
+  delete require.cache[require.resolve('../main/checkpointStore')];
+  const cpLru = require('../main/checkpointStore');
+  cpLru.initCheckpointStore(lruDir);
+  const seed = {};
+  for (let i = 0; i < cpLru.MAX_ENTRIES; i++) {
+    seed[`k${i}`] = { summary: `s${i}`, savedAt: 100000 - i }; // k49 的 savedAt 最小（最久未更新）
+  }
+  fs.writeFileSync(path.join(lruDir, 'agent-checkpoints.json'), JSON.stringify(seed), 'utf8');
+  cpLru.saveCheckpoint('k-new', { summary: 'newest' });
+  const after = JSON.parse(fs.readFileSync(path.join(lruDir, 'agent-checkpoints.json'), 'utf8'));
+  check('P0-8 LRU 淘汰 savedAt 最旧者（k49），而非插入最早者（k0）',
+    !('k49' in after) && ('k0' in after) && ('k-new' in after),
+    `淘汰后 k0 存在=${'k0' in after} / k49 存在=${'k49' in after}`);
+  check('P0-8 淘汰后条目数仍受上限约束', Object.keys(after).length === cpLru.MAX_ENTRIES,
+    `实际 ${Object.keys(after).length}`);
+  fs.rmSync(lruDir, { recursive: true, force: true });
+}
+
+// ── ③ 同步契约：读-改-写必须在同一个同步段内完成 ──
+// 这不是代码风格要求：一旦有人改成 async/await（如换 fs.promises），
+// loadAll → 改 → saveAll 之间就出现真实的交错窗口，两个并发调用会后写覆盖先写
+// （正是审查报告担心的形态）。当前 writeFileDurableWithMode 全同步
+// （openSync/fsyncSync/renameSync/chmodSync），故**不存在**该竞态 —— 本断言防止它被无意打破。
+{
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main', 'checkpointStore.js'), 'utf8');
+  const start = src.indexOf('function saveCheckpoint(');
+  const body = src.slice(start, src.indexOf('\n}\n', start) + 2);
+  check('P0-8 契约：saveCheckpoint 内无 await（保持同步，避免交错窗口）',
+    start > 0 && !/\bawait\b/.test(body));
+  check('P0-8 契约：saveCheckpoint 不使用 fs.promises', start > 0 && !/fs\.promises/.test(body));
+  check('P0-8 契约：durableWrite 的写路径为全同步（无 fs.promises）', (() => {
+    const dw = fs.readFileSync(path.join(__dirname, '..', 'main', 'data', 'durableWrite.js'), 'utf8');
+    return !/fs\.promises|\bawait\b/.test(dw);
+  })());
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);
