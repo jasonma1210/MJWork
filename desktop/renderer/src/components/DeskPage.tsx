@@ -15,7 +15,7 @@
 // 圆角映射（原型体系比本仓小一档，**禁止逐值替换**）：
 //   r-1 8px → rounded-lg（10px）· r-2 10px → rounded-lg · r-3 14px → rounded-xl · r-pill → rounded-full
 import { useEffect, useState } from 'react';
-import DeskIntake, { type DeskPolicyEcho } from './desk/DeskIntake';
+import DeskIntake, { type DeskPolicyEcho, type DeskExtras } from './desk/DeskIntake';
 import {
   deskModelOptions, deskModelKey, findDeskModel,
   type DeskProvider, type DeskModel, type DeskSelectedModel,
@@ -58,8 +58,9 @@ export interface DeskPageProps {
   threadId: string | null;
   /** 当前项目目录。本页不再用它做归属判断（任务表直接读 tasks:list），保留以不破坏 App 契约 */
   projectPath: string;
-  /** 派单：与 AssistantPage.onAutoRun 同构，只把目标交回主链路 */
-  onAutoRun: (goal: string) => void;
+  /** 派单：目标 + 会话内扩展（数字员工/技能/连接器）。App 建线程后写入 mj_extras_<id>，
+   *  ChatArea 切到该线程时按同一 localStorage 通道恢复 —— 与「会话内用 + 菜单选员工」等价。 */
+  onAutoRun: (goal: string, extras: DeskExtras) => void;
   /** 打开文件到右栏预览。本页暂无落点（工件卡已下线），保留以不破坏 App 契约 */
   onOpenFile: (path: string) => void;
   /** 档位 chip → 设置页。缺省时 chip 只回显不可点 */
@@ -74,8 +75,8 @@ export interface DeskPageProps {
   selectedModel?: DeskSelectedModel | null;
   /** 切换模型（App 的 chooseModel，收 { provider, model } 而不是 id 字符串） */
   onPickModel?: (m: { provider: DeskProvider; model: DeskModel }) => void;
-  /** 新建会话（接单区 + 号，同侧栏「新建会话」） */
-  onNewThread?: () => void;
+  // 2026-10-28：onNewThread 已移除 —— 接单区的 + 改为复用 PlusMenu（与会话内一致），
+  // 而 PlusMenu 不含「新建会话」项；新建会话仍有侧栏「新建任务」与统一顶栏两个入口，不在此重复。
 }
 
 interface QuotaRow {
@@ -140,7 +141,7 @@ function UsageCard({ threadId }: { threadId: string | null }) {
 }
 
 export default function DeskPage({
-  threads, threadId, onAutoRun, onOpenSettings, providers, selectedModel, onPickModel, onNewThread,
+  threads, threadId, onAutoRun, onOpenSettings, providers, selectedModel, onPickModel, projectPath,
 }: DeskPageProps) {
   const { t, locale } = useI18n();
   const [approval] = useState(readApproval);
@@ -201,7 +202,7 @@ export default function DeskPage({
             models={deskModelOptions(providers)}
             currentModel={deskModelKey(selectedModel)}
             onPickModel={(id) => { const hit = findDeskModel(providers, id); if (hit) onPickModel?.(hit); }}
-            onNewThread={onNewThread}
+            projectPath={projectPath}
           />
 
           <div className="mt-4 flex flex-col gap-4">

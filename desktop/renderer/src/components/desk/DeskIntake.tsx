@@ -11,24 +11,32 @@
 // 工具条里**只放真有落点的控件**：
 //   · 模型   → 原型同款原生 <select>，值来自 App 的 allProviders，选了就生效（下一次对话就用它）
 //   · 档位   → 只读回显 + 跳设置
-//   · ↵ 仍真绑定 Enter（IME-safe，见 onKeyDown）；冗余的「↵ 派单」视觉提示文本已移除（与派单按钮文案重复）
-//   · + 加号菜单 → 2026-10-28 改为弹出菜单（此前是「直接跳新建会话」，与主输入框的 + 行为不一致：
-//     那边的 + 是弹菜单，不会把用户从当前页面带走）。菜单只保留两项**真有落点**的：
-//       ① 添加文件…：走与主输入框同一 IPC（pickFiles），选完以 `@路径` 拼进目标文案 ——
-//          与 useAgentRun 的附件注入同一约定（模型经 read_file 能读到），不需要新的 attahcments 通道；
-//       ② 新建会话：原 + 的功能保留在这里，不至于"改了一致性却丢了能力"。
-//     刻意**不接完整 PlusMenu**：它的其余项（从会话中引用 / 运行模式 / 数字员工 / 技能 /
-//     连接器 / 团队编制）语义都要求「已有一个会话」，而接单时**还没有会话**。PlusMenu 对缺失
-//     回调一律用 `?.()` 静默吞掉 —— 接进来会变成一排"点了没反应"的死控件，比不一致更糟。
-// 原型还有「怎么干这一单 / 预算 ¥」两个控件**仍刻意不补**：前者无对应 state；
-// 后者全仓无价格表，做了就是死控件（团队预算三元组在 teamStore，只在挂军团时才有意义）。
-import { useEffect, useRef, useState } from 'react';
+//   · ↵ 仍真绑定 Enter（IME-safe，见 onKeyDown）
+//   · + 加号 → 2026-10-28 第二版：**直接复用主输入框的 PlusMenu 组件**，不再自建精简菜单。
+//     第一版我判断「员工/技能/连接器都要求已有会话，接单时没有 ⇒ 会变死控件」，这个判断偏保守：
+//     派单本身就是「即将创建会话」，选员工/技能/连接器都是有效的**派单前意图**。
+//     落点机制（不新开第二套 extras）：
+//       PlusMenu 选中的 extras 存在本组件 state，派单时随 onDispatch 传出；App 建线程后写
+//       `mj_extras_<threadId>` 存档 —— ChatArea 切到该线程时按同一条 localStorage 通道恢复，
+//       与「会话内用 + 菜单选员工」完全等价。
+//     三处确实无落点，改为点击即提示（不留静默按钮）：
+//       语音输入（麦克风由会话侧 voice 句柄驱动）、工作模式（runMode 是 ChatArea 内部 state，
+//       不持久化，无法带到新线程）。
+import { useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import Button from '../ui/Button';
 import IconButton from '../ui/IconButton';
-import MenuItem from '../ui/MenuItem';
-import { IconFilePlus, IconPlus } from '../icons';
+import PlusMenu from '../PlusMenu';
+import { toast } from '../feedback';
+import { IconPlus } from '../icons';
 import { useI18n } from '../../i18n';
+
+/** 派单时携带的会话内扩展（与 PlusMenu 的 extras 同形；App 建线程后写入 mj_extras_<id>） */
+export interface DeskExtras {
+  expert?: unknown;
+  skillIds?: string[];
+  mcpServers?: string[];
+}
 
 /** 档位回显的一行（label / value 都已由调用方解析成显示文案） */
 export interface DeskPolicyEcho {
@@ -47,42 +55,31 @@ export interface DeskIntakeProps {
   policies?: readonly DeskPolicyEcho[];
   /** 点击档位：到设置页修改（desk 自身不提供编辑能力） */
   onPolicyClick?: () => void;
-  /** 派单：把目标交回主链路，与 AssistantPage 的 onAutoRun 完全同构 */
-  onDispatch?: (goal: string) => void;
+  /** 派单：目标 + 会话内扩展（App 建线程后写入 mj_extras_<id>，ChatArea 切换时恢复） */
+  onDispatch?: (goal: string, extras: DeskExtras) => void;
+  /** 当前项目路径：仅用于 PlusMenu 判断「从会话中引用 / 工作模式」等项是否可用 */
+  projectPath?: string;
   /** 可选模型列表；为空则不渲染选择器（不显示一个空下拉） */
   models?: readonly DeskModelOption[];
   /** 当前模型 key */
   currentModel?: string;
   /** 切换模型 */
   onPickModel?: (id: string) => void;
-  /** 新建会话：同侧栏「新建任务」，退出 desk 回到新会话（与新建会话 + 同功能） */
-  onNewThread?: () => void;
 }
 
 export default function DeskIntake({
-  policies = [], onPolicyClick, onDispatch, models = [], currentModel, onPickModel, onNewThread,
+  policies = [], onPolicyClick, onDispatch, models = [], currentModel, onPickModel, projectPath,
 }: DeskIntakeProps) {
   const { t } = useI18n();
   const [goal, setGoal] = useState('');
   const [plusOpen, setPlusOpen] = useState(false);
-  const plusRef = useRef<HTMLDivElement | null>(null);
+  // 派单前选中的会话内扩展（数字员工 / 技能 / 连接器）—— 与 PlusMenu 的 extras 同形，
+  // 派单时随目标一起交给 App，由 App 写入新线程的 extras 存档（详见文件头落点说明）。
+  const [extras, setExtras] = useState<DeskExtras>({});
   const trimmed = goal.trim();
-  const dispatch = () => { if (trimmed) onDispatch?.(trimmed); };
+  const dispatch = () => { if (trimmed) onDispatch?.(trimmed, extras); };
 
-  // 加号菜单：点外部 / Esc 关闭（与 PlusMenu 同一交互预期，避免菜单"点不掉"）
-  useEffect(() => {
-    if (!plusOpen) return;
-    const onDocDown = (e: MouseEvent) => {
-      if (!plusRef.current?.contains(e.target as Node)) setPlusOpen(false);
-    };
-    const onEsc = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') setPlusOpen(false); };
-    document.addEventListener('mousedown', onDocDown);
-    document.addEventListener('keydown', onEsc);
-    return () => {
-      document.removeEventListener('mousedown', onDocDown);
-      document.removeEventListener('keydown', onEsc);
-    };
-  }, [plusOpen]);
+  // 点外部关闭 / Esc 由 PlusMenu 自己处理（组件内 rootRef + document 监听），此处不重复实现。
 
   // 添加文件：与主输入框同一 IPC 通道，选完以 `@路径` 追加到目标文案。
   // 桥缺失或用户取消都属预期路径（不报错）；写失败只记日志，不打断填写。
@@ -150,9 +147,11 @@ export default function DeskIntake({
           </label>
         ) : null}
 
-        {/* 加号：与主输入框（Composer）同一套交互 —— 点击弹菜单、展开时图标转 45°、带 aria-expanded。
-            此前这里是「点击直接新建会话」，属于同一个图标两种行为，用户预期落空。 */}
-        <div className="relative ml-auto shrink-0" ref={plusRef}>
+        {/* 加号：**复用主输入框的 PlusMenu**（不再自建菜单）—— 菜单项、分组、子面板、
+            搜索框全部与会话内一致，避免两套菜单各自漂移。
+            容器的 relative 决定弹层定位：PlusMenu 用 `absolute left-0 bottom-full`，
+            因此它会从整条工具条的左边缘向上弹出（与主输入框的观感一致）。 */}
+        <div className="relative ml-auto shrink-0">
           <IconButton
             label={t('desk.intake.addTip')}
             active={plusOpen}
@@ -163,17 +162,28 @@ export default function DeskIntake({
             <IconPlus size={16} />
           </IconButton>
           {plusOpen && (
-            <div
-              role="menu"
-              className="absolute right-0 bottom-full mb-2 w-[200px] bg-raise border border-border rounded-xl shadow-[var(--shadow-pop)] overflow-hidden z-palette"
-            >
-              <MenuItem icon={<IconFilePlus size={15} />} label={t('plusMenu.addFiles')} onClick={addFiles} />
-              <MenuItem
-                icon={<IconPlus size={15} />}
-                label={t('desk.intake.newThread')}
-                onClick={() => { setPlusOpen(false); onNewThread?.(); }}
-              />
-            </div>
+            <PlusMenu
+              open={plusOpen}
+              onClose={() => setPlusOpen(false)}
+              onPickFiles={addFiles}
+              hasProject={!!projectPath}
+              // runMode / onSelectTeam 在 PlusMenu 里无默认值：显式传 undefined 表示「本场景没有」。
+              // 模式面板由下方 onModeChange 给提示，团队面板显示无可用团队（不静默、不假装可用）。
+              runMode={undefined}
+              onSelectTeam={undefined}
+              extras={extras}
+              onExtrasChange={setExtras}
+              // 语音：麦克风由会话侧的 voice 句柄驱动，接单台拿不到 —— 点击给明确提示而不是静默。
+              onVoiceStart={() => {
+                setPlusOpen(false);
+                toast({ message: t('desk.intake.voiceInSession') });
+              }}
+              // 工作模式：runMode 是 ChatArea 内部 state 且不持久化，带不到新线程 —— 同样给提示。
+              onModeChange={() => {
+                setPlusOpen(false);
+                toast({ message: t('desk.intake.modeInSession') });
+              }}
+            />
           )}
         </div>
 

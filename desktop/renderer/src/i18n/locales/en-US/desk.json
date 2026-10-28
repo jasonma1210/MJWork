@@ -23,7 +23,9 @@
     "dispatch": "Dispatch",
     "model": "Model",
     "newThread": "New conversation",
-    "addTip": "Add (file / new conversation)"
+    "addTip": "Add (file / in-session extensions)",
+    "voiceInSession": "Use voice input inside a conversation",
+    "modeInSession": "Switch working mode inside a conversation"
   },
   "scenario": {
     "office": {

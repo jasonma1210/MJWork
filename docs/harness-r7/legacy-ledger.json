@@ -117,7 +117,7 @@
       "source": "desktop/renderer/src（排除 components/ui/ 与 styles/，口径同 test/ui-conventions.test.js）",
       "unit": "button",
       "total": 164,
-      "scannedFiles": 157,
+      "scannedFiles": 156,
       "groups": [
         {
           "file": "components/Onboarding.jsx",

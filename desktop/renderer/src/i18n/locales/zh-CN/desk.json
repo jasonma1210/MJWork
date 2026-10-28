@@ -23,7 +23,9 @@
     "dispatch": "派单",
     "model": "模型",
     "newThread": "新建会话",
-    "addTip": "添加（文件 / 新建会话）"
+    "addTip": "添加（文件 / 会话内扩展）",
+    "voiceInSession": "语音输入请在会话内使用",
+    "modeInSession": "工作模式请在会话内切换"
   },
   "scenario": {
     "office": {

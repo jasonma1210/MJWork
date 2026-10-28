@@ -479,12 +479,13 @@ export default function App() {
   // 2026-10-27：原来的「新建任务」落地页（欢迎页 + 输入框）与工作台「接一单」是同一个输入框
   // 出现在两处，已下线。现在 p 为空即「在工作台/任意处新建」，p 有值即侧栏项目的「+」。
   // prefill：派单时把目标带进对话页的输入框（不再需要一个单独的欢迎页来承接）。
-  async function newThreadInProject(p, prefill = '') {
+  async function newThreadInProject(p, prefill = '', extras = null) {
     if (p) selectProject(p);
     const cwd = (p && p.path) || activeProject?.path || '';
     try {
       const t = await api.createThread({ title: tr('app.newThread'), cwd, project_path: cwd });
       setActiveThread(t);
+      if (extras && t?.id) { try { localStorage.setItem(`mj_extras_${t.id}`, JSON.stringify(extras)); } catch { /* 存档失败不影响派单 */ } } // 派单 extras 落档，ChatArea 切过去按 mj_extras_<id> 恢复（与会话内 + 菜单同一通道）
       navDispatch({ type: 'page', page: 'thread' });
       if (prefill) setInitialPrompt(String(prefill));
       loadData();
@@ -596,10 +597,9 @@ export default function App() {
           <ErrorBoundary compact><DeskPage
             threads={threads} threadId={activeThreadId} projectPath={activeProject?.path || ''}
             providers={allProviders} selectedModel={selectedModel} onPickModel={chooseModel}
-            onAutoRun={(goal) => { newThreadInProject(null, goal); }} onOpenFile={openFileInPane}
+            onAutoRun={(goal, extras) => { newThreadInProject(null, goal, extras); }} onOpenFile={openFileInPane}
             onOpenSettings={() => setShowSettings(true)} onOpenArtifacts={() => { setPaneTab('artifact'); setPaneOpen(true); }}
             onOpenThread={(id) => { const th = threads.find((x) => String(x.id) === String(id)); if (th) selectThread(th); }}
-            onNewThread={() => { newThreadInProject(null); }}
           /></ErrorBoundary>
         )}
         {/* 任务编排已并入对话流（orchestrate_task 工具 + AgentDock 胶囊），不再有独立面板入口 */}
