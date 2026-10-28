@@ -24,6 +24,8 @@ const intentMcp = require('./intentMcpPrewarm');
 const { governanceStats } = require('./governanceStats');
 // M3 §8.6：知识注入（快照重验 + 正文渲染 + 使用记账）。纯函数模块，不碰 Electron。
 const knowledgeInject = require('./knowledgeInject');
+// 用量账本回填（source='chat'，含取消的运行）——口径与额度豁免见该模块头注释
+const { recordChatUsage } = require('./chatUsageLedger');
 
 // T0-2：IPC 边界契约（单一事实来源 shared-ipc/contract.mjs）。
 // Electron 主进程是 CJS 且 Node 20 无法同步 require ESM，沿用 loadAgentCore 的动态 import 模式：
@@ -571,11 +573,15 @@ function startAgentRun(payload, sender) {
         const dur = confirmDurable(accepted);
         emit('done', { finalText: outText, usage, aborted, mainPersisted: dur.persisted, persistState: dur.state });
         doneEmitted = true;
+
+        // 用量账本回填（含取消的运行）：口径与额度豁免说明见 main/chatUsageLedger.js
+        recordChatUsage(deps, { runId, usage, conversationId: payload.conversationId, projectPath: payload.projectPath, modelId: payload?.model?.model?.model_id || '' });
       };
       const cb = {
         // 中间轮（assistant+tool_calls / tool 结果）主进程直接落库，再照常推事件
         onMessage: (m) => {
-          persistChatMessage(toStoreShape(m));
+          // 2026-10-28：中间轮也要记 `modelName`，否则工作台「模型消耗」把它们全归到「未记录」
+          persistChatMessage({ ...toStoreShape(m), modelName: payload?.model?.model?.model_id || '' });
           emit('message', m);
         },
         onStream: (s) => emit('stream', s),

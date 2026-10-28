@@ -145,20 +145,51 @@ export default function ChatArea({
     [],
   );
 
-  // 首启向导带入的首任务提示词
-  // P1-6：onPromptConsumed 走 latest-ref 模式，不列入依赖数组。
-  // 原因：父组件传的是内联箭头（App.jsx:601 `onPromptConsumed={() => setInitialPrompt('')}`），
-  // 每次渲染都是新引用。若直接列入依赖，effect 会每轮渲染重跑 → 反复调用
-  // onPromptConsumed → 反复 setInitialPrompt('') → 额外渲染循环。
-  // 用 ref 持有最新回调，既保证不用过期的闭包，又不让 effect 被回调身份变化触发。
+  // 首启向导 / 工作台派单 / 助手目录派单 带入的首任务提示词。
+  // 修复（2026-10-28）：此前只 setInput 预填，用户落地会话后还得多点一次「发送」——
+  // 派单的语义就是「直接开始执行」，多一步发送纯属冗余（用户实测缺陷）。
+  // 改法：把目标交给 pendingRun 复用「排队卡片立即执行」这条既有的、已验证的发送通道；
+  // 它在 loading=false 时才真正 send，天然避开「首屏 effect 的 setMessages([]) 把刚落的首条消息清掉」的竞态
+  // （首条消息的乐观插入发生在消息加载 effect 之后，不会被覆盖）。
+  // P1-6：onPromptConsumed 走 latest-ref 模式，不列入依赖数组（理由见上）。
   const onPromptConsumedRef = useRef(onPromptConsumed);
   onPromptConsumedRef.current = onPromptConsumed;
+  // 派单自动执行：待发送目标暂存 ref，等当前会话消息加载完成（首屏 setMessages([]) 已结束）后
+  // 再由消息加载 effect 的 .then 真正触发发送，彻底避开「首条消息被清掉」的竞态（见下方消息加载 effect）。
+  // 防同一条提示词被自动派发两次（StrictMode 双触发 / 连续派单同内容）。
+  const autoRunPromptRef = useRef('');
+  // ⚠ 这里是 .jsx（无 TS）：绝不能写 useRef<string|null>(...)，泛型语法会被当作关系表达式
+  // 求值（string 未定义 → ReferenceError → ChatArea 整块渲染抛错，表现为「此面板加载出错」）。
+  // 会话 id 可能是数字（本机自增），故一律以字符串保存/比较，避免 1741 !== '1741' 导致自动派发不触发。
+  const autoRunThreadRef = useRef('');
+  // 当前会话 id 的 latest-ref：下面 effect 只依赖 [initialPrompt]，直接读 `thread?.id` 会让
+  // react-hooks/exhaustive-deps 报缺失依赖（把 thread.id 加进依赖数组又会让首次进入会话时重跑发送）。
+  const threadIdSafeRef = useRef('');
+  threadIdSafeRef.current = thread?.id != null ? String(thread.id) : '';
   useEffect(() => {
-    if (initialPrompt) {
-      setInput(initialPrompt);
-      onPromptConsumedRef.current?.();
+    if (!initialPrompt) return;
+    // 记录本轮回目标会话：派单是「先 setActiveThread 再 setInitialPrompt」，故此刻 thread 即目标会话；
+    // 首启向导 / 助手目录此时通常尚无会话（thread 为 null），走下方预填分支，由用户发送时再建会话。
+    const targetThreadId = threadIdSafeRef.current;
+    autoRunThreadRef.current = targetThreadId;
+    if (targetThreadId) {
+      autoRunPromptRef.current = initialPrompt; // 有真实会话 ⇒ 进入后自动执行，不再多点一次发送
+    } else {
+      setInput(initialPrompt); // 尚无会话 ⇒ 维持预填，行为不变
     }
+    onPromptConsumedRef.current?.();
   }, [initialPrompt]);
+
+  // 运行结束（正常完成或被取消）即通知工作台用量看板刷新：loading 由 true 转 false 时派发事件。
+  // 这样无论是从派单/助手派单直接跑完，还是中途取消，回到工作台都能看到最新的模型消耗 /
+  // 用量总览 / 会话消耗（消息来源）与用量流水（账本来源），无需手动点刷新。
+  const prevLoadingRef = useRef(false);
+  useEffect(() => {
+    if (prevLoadingRef.current && !loading) {
+      try { window.dispatchEvent(new CustomEvent('mjcode:usage-updated')); } catch { /* 忽略：纯通知，失败不影响主流程 */ }
+    }
+    prevLoadingRef.current = loading;
+  }, [loading]);
 
   // R-15/R-5：sendOrDispatch 的 latest-ref——useAgentRun 的轮末接力经 relayRef 读它，
   // 选中军团时入队消息也走派活分流；未选中时 sendOrDispatch 内部即回落 send，行为不变。
@@ -287,6 +318,13 @@ export default function ChatArea({
         // C1：全量拉取仅落 state，首屏只渲染最近 MSG_WINDOW 条（顶部「加载更早消息」展开）
         setMessages(list);
         setWindowStart(Math.max(0, (list || []).length - MSG_WINDOW));
+        // 派单自动执行：消息已读完（首屏 setMessages([]) 的竞态已过去），若本轮进入会话带着待自动派发
+        // 的目标且会话 id 对得上，则经「排队立即执行」通道真正发送（见 pendingRun effect）。
+        if (autoRunPromptRef.current && String(thread?.id) === autoRunThreadRef.current) {
+          const p = autoRunPromptRef.current;
+          autoRunPromptRef.current = '';
+          setPendingRun(p);
+        }
         // 运行保活：目标会话的后台运行恰好在拉取启动后完成（完成消息尚未进过可见列表）→ 补挂收尾消息
         const rsDone = runRegistry.get(String(thread.id));
         if (rsDone?.done && rsDone.finalMsg && !rsDone.applied && rsDone.settledAt > fetchStartedAt) {

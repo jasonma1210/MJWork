@@ -71,14 +71,20 @@ export default function TaskSummaryPanel({ threadId = null, cwd = '', events = [
       // R-15/X-3：军团 run 徽标——teamsListThreadRuns 是既有桥面（run_id = group_id 是
       // 「run 属于哪个团队」的唯一事实来源），一次调用拿到本会话全部军团 run 的归属，
       // 不新造 IPC 通道。查询失败按「无徽标」降级，绝不影响任务组主列表。
+      // ⚠ 2026-10-28：无会话时**不得发请求**——此前传 `threadId: ''`，主进程按载荷非法拒绝
+      // （"threadId 不能为空"），本面板常驻在会话区 ⇒ 每次刷新/任务事件都往调试日志打一条
+      // team-debug 失败记录（用户实测的噪声来源）。空 threadId 的语义是「没有会话」，
+      // 不是「查一个空会话」：跳过即可，徽标本来也无从归属。
       let teamByRun: Record<string, string> = {};
-      try {
-        const tr = await mj.teamsListThreadRuns?.({ threadId: threadId ?? '' }) as { runs?: Array<{ runId?: string; teamId?: string; teamName?: string }> } | undefined;
-        for (const run of tr?.runs || []) {
-          const rid = String(run?.runId || '');
-          if (rid && run?.teamId) teamByRun[rid] = String(run.teamName || run.teamId);
-        }
-      } catch { /* 团队归属查询失败：本面板降级为不显示军团徽标 */ }
+      if (threadId) {
+        try {
+          const tr = await mj.teamsListThreadRuns?.({ threadId }) as { runs?: Array<{ runId?: string; teamId?: string; teamName?: string }> } | undefined;
+          for (const run of tr?.runs || []) {
+            const rid = String(run?.runId || '');
+            if (rid && run?.teamId) teamByRun[rid] = String(run.teamName || run.teamId);
+          }
+        } catch { /* 团队归属查询失败：本面板降级为不显示军团徽标 */ }
+      }
       setGroups(mine.map((g) => {
         const team = teamByRun[String(g.group_id)];
         return team ? { ...g, teamName: team } : g;

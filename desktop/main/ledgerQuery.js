@@ -33,7 +33,9 @@ const COLUMN_OF = {
 };
 
 const SORT_WHITELIST = new Set(['created_at', 'id', 'tokens']);
-const SOURCE_ENUM = new Set(['round', 'settle']);
+// 源枚举：round/settle 来自团队任务运行（quotaGate），chat 来自单人对话运行收尾记账
+// （agentRunner.finishRun → quotaLedger.recordChat）。三者都是真实消耗，账本页都应可筛。
+const SOURCE_ENUM = new Set(['round', 'settle', 'chat']);
 
 function safeInt(v, fallback = 0) {
   const n = Number(v);

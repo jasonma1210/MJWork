@@ -162,6 +162,31 @@ export function useDeskUsage(maxThreads = 200, taskLimit = 8): DeskUsage {
     return () => { /* reqId 递增即作废旧请求（见各步骤的 id 校验） */ };
   }, [tick, maxThreads, taskLimit]);
 
+  // 及时更新（2026-10-28）：用量看板必须能反映最新消耗，不能等用户手动点刷新。
+  // ① 运行结束事件：ChatArea 在一次运行（完成/取消）结束时派发 mjcode:usage-updated，
+  //    工作台若在屏幕上即就地刷新；若已切走，切回时的挂载重载也会再拉一次，双保险。
+  // ② 切回应用 / 标签页重新可见：用户在别的窗口跑完回到本应用，也要立刻看到最新数据。
+  // 事件可能密集（多次派活/取消），用 800ms 节流避免反复全量重载四个通道。
+  useEffect(() => {
+    let throttled: ReturnType<typeof setTimeout> | null = null;
+    const trigger = () => {
+      if (throttled) return;
+      throttled = setTimeout(() => { throttled = null; reload(); }, 800);
+    };
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') trigger();
+    };
+    window.addEventListener('mjcode:usage-updated', trigger);
+    window.addEventListener('focus', onVisible);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('mjcode:usage-updated', trigger);
+      window.removeEventListener('focus', onVisible);
+      document.removeEventListener('visibilitychange', onVisible);
+      if (throttled) clearTimeout(throttled);
+    };
+  }, [reload]);
+
   const agg = useMemo(
     () => aggregateMessages(messages as UsageMessage[], threads as UsageThread[], Date.now(), 8),
     [messages, threads],

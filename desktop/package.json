@@ -1,7 +1,7 @@
 {
   "name": "mj-code-desktop",
-  "version": "0.8.0-beta",
-  "description": "MJ Code - AI coding assistant",
+  "version": "0.9.0-beta",
+  "description": "MJ Nexus - local-first AI agent desktop workspace",
   "main": "main/main.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:vite\" \"wait-on http://localhost:5173 && electron .\"",
@@ -38,11 +38,11 @@
   },
   "build": {
     "appId": "com.mjcoder.desktop",
-    "productName": "MJ Coder",
+    "productName": "MJ Nexus",
     "publish": {
       "provider": "github",
       "owner": "jasonma1210",
-      "repo": "MJCoder",
+      "repo": "MJWork",
       "releaseType": "release",
       "channel": "latest"
     },
@@ -83,7 +83,7 @@
         "zip"
       ],
       "icon": "renderer/src/assets/logo.png",
-      "artifactName": "MJCode-${version}-${os}-${arch}.${ext}",
+      "artifactName": "MJNexus-${version}-${os}-${arch}.${ext}",
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extraResources": [
@@ -96,13 +96,13 @@
     "win": {
       "target": "nsis",
       "icon": "renderer/src/assets/logo.png",
-      "artifactName": "MJCode-${version}-${os}-${arch}.${ext}",
+      "artifactName": "MJNexus-${version}-${os}-${arch}.${ext}",
       "verifyUpdateCodeSignature": false
     },
     "linux": {
       "target": "AppImage",
       "icon": "renderer/src/assets/logo.png",
-      "artifactName": "MJCode-${version}-${os}-${arch}.${ext}"
+      "artifactName": "MJNexus-${version}-${os}-${arch}.${ext}"
     },
     "directories": {
       "output": "release"

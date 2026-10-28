@@ -1031,6 +1031,10 @@ async function toolOrchestrateTask(args, { signal, emitSubagent, conversationId,
 // P2-7：执行后告知的出口必须在此接（emit 是 main.js 作用域函数；挂 ipc/mcp.js 会被本行后续调用清成 null）
 approvalSettings.initApprovalSettings({ getLocalStore: () => localStore, emit: emitTaskEvent });
 
+// ⚠ 必须在这里 require：下面 initAgentRunner 的实参里立刻**展开**了 makeChatUsageDeps()，
+// 而 quotaLedger / projectStore 的 require 在本文件更靠后（1286+），放在那里会撞 TDZ。
+const { makeChatUsageDeps } = require('./chatUsageWiring');
+
 agentRunner.initAgentRunner({
   loadAgentCore,
   // T3-7：引擎子进程宿主（isAvailable 时 runAgent 走独立进程，否则回退 loadAgentCore in-process）
@@ -1052,6 +1056,9 @@ agentRunner.initAgentRunner({
   // P0-1（2026-10-22）：运行历史的唯一读取口——agentRunner 用它从会话库装配 messages，
   // 取代渲染层内存快照（后者只含用户消息与最终总结，中间工具往返不在其中 ⇒ 刷新前后两种行为）。
   listMessages: (conversationId) => (localStore ? localStore.listMessages(conversationId) : []),
+  // 2026-10-28：对话用量的账本接线（recordUsage / resolveProjectOfConversation）
+  // 口径与异常处理见 main/chatUsageWiring.js；getter 延迟求值，与初始化顺序无关
+  ...makeChatUsageDeps(() => quotaLedger, () => projectStore),
   // V08：持久 ACK——最终总结落库后强制刷盘，只有 durable 成功才允许 mainPersisted:true
   flushPersistence: () => {
     if (!localStore) return { ok: false, error: '本地数据层未初始化' };

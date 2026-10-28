@@ -2,8 +2,6 @@
   "title": "Studio",
   "tabSpace": "Project space",
   "tabRoster": "Roster",
-  "tabBoard": "Board",
-  "tabArtifacts": "Artifacts",
   "noProjectTitle": "No project selected",
   "noProjectDesc": "All four Studio tabs work on the same project. Pick a project first so assets never land in the wrong place.",
   "noProjectAction": "Select project",

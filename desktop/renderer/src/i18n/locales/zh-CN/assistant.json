@@ -166,5 +166,6 @@
     "statusReady": "待开始",
     "hintPickAssistant": "先在上方选一个助手"
   },
-  "tabDispatch": "派活"
+  "tabDispatch": "派活",
+  "tabBoard": "看板"
 }

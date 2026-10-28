@@ -48,6 +48,11 @@ const CAPABILITY_RULES = [
   { key: 'memory', keywords: ['长期记忆', '记忆库', 'mem0'], services: ['mem0', 'qdrant', 'pinecone', 'graphiti'] },
   { key: 'payment', keywords: ['stripe', '收款', '支付集成', 'paypal'], services: ['stripe', 'paypal', 'square'] },
   { key: 'crm', keywords: ['crm', '客户关系', '工单', '客服系统'], services: ['hubspot', 'intercom', 'zendesk'] },
+
+  // v1 扩展（2026-10-28）：CodeGraph 代码图谱——只读代码理解能力，命中即按需拉起用户已保存的
+  // codegraph 连接器（经 mcp:connect 保存，意图预热按 services 别名匹配）。与 'code'（sandboxCodeRun/
+  // codeExec：运行/执行代码）职责互补、不重叠：本条目指「读懂现有代码库」，'code' 指「跑新代码」。
+  { key: 'code-graph', keywords: ['这段代码', '怎么实现的', '调用链', '谁依赖', '源码', '函数定义', '依赖关系', 'blast radius', '代码理解', '在哪里定义'], services: ['codegraph'] },
 ];
 
 /** 归一化：小写、压缩空白（匹配用）。 */

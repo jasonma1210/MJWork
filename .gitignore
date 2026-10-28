@@ -55,9 +55,27 @@ desktop/eval/results/
 # 若不入库，CI 检出后 ecosystem/skills 为空 → 打包产物的「技能」是空的，
 # 而本地打包正常 —— 同一个版本号两个产品（技术设计文档 X1）。
 !/ecosystem/skills/**/*.md
-# 例外：docs/ 下的设计与运维文档（A6）。此前全部被 *.md 排除，
-# 导致「技术设计文档」本身不在库里 —— X1/X7/X24 同根因的第四次发作。
-!/docs/**/*.md
+# 例外：docs/ 下**被门禁实际读取**的少数文档（2026-10-28 收敛）。
+# 背景：此前这里是 `!/docs/**/*.md` 全量白名单，于是几十份 AI 生成的调研/设计/审查报告
+# 全部随仓库分发。现在收紧为「只有门禁会读的那几份才入库」：
+#   · docs/MJCode-技术设计文档-2026-10-17.md → scripts/doc-fact-check.mjs 逐条核对数字
+#   · docs/harness-r7/存量收敛台账.md        → test/legacy-ledger.test.mjs 断言其存在且数字一致
+#   · docs/harness-r7/00-frozen/**           → 冻结快照，作为「文档是否漂移」的对照物
+# 其余 docs/*.md 属过程材料（调研 / 方案 / 审查 / 交付报告），不入库。
+# 纪律同前：只阻止误入库，**不做删除**。
+# 2026-10-28：这里必须写成**精确文件名**，不能用 `MJCode-技术设计文档-*.md` 通配 ——
+# 同前缀的 `MJCode-技术设计文档-核验与修订报告-2026-10-17.md` 是过程材料，
+# 通配会把它一起放进来（实测被 `git status` 抓成未追踪）。
+!/docs/MJCode-技术设计文档-2026-10-17.md
+!/docs/harness-r7/存量收敛台账.md
+# 冻结快照：目录级否定不解除 `*.md` 对**文件**的忽略（git 只认文件级否定），故写成 *
+!/docs/harness-r7/00-frozen/*.md
+# 发布回滚 Runbook：test/release-update.test.js 断言它存在且内容可读（回滚步骤必须有据可查）
+!/docs/发布回滚Runbook.md
+# 运维类文档（不是「AI 生成的过程材料」）：技术设计文档第 6 章把逐平台操作步骤整段外包给这两份，
+# 不入库则读者按链接跳到空处。打包与安装指南 = 构建/安装；签名公证更新演练 = 签名与更新的实操步骤。
+!/docs/打包与安装指南.md
+!/docs/签名公证更新演练Runbook.md
 # 例外：根目录技术流程文档（必入库）。这是「文档不入库 → 文档漂移门禁在 CI 冷检出时恒跳过 → 恒绿」
 # 同一根因的第五次发作（前四次：README / ecosystem-skills / docs / 本文件）。入库后门禁才可能真跑。
 !/MJcoder-技术流程功能文档.md
@@ -69,6 +87,7 @@ desktop/eval/results/
 .cursor/
 .codex/
 .qoder/
+.codegraph/
 .trae/
 .specstory/
 .windsurf/
@@ -109,6 +128,25 @@ fetch_ai_news.sh
 
 # 审计报告与截图产物（本地验收留痕，不入库）
 outputs/
+
+# ─────────────────────────────────────────────────────────────
+# AI 生成的过程产物（2026-10-28 发布前收敛：取消入库，本地保留）
+#   deliverables/            某次演示稿（"一人公司"静态站点）的平行实现，非产品代码
+#   review-pipeline/         审查流水线脚本（一轮审查用完即弃的过程工具）
+#   .wiki-creator/           wiki 生成工具的索引文件
+#   .trae-html-share-packages/ Trae 分享包的 zip 缓存
+# 判断口径：**产品运行/构建/测试是否需要它**。不需要 = 过程材料，不入库。
+# ─────────────────────────────────────────────────────────────
+deliverables/
+review-pipeline/
+.wiki-creator/
+.trae-html-share-packages/
+# 单文件原型（AI 生成的一次性演示页，非产品代码）
+whiteboard-prototype.html
+# SQLite 库文件名被当成 `:memory:` 之后落在磁盘上的目录（测试/运行期误产物）
+desktop/:memory:/
+# 打包/构建产物的旁置备份（safe-delete 守卫不允许批量删，只能改名，改名后仍须忽略）
+*.bak-*/
 
 # ─────────────────────────────────────────────────────────────
 # AI 编码工具生成的本地隐藏配置（2026-10-18，发布前补充）

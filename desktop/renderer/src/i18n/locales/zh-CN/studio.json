@@ -2,8 +2,6 @@
   "title": "工作室",
   "tabSpace": "项目空间",
   "tabRoster": "编制",
-  "tabBoard": "看板",
-  "tabArtifacts": "工件",
   "noProjectTitle": "尚未选择项目",
   "noProjectDesc": "工作室的四个页签都围绕同一个项目展开。请先选择一个项目，避免把资产写进错误的位置。",
   "noProjectAction": "选择项目",

@@ -45,6 +45,10 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   size?: ButtonSize;
   /** 进行中：禁用点击 + aria-busy，文案不变（避免按钮宽度跳动） */
   loading?: boolean;
+  /** 胶囊形态（rounded-full）：案例快捷键等「自由行按钮」。在原语内替换圆角档 ——
+   *  外层 className 覆盖 rounded-md 不可靠（同名工具类由样式表顺序决胜，见文件头），
+   *  与 ChipButton（触发器）区分：胶囊无下拉箭头、纯动作。 */
+  pill?: boolean;
   children?: ReactNode;
 }
 
@@ -54,12 +58,15 @@ export default function Button({
   loading = false,
   disabled = false,
   type = 'button',
+  pill = false,
   className = '',
   onClick,
   children,
   ...rest
 }: ButtonProps) {
   const blocked = disabled || loading;
+  // pill 在原语内换圆角档（rounded-md → rounded-full），不靠外层覆盖
+  const sizeCls = pill ? SIZE_CLASS[size].replace('rounded-md', 'rounded-full') : SIZE_CLASS[size];
   return (
     <button
       type={type}
@@ -69,7 +76,7 @@ export default function Button({
       className={[
         'inline-flex items-center justify-center whitespace-nowrap',
         'transition-[color,transform] active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed',
-        SIZE_CLASS[size],
+        sizeCls,
         VARIANT_CLASS[variant],
         className,
       ].filter(Boolean).join(' ')}

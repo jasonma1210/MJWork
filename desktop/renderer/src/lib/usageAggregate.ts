@@ -96,6 +96,33 @@ export function aggregateMessages(
   const titleOf = new Map<string, UsageThread>();
   for (const t of threads) if (t && t.id) titleOf.set(String(t.id), t);
 
+  // 2026-10-28：会话级「解析模型」——补全两处历史缺陷：
+  //   ① 旧版本只给最终总结写 modelName，中间轮（占带 token 消息绝大多数）modelName 为空 ⇒
+  //      模型消耗全被归到「未记录」（用户实测：明明用 deepseek，模型列却显示未记录）。
+  //   ② 派单新建的会话 thread.modelName 常为空，但该会话消息里确实有模型名。
+  // 解析优先级：thread.modelName → 该会话消息里按 token 最多的模型 → ''（真空才回落未记录）。
+  const threadMsgModel = new Map<string, Map<string, number>>();
+  for (const m of messages) {
+    const tid = m?.threadId ? String(m.threadId) : '';
+    const mn = String(m?.modelName || '').trim();
+    if (!tid || !mn) continue;
+    const s = num(m?.tokensInput) + num(m?.tokensOutput);
+    if (s <= 0) continue;
+    const bag = threadMsgModel.get(tid) || new Map<string, number>();
+    bag.set(mn, (bag.get(mn) || 0) + s);
+    threadMsgModel.set(tid, bag);
+  }
+  const resolvedModelOf = new Map<string, string>();
+  for (const [tid, bag] of threadMsgModel) {
+    let best = '';
+    let bestN = -1;
+    for (const [mn, n] of bag) { if (n > bestN) { best = mn; bestN = n; } }
+    if (best) resolvedModelOf.set(tid, best);
+  }
+  // 会话的「对外可见模型」：thread.modelName 优先，否则用会话消息解析出的模型。
+  const threadModel = (tid: string): string =>
+    String(titleOf.get(tid)?.modelName || '').trim() || resolvedModelOf.get(tid) || '';
+
   const todayStart = startOfLocalDay(now);
   const windowStart = todayStart - 6 * 86400000; // 含今天，共 7 天
 
@@ -123,7 +150,9 @@ export function aggregateMessages(
     if (at >= todayStart) todayTotal += sum;
     if (at >= windowStart) last7Total += sum;
 
-    const model = String(m?.modelName || '').trim() || UNMODELED;
+    const tid = m?.threadId ? String(m.threadId) : '';
+    // 缺 modelName 的历史消息归到所属会话的解析模型（而不是一律塞进「未记录」）
+    const model = String(m?.modelName || '').trim() || (tid ? resolvedModelOf.get(tid) || '' : '') || UNMODELED;
     const ma = modelAgg.get(model) || { input: 0, output: 0, total: 0, requests: 0 };
     ma.input += ti; ma.output += to; ma.total += sum; ma.requests += 1;
     modelAgg.set(model, ma);
@@ -135,7 +164,6 @@ export function aggregateMessages(
       dayAgg.set(k, da);
     }
 
-    const tid = m?.threadId ? String(m.threadId) : '';
     if (tid) {
       const ta = threadAgg.get(tid) || { total: 0, requests: 0, lastAt: 0 };
       ta.total += sum; ta.requests += 1;
@@ -170,13 +198,17 @@ export function aggregateMessages(
       return {
         threadId,
         title: String(meta?.title || '').trim() || threadId,
-        model: String(meta?.modelName || '').trim(),
+        // 会话表「模型」列：thread.modelName 常为空（派单新建会话未写），回落到会话消息里的解析模型
+        model: threadModel(threadId),
         total: v.total,
         requests: v.requests,
         lastAt: v.lastAt,
       };
     })
-    .sort((a, b) => b.total - a.total)
+    // 排序口径（2026-10-28 用户口径）：会话消耗按**执行顺序（最近活跃在前）**，不按消耗额。
+    // 用户回看时先找「我刚才那个会话」，按额度排会把它压到中间（实测缺陷：当前会话排在第 6 位）。
+    // lastAt = 该会话带 usage 消息的最大 createdAt；同刻按额度兜底（稳定），无时间戳（0）自然沉底。
+    .sort((a, b) => b.lastAt - a.lastAt || b.total - a.total)
     .slice(0, Math.max(1, topThreads));
 
   return { totals: { input, output, total, requests, todayTotal, last7Total }, byModel, byDay, byThread };

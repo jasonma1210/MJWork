@@ -121,6 +121,38 @@ class ProjectStore {
     return rowToProject(this.db.prepare('SELECT * FROM project_spaces WHERE thread_id = ?').get(t));
   }
 
+  /**
+   * 按工作目录反查项目——派单新建的会话只带 project_path（cwd），并未登记进
+   * project_spaces.thread_id，故不能走 getProjectByThread。对话运行中写用量账本
+   * （quota_consumptions, source='chat'）时，用它把消耗归属到对应项目配额空间。
+   * 同一 cwd 可能曾建过多个项目（历史重建），取最近更新的一条；查不到返回 null。
+   */
+  getProjectByCwd(cwd) {
+    const p = String(cwd || '').trim();
+    if (!p) return null;
+    return rowToProject(
+      this.db.prepare('SELECT * FROM project_spaces WHERE cwd = ? ORDER BY updated_at DESC LIMIT 1').get(p),
+    );
+  }
+
+  /**
+   * 会话 → 项目 id 的唯一反查口（2026-10-28）：先按 thread_id，再回落 cwd。
+   * 供对话运行收尾写用量账本（quota_consumptions.source='chat'）时确定归属，
+   * 拿不到就返回 null —— 没有项目归属的消耗无处可挂，宁可跳过也不猜一个项目。
+   * 吞异常只打日志：它跑在收尾链路里，抛错会让客户端收不到 done 事件。
+   */
+  resolveProjectId(threadId, cwd) {
+    try {
+      const byThread = threadId ? this.getProjectByThread(threadId) : null;
+      if (byThread?.projectId) return byThread.projectId;
+      const byCwd = cwd ? this.getProjectByCwd(cwd) : null;
+      return byCwd?.projectId || null;
+    } catch (e) {
+      console.warn('[projectStore] 会话→项目反查失败:', e?.message || e);
+      return null;
+    }
+  }
+
   listProjects({ status, limit = 30 } = {}) {
     const cap = Math.min(200, Math.max(1, Math.trunc(Number(limit) || 30)));
     if (status) {

@@ -29,7 +29,7 @@ import { restoreMcpTools } from './lib/mcpTools';
 import { loadAgentsMd } from './lib/agentsMd';
 import ipc from './lib/ipc';
 import FeedbackHost, { confirm, toast } from './components/feedback';
-import { projectDisplayName } from './lib/projectName';
+import { createProjectActions } from './lib/projectActions';
 import { getDefaultProject, loadJSON, applyThemeToDocument, rememberModel, pickInitialModel, pickOnboardingModel } from './lib/appState';
 import usePendingExpert from './hooks/usePendingExpert';
 import { useWindowEventBus } from './hooks/useWindowEventBus';
@@ -444,36 +444,11 @@ export default function App() {
     }
   }
 
-  // 项目重命名：只改「显示名」，不动磁盘目录。
-  // 目录名是会话归属（thread.projectPath）与沙箱授权（cwd）的标识，改磁盘名会让历史会话全部失联；
-  // 而 20261013-1271 这类机器名对用户毫无意义，所以显示名必须与目录名解耦。
-  async function renameProject(p, name) {
-    const prevName = p.name;
-    const apply = (n) => {
-      setProjects((list) => list.map((x) => (x.path === p.path ? { ...x, name: n } : x)));
-      if (activeProject?.path === p.path) setActiveProject((cur) => ({ ...cur, name: n }));
-    };
-    apply(name); // 乐观更新，失败回滚
-    if (!localStoreReady()) { apply(prevName); toast({ message: tr('app.renameStorageNotReady') }); return; }
-    const r = await window.mjcode.localRenameProject?.({ path: p.path, name });
-    if (r && r.ok === false) { apply(prevName); toast({ message: r.error || tr('app.renameFailed') }); return; }
-    toast({ message: tr('app.renamed', { name }) });
-  }
-
-  function removeProject(p) {
-    // A2 + B1：轻量确认，明确「不会删除磁盘文件」；说明其下会话去向
-    confirm({
-      title: tr('app.removeProjectTitle'),
-      message: tr('app.removeProjectMessage', { name: projectDisplayName(p) }),
-      danger: false,
-      confirmLabel: tr('app.remove'),
-    }).then(async (ok) => {
-      if (!ok) return;
-      setProjects((prev) => prev.filter((x) => x.path !== p.path));
-      if (localStoreReady()) window.mjcode.localRemoveProject?.({ path: p.path });
-      if (activeProject?.path === p.path) setActiveProject(getDefaultProject());
-    });
-  }
+  // 左侧工作区点击 / 重命名 / 移除这三个项目动作外置在 lib/projectActions.js
+  // （App.jsx 卡在 800 行护栏上，新增动作必须落在组件外；逻辑与抽出前逐行一致）
+  const { focusProject, renameProject, removeProject } = createProjectActions({
+    tr, activeProject, activeThread, setProjects, setActiveProject, localStoreReady, getDefaultProject,
+  });
 
   // 新建会话：**直接落成一条真实会话**并进入对话页。
   // 2026-10-27：原来的「新建任务」落地页（欢迎页 + 输入框）与工作台「接一单」是同一个输入框
@@ -567,7 +542,7 @@ export default function App() {
         onOpenSettings={() => setShowSettings(true)}
         projects={projects}
         activeProject={activeProject}
-        onSelectProject={selectProject}
+        onSelectProject={focusProject}
         onRemoveProject={removeProject}
         onRenameProject={renameProject}
       /></ErrorBoundary>
@@ -577,7 +552,7 @@ export default function App() {
         <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => navDispatch({ type: 'page', page: 'assistant', tab: a === 'open_assistant_scheduled' ? 'scheduled' : undefined })} />
         {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}
         {showAssistant && <ErrorBoundary compact><AssistantPage
-  tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path}
+  tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path} onOpenFile={openFileInPane}
   onAutoRun={(goal) => { newThreadInProject(null, goal); }}
   onDispatchEmployee={({ employee, goal }) => {
     // 复用生态中心「用此角色开会话」的既有链路（mjcode:recruit-expert），
@@ -595,10 +570,10 @@ export default function App() {
             不新增任何派活分支；「打开工件」复用右栏既有的 paneTab/paneOpen 两态。 */}
         {showDesk && (
           <ErrorBoundary compact><DeskPage
-            threads={threads} threadId={activeThreadId} projectPath={activeProject?.path || ''}
+            threads={threads} threadId={activeThreadId} projectPath={activeProject?.path || ''} approvalSettings={approvalSettings} onPolicyChange={(patch) => setApprovalSettings((prev) => ({ ...prev, ...patch }))} projects={projects} activeProjectId={activeProject?.id || null} onNewProject={() => setShowProjectPicker(true)}
             providers={allProviders} selectedModel={selectedModel} onPickModel={chooseModel}
-            onAutoRun={(goal, extras) => { newThreadInProject(null, goal, extras); }} onOpenFile={openFileInPane}
-            onOpenSettings={() => setShowSettings(true)} onOpenArtifacts={() => { setPaneTab('artifact'); setPaneOpen(true); }}
+            onAutoRun={(goal, extras, project) => { newThreadInProject(project || null, goal, extras); }} onOpenFile={openFileInPane}
+            onOpenArtifacts={() => { setPaneTab('artifact'); setPaneOpen(true); }}
             onOpenThread={(id) => { const th = threads.find((x) => String(x.id) === String(id)); if (th) selectThread(th); }}
           /></ErrorBoundary>
         )}

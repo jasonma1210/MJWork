@@ -6,17 +6,18 @@
 // Tab 语义（对齐原型 deliverables/mjwork-one-person-company/js/views/studio.js）：
 //   space     —— 项目空间（TeamSpace，原型 tabIndex.space）
 //   roster    —— AI 数字员工编制（TeamsPage，2026-10-27 从助理迁入）
-//   board     —— **当前项目任务看板**（2026-10-27 新增，设计文档 §6.1 / D-03）
-//   artifacts —— 工件（ArtifactPanel；其内部曾复用 TeamBoardBody 内嵌一整套待办看板，
-//                与新增的 board Tab 重复 —— 按 D-03「保留真实看板能力、消除重复而非造空壳」，
-//                工件 Tab 收敛回「工件 + 关联任务入口」，完整看板只留在 board）
+//
+// 2026-10-28 收敛（用户裁决）：**工作室 = 项目资产 + 编制**两 Tab。
+//   board（看板）→ 迁入助理（派完活在哪跟进，看板跟人走；StudioBoard 复用未改）；
+//   artifacts（工件）→ **下线**：ArtifactPanel 是 threadId 维度，会话右栏挂的就是同一个
+//   面板（含生成后自动展开），工作室再放一份是纯重复（D-03「消除重复而非造空壳」）。
 //
 // 编制的归属变更（2026-10-27，用户确认后执行）：
 //   此前团队编制（TeamsPage）按 2026-10-24 的既定决策归在**助理**页。但它与工作室的
 //   「编制」是同一件事，两处并列会让「在哪管理编制」有两个答案。现已**迁入工作室**，
 //   并**同步从助理页摘除**（见 lib/assistantTabs.ts 第四版说明）——先改门禁判据再动代码，
 //   不静默执行：nav-state-dual-entry 的 B1/B6 已按新语义改写。
-export type StudioTab = 'space' | 'roster' | 'board' | 'artifacts';
+export type StudioTab = 'space' | 'roster';
 
 export interface StudioTabDef {
   id: StudioTab;
@@ -27,8 +28,6 @@ export interface StudioTabDef {
 export const STUDIO_TABS: readonly StudioTabDef[] = [
   { id: 'space', labelKey: 'studio.tabSpace' },
   { id: 'roster', labelKey: 'studio.tabRoster' },
-  { id: 'board', labelKey: 'studio.tabBoard' },
-  { id: 'artifacts', labelKey: 'studio.tabArtifacts' },
 ];
 
 /** 工作室默认 Tab：落在「项目空间」 */

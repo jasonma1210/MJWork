@@ -57,8 +57,10 @@ check('代码层：MJ_DB_DRIVER 仍可强制指定驱动（排障逃生口未被
   /MJ_DB_DRIVER/.test(dbSrc));
 
 // ── 4. 发布目标必须与真实仓库一致（曾因写成 MJCode 导致自动更新 404）──
-check('publish.owner/repo 指向真实仓库 jasonma1210/MJCoder',
-  pkg.build?.publish?.owner === 'jasonma1210' && pkg.build?.publish?.repo === 'MJCoder',
+// 2026-10-28：仓库实际是 jasonma1210/MJWork（`git remote -v` 可核），此前这里钉的 MJCoder
+// 是个不存在的仓库名 —— 一旦按它发版，autoUpdater 的 feed 必然 404。钉值随真实仓库更名。
+check('publish.owner/repo 指向真实仓库 jasonma1210/MJWork',
+  pkg.build?.publish?.owner === 'jasonma1210' && pkg.build?.publish?.repo === 'MJWork',
   `${pkg.build?.publish?.owner}/${pkg.build?.publish?.repo}`);
 
 // ── 5. 打包链本身未被顺手改坏 ──

@@ -489,7 +489,8 @@ class TeamStore {
       if (m.roleKind === 'lead') {
         this._setLeadInternal(teamId, memberId);
       } else if (m.roleKind === 'member' && this.getTeam(teamId)?.leadMemberId === memberId) {
-        this.db.prepare('UPDATE teams SET lead_member_id = NULL, updated_at = ? WHERE id = ?').run(this.now(), String(teamId));
+        // 2026-10-28：统筹被改任普通成员 ⇒ 自动移交（同下架，团队务必有负责人）
+        this._transferLeadFrom(teamId, String(memberId));
       }
       this.touchTeam(teamId);
     });
@@ -498,8 +499,8 @@ class TeamStore {
   }
 
   /**
-   * 上/下架（可插拔，不物理删）：下架 Lead 会同时清空 lead_member_id → 回到「缺统筹」，
-   * 避免 lead_member_id 指向一个已 disabled 的成员（判据自洽）。
+   * 上/下架（可插拔，不物理删）：下架 Lead 会**自动把统筹移交给其他在册成员**（2026-10-28，
+   * 「团队务必有负责人」不变式）；仅当无其他在册成员时才清空 lead_member_id → 缺统筹。
    */
   setMemberEnabled(teamId, memberId, enabled) {
     const member = this.getMember(teamId, memberId);
@@ -509,7 +510,8 @@ class TeamStore {
       this.db.prepare('UPDATE team_members SET enabled = ?, removed_at = ? WHERE id = ?')
         .run(on ? 1 : 0, on ? null : this.now(), String(memberId));
       if (!on && this.getTeam(teamId)?.leadMemberId === memberId) {
-        this.db.prepare('UPDATE teams SET lead_member_id = NULL, updated_at = ? WHERE id = ?').run(this.now(), String(teamId));
+        // 2026-10-28：下架统筹 ⇒ 自动移交给其他在册成员（团队务必有负责人），不再清成缺统筹
+        this._transferLeadFrom(teamId, String(memberId));
       }
       this.touchTeam(teamId);
     });
@@ -546,6 +548,26 @@ class TeamStore {
     this.db.prepare(`UPDATE team_members SET role_kind = 'lead' WHERE id = ?`).run(String(memberId));
     this.db.prepare('UPDATE teams SET lead_member_id = ?, updated_at = ? WHERE id = ?')
       .run(String(memberId), this.now(), String(teamId));
+  }
+
+  /**
+   * 统筹自动移交（2026-10-28 用户裁决：「一般团队务必有个负责人一样的角色在」）：
+   *   现任统筹被下架 / 改任普通成员时，**自动移交给第一个其他在册成员**（按入库序），
+   *   而不是清成「缺统筹」破态；仅当没有其他在册成员时才清空 lead_member_id。
+   *   换任语义本就支持直接换（setLead 原统筹自动降级），无需先「退出统筹」。
+   * @returns {boolean} true = 已移交；false = 无其他在册成员（团队清空统筹）
+   */
+  _transferLeadFrom(teamId, fromMemberId) {
+    const next = this.db.prepare(
+      'SELECT id FROM team_members WHERE team_id = ? AND id != ? AND enabled = 1 ORDER BY created_at ASC, id ASC LIMIT 1',
+    ).get(String(teamId), String(fromMemberId));
+    if (next && next.id) {
+      this._setLeadInternal(teamId, String(next.id));
+      return true;
+    }
+    this.db.prepare('UPDATE teams SET lead_member_id = NULL, updated_at = ? WHERE id = ?')
+      .run(this.now(), String(teamId));
+    return false;
   }
 
   /**

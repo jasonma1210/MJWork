@@ -1,10 +1,13 @@
 // 工作室（Studio）——原型 studio.js 的一级页面化
 //
-// 装配而非重写：四个 Tab 全部复用既有组件，本文件只负责 Tab 条与分派。
+// 装配而非重写：子 Tab 全部复用既有组件，本文件只负责 Tab 条与分派。
 //   space     → TeamSpace（项目空间）
 //   roster    → TeamsPage（AI 数字员工编制；2026-10-27 从助理迁入，助理页已摘除）
-//   board     → StudioBoard（当前项目任务看板，2026-10-27 新增，D-03）
-//   artifacts → ArtifactPanel（工件）
+//
+// 2026-10-28 收敛（用户裁决「工作室 = 项目资产 + 编制」）：
+//   board（看板）→ 迁入助理（AssistantPage 挂 StudioBoard，StudioBoard 复用未改）；
+//   artifacts（工件）→ 下线：ArtifactPanel 是 threadId 维度，会话右栏挂的就是同一个面板
+//   （含生成后自动展开），工作室再放一份是纯重复（D-03「消除重复而非造空壳」）。
 //
 // ── 项目上下文（IA-02，2026-10-27 修复）──
 // 此前本文件写死 `spaceId="default"`：无论用户选了哪个项目，工作室读的都是同一个空间，
@@ -20,8 +23,6 @@ import TabBar from './ui/TabBar';
 import Button from './ui/Button';
 import TeamSpace from './TeamSpace';
 import TeamsPage from './TeamsPage';
-import StudioBoard from './StudioBoard';
-import ArtifactPanel from './ArtifactPanel';
 import { STUDIO_TABS, DEFAULT_STUDIO_TAB, type StudioTab } from '../lib/studioTabs';
 import { useI18n } from '../i18n';
 
@@ -37,17 +38,13 @@ export interface StudioPageProps {
   /** 当前项目目录（Agent 工作目录 / 空间键）。为空 ⇒ 进入「尚未选择项目」空态。 */
   projectPath?: string | null;
   projectName?: string | null;
-  threadId?: string | null;
-  onOpenFile?: (p: string) => void;
   /** 「尚未选择项目」空态的出口（App 的项目选择器） */
   onPickProject?: () => void;
-  /** 工件面板的「自动打开最新工件」回调（透传，不在此处发明语义） */
-  onAutoOpen?: () => void;
 }
 
 export default function StudioPage({
   tab, onTab, projectId = null, projectPath = null, projectName = null,
-  threadId = null, onOpenFile, onPickProject, onAutoOpen,
+  onPickProject,
 }: StudioPageProps) {
   const { t } = useI18n();
   const [inner, setInner] = useState<StudioTab>(DEFAULT_STUDIO_TAB);
@@ -86,17 +83,15 @@ export default function StudioPage({
         ariaLabel={t('studio.title')}
         className="flex gap-1 border-b border-border px-2"
       />
-      {/* 只挂载活动 Tab（§4.4）：同时挂四个会让四份列表一起发请求 */}
+      {/* 只挂载活动 Tab（§4.4）：同时挂载会让多份列表一起发请求 */}
       <div className="min-h-0 flex-1 overflow-hidden">
         {/* 空间 = 项目资产区：看板/审批（TeamSpace）+ 知识库（§8.2：知识库挂在这里，不另立一级入口）。
             projectId 与 spaceId 是两个键（§4.2.1）：spaceId 是空间键，projectId 是授权主体，
             知识库的授权/撤权只认后者，不能拿目录路径顶替。 */}
         {active === 'space' && <TeamSpace spaceId={projectPath} projectId={projectId} />}
         {active === 'roster' && <TeamsPage />}
-        {active === 'board' && <StudioBoard projectPath={projectPath} onOpenFile={onOpenFile} />}
-        {active === 'artifacts' && (
-          <ArtifactPanel threadId={threadId} onOpenFile={onOpenFile} onAutoOpen={onAutoOpen} />
-        )}
+        {/* board 已迁助理（AssistantPage 挂 StudioBoard，2026-10-28）；artifacts 已下线
+            （ArtifactPanel 是 threadId 维度，会话右栏挂的就是同一个面板，再放一份是纯重复）。 */}
       </div>
     </div>
   );

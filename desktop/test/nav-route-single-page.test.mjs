@@ -45,11 +45,12 @@ check('R3 可点亮页面集合含 ledger（侧栏高亮用）', () => {
 
 check('R4 切主页面 ⇒ 清空 overlay 且与新页面 tab 归位', () => {
   let s = { ...INITIAL_ROUTE, overlay: 'ecosystem', overlayPayload: { x: 1 } };
-  s = navReducer(s, { type: 'page', page: 'studio', tab: 'board' });
+  // 2026-10-28：studio 子 Tab 收敛为 space/roster（board 迁助理、artifacts 下线），用 roster 验证归位
+  s = navReducer(s, { type: 'page', page: 'studio', tab: 'roster' });
   assert.equal(s.page, 'studio', 'page 应切到 studio');
   assert.equal(s.overlay, 'none', '切页面必须清空 overlay');
   assert.equal(s.overlayPayload, null, 'overlay payload 一并清空');
-  assert.equal(s.studioTab, 'board', '显式给的 studio tab 应用上');
+  assert.equal(s.studioTab, 'roster', '显式给的 studio tab 应用上');
   // 2026-10-27 第六版：默认助理 tab 改为 dispatch（派活是唯一提交出口，落地即发起面）
   assert.equal(s.assistantTab, 'dispatch', '未指定助理 tab ⇒ 回落默认（dispatch），不串台');
 });

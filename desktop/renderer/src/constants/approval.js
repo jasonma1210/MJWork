@@ -16,6 +16,14 @@ export const SANDBOX_MODES = [
   { id: 'full-access', nameKey: 'approval.fullAccess', descKey: 'approval.fullAccessDesc' },
 ];
 
+// AI 描述粒度（2026-10-28 从 DeskPage 本地常量收敛进来）：任务收尾文案的详略档，
+// 值域与 SettingsModal 的选择器同源；i18n key 复用 settings 域已有的三个。
+export const RESPONSE_STYLES = [
+  { id: 'concise', nameKey: 'settings.responseStyleConcise' },
+  { id: 'default', nameKey: 'settings.responseStyleDefault' },
+  { id: 'detailed', nameKey: 'settings.responseStyleDetailed' },
+];
+
 // 遗留值迁移：auto → auto-safe、always-ask → always（读取时映射，写入只写新值）
 export function migrateApprovalMode(value) {
   if (value === 'auto') return 'auto-safe';

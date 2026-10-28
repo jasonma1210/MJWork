@@ -34,10 +34,10 @@ export default function TopBarTitle({ view, projectName, conversationTitle }: To
   else if (view.showStudio) title = t('sidebar.studio');
   else title = conversationTitle || t('app.conversation');
 
+  // 隐藏项目名显示：不再展示面包屑（见用户反馈：顶部不要出现"工作台 20261026-2698"类内容）
   return (
     <div className="flex flex-col justify-center min-w-0 mr-3">
       <h1 className="text-[15px] leading-tight font-semibold truncate">{title}</h1>
-      {projectName && <p className="text-caption text-text2 truncate">{projectName}</p>}
     </div>
   );
 }

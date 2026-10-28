@@ -75,12 +75,35 @@ check('④ 模型分布：未知模型单列不丢，占比合计为 1', () => {
   assert.equal(ds.requests, 2);
 });
 
-check('⑤ 会话消耗按 token 降序且受 topN 限制，标题缺失时回落 threadId', () => {
+// ⑤ 的排序口径（2026-10-28 改）：会话消耗是「正在发生什么」的视图，
+// 正在执行的会话必须留在最上面。旧口径按 token 降序，会把刷了 15000 token 的
+// 老会话顶到第一位，把正在跑的会话压到后面 —— 用户实测反馈「按执行顺序应该在最前面」。
+// 因此主序 = 最近执行时间(lastAt)降序，token 只作同时刻的 tie-break。
+check('⑤ 会话消耗按最近执行降序（token 仅作 tie-break）且受 topN 限制，标题缺失时回落 threadId', () => {
+  // topN 截断发生在排序之后：t2 是 token 大户但最后执行最早（-3 天），被截掉是对的
   assert.equal(r.byThread.length, 2, 'topN=2 却返回了 ' + r.byThread.length);
-  assert.equal(r.byThread[0].threadId, 't2');
-  assert.equal(r.byThread[0].title, '打包体积治理');
-  const t3 = aggregateMessages(messages, threads, NOW, 9).byThread.find((x) => x.threadId === 't3');
-  assert.equal(t3.title, 't3', '无标题会话应回落 threadId 而不是空串');
+  const full = aggregateMessages(messages, threads, NOW, 9).byThread;
+  // 全序断言：不能只断言首元素（只断言 [0] 时，「中间顺序错」查不出来）
+  assert.deepEqual(full.map((x) => x.threadId), ['t1', 't3', 't2'],
+    `实际顺序 ${full.map((x) => x.threadId).join(',')}`);
+  // 机制断言而非结果断言：逐对校验 lastAt 单调不增，序列整体被倒过来也能红
+  for (let i = 1; i < full.length; i += 1) {
+    assert.ok(full[i - 1].lastAt >= full[i].lastAt,
+      `lastAt 未按降序排列：${full[i - 1].lastAt} < ${full[i].lastAt}`);
+  }
+  assert.ok(full[0].title, '标题不能为空');
+  assert.equal(full.find((x) => x.threadId === 't3').title, 't3', '无标题会话应回落 threadId 而不是空串');
+});
+
+check('⑤b 同一执行时刻才用 token 降序 tie-break', () => {
+  const same = at(0, 11);
+  const tieMsgs = [
+    { role: 'assistant', threadId: 'a', tokensInput: 10, tokensOutput: 0, createdAt: same },
+    { role: 'assistant', threadId: 'b', tokensInput: 900, tokensOutput: 0, createdAt: same },
+  ];
+  const tie = aggregateMessages(tieMsgs, [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }], NOW, 9);
+  assert.deepEqual(tie.byThread.map((x) => x.threadId), ['b', 'a'],
+    'lastAt 相同时应由 token 大的排前（否则 tie-break 形同不存在）');
 });
 
 check('⑥ 空输入不炸、不编数字', () => {

@@ -718,9 +718,14 @@ function registerHandlers() {
     const taskStore = deps.getTaskStore?.();
     if (!store || !taskStore) return { ok: false, error: DISPATCH_ERRORS.UNAVAILABLE, runs: [] };
     try {
-      if (payload.threadId != null) guard.assertStrings(payload, { threadId: 128 });
+      // threadId 在本机是自增**数字** id（渲染层 thread.id 为 number），旧 assertStrings 只收字符串，
+      // 会把合法主路径整个拦住（"threadId 必须是字符串（收到 number）"——与 2026-10-18 providerId
+      // 同型事故：校验加严却没带正样本）。改用 assertIdLike：接受有限数字或非空字符串，
+      // 缺省视为未提供；字符串形态仍在下方面向长度上限（128）兜底。
+      guard.assertIdLike(payload, ['threadId']);
       const threadId = String(payload.threadId == null ? '' : payload.threadId).trim();
       if (!threadId) return { ok: true, runs: [] };
+      if (threadId.length > 128) return { ok: true, runs: [] };
       const groups = taskStore.listGroupsByThread(threadId, { limit: THREAD_RUN_LIMIT });
       if (!groups.length) return { ok: true, runs: [] };
 

@@ -23,16 +23,18 @@ import { useState } from 'react';
 import AiTeamBuilder from './AiTeamBuilder';
 import AssistantDirectory, { type Employee } from './AssistantDirectory';
 import AssistantDispatch from './AssistantDispatch';
+import StudioBoard from './StudioBoard';
 import TabBar from './ui/TabBar';
-import { IconBot, IconUsers, IconZap, IconList } from './icons';
+import { IconBot, IconChart, IconUsers, IconZap, IconList } from './icons';
 import { useI18n } from '../i18n';
 import { ASSISTANT_TABS, type AssistantTab } from '../lib/assistantTabs';
 
-// 派活用「闪电」图标：它是发起面；目录用清单（浏览/发现）
+// 派活用「闪电」图标：它是发起面；目录用清单（浏览/发现）；看板用图表（跟进）
 const TAB_ICON: Record<AssistantTab, typeof IconUsers> = {
   dispatch: IconZap,
   directory: IconList,
   aiTeam: IconBot,
+  board: IconChart,
 };
 
 export interface DispatchTeamResult {
@@ -43,13 +45,13 @@ export interface DispatchTeamResult {
 }
 
 export default function AssistantPage({
-  tab, onTab, threadId, projectPath, onAutoRun, onDispatchEmployee, onDispatchTeam,
+  tab, onTab, threadId, projectPath, onAutoRun, onDispatchEmployee, onDispatchTeam, onOpenFile,
 }: {
   tab: AssistantTab;
   onTab: (t: AssistantTab) => void;
   /** 当前会话 id（派活落点；无会话时由调用方决定是否新建） */
   threadId?: string | null;
-  /** 当前项目目录（派活的工作目录） */
+  /** 当前项目目录（派活的工作目录；看板 Tab 的数据范围键） */
   projectPath?: string;
   /** 主体=系统：目标交回主链路，由判定器决定是否升级为团队 */
   onAutoRun: (goal: string) => void;
@@ -57,6 +59,8 @@ export default function AssistantPage({
   onDispatchEmployee?: (payload: { employee: Employee; goal: string }) => void;
   /** 主体=团队：确定性派活（复用 teams:dispatch） */
   onDispatchTeam?: (p: { teamId: string; goal: string }) => Promise<DispatchTeamResult | undefined>;
+  /** 看板点开任务产物时回传 App 右栏预览（与工作室同源 openFileInPane） */
+  onOpenFile?: (path: string) => void;
 }) {
   const { t } = useI18n();
   // 资源面 → 派活面的回填。只在页面内存里，不落盘：它描述的是"这一次派活选了谁"。
@@ -108,6 +112,9 @@ export default function AssistantPage({
             }}
           />
         )}
+        {/* 2026-10-28：项目任务看板自工作室迁入（StudioBoard 复用未改，projectPath 维度）。
+            无项目时 StudioBoard 自带空态（门禁 C5 锁定），这里不重复造空态。 */}
+        {tab === 'board' && <StudioBoard projectPath={projectPath || null} onOpenFile={onOpenFile} />}
       </div>
     </div>
   );

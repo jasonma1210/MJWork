@@ -13,3 +13,9 @@ export type { InputProps, TextAreaProps } from './Input';
 
 export { default as IconButton } from './IconButton';
 export type { IconButtonProps } from './IconButton';
+
+export { default as MenuItem } from './MenuItem';
+export type { MenuItemProps } from './MenuItem';
+
+export { default as ChipButton } from './ChipButton';
+export type { ChipButtonProps } from './ChipButton';

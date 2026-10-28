@@ -97,8 +97,16 @@ function check(name, ok, detail = '') {
   const reassign = store.setLead(team.id, tpl.id);
   check('改派 Lead 后原 Lead 降级为 member', store.getMember(team.id, custom.id).roleKind === 'member');
   check('改派后 lead_member_id 指向新 Lead', reassign.leadMemberId === tpl.id);
+  // 2026-10-28 语义修订（用户裁决「一般团队务必有个负责人一样的角色在」）：
+  // 下架 Lead 不再清空 lead_member_id（旧行为：回到缺统筹），而是**自动移交**给第一个
+  // 其他在册成员 —— 换任/下架都不需要先「退出统筹」，团队在还有成员时永远有统筹。
+  // 推翻理由记录：旧断言锁的正是被推翻的产品语义（允许团队无负责人）。
   store.setMemberEnabled(team.id, tpl.id, false);
-  check('下架 Lead 清空 lead_member_id（回到缺统筹）', store.getTeam(team.id).leadMissing === true);
+  const afterDemote = store.getTeam(team.id);
+  check('下架 Lead 自动移交统筹给其他在册成员（团队务必有负责人）',
+    !!afterDemote.leadMemberId && afterDemote.leadMemberId !== tpl.id
+    && afterDemote.leadMissing === false
+    && store.getMember(team.id, String(afterDemote.leadMemberId)).roleKind === 'lead');
   threw = false;
   try { store.setLead(team.id, tpl.id); } catch { threw = true; }
   check('已下架成员不能被指定为 Lead', threw);

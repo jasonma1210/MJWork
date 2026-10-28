@@ -11,7 +11,7 @@
 // 数据通道：main/ipc/teams.js 的 teams:* 桥（preload 已注册）。桥签名是「位置参数」风格
 // （teamsGet(teamId) / teamsSetLead(teamId, memberId) 等），与 lib/ipc.js 的单载荷 call()
 // 契约不同，故此处直连 window.mjcode.teams*（与 ScheduledTasks 直连 scheduled* 同例）。
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import InlineAlert from './InlineAlert';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
@@ -159,6 +159,39 @@ export default function TeamsPage() {
   }, [t]);
 
   useEffect(() => { load(); }, [load]);
+
+  // 2026-10-28（用户裁决「默认模型取消，默认就是模型列表第一个」）：
+  // 给所有未绑定模型的在册成员**自动绑定模型列表第一项**。为什么做迁移而不是只改回显：
+  // MemberModelSelect 若显示第一项而成员实际没绑定，运行期仍跑会话默认模型 ——
+  // 正是该组件头注释警惕的「界面显示已绑定、实际跑默认模型」静默错位；显示即事实。
+  // ref 防重入（bind→load→effect 再跑时 targets 已空，天然收敛）；失败不阻塞页面。
+  const modelMigrating = useRef(false);
+  useEffect(() => {
+    if (modelMigrating.current || !modelOptions.length || !teams.length) return;
+    const first = modelOptions[0];
+    const targets: Array<{ teamId: string; memberId: string }> = [];
+    for (const team of teams) {
+      for (const m of (team.members || [])) {
+        if (m.enabled === false) continue;
+        if (!m.modelRef && !m.model) targets.push({ teamId: team.id, memberId: m.id });
+      }
+    }
+    if (!targets.length) return;
+    modelMigrating.current = true;
+    (async () => {
+      try {
+        for (const x of targets) {
+          await window.mjcode?.teamsUpdateMember(x.teamId, x.memberId, {
+            model: { providerId: first.providerId, modelId: first.modelId },
+          });
+        }
+      } catch { /* 迁移失败不阻塞编制操作：成员回落会话默认模型，选择器可手改 */ }
+      finally {
+        modelMigrating.current = false;
+        await load();
+      }
+    })();
+  }, [teams, modelOptions, load]);
 
   // 幂等追加：按 id 去重（历史与事件可能重叠），按 seq 升序（团队内单调 = 顺序单一事实来源）
   const addMessage = useCallback((msg: TeamMessage) => {
@@ -570,7 +603,7 @@ function TeamCard(props: {
                 onChange={(model) => onBindModel(m, model)}
               />
               {m.roleKind !== 'lead' && (
-                <Button variant="ghost" size="xs" loading={busy === `lead:${m.id}`} onClick={() => onSetLead(m.id)}>
+                <Button variant="ghost" size="xs" loading={busy === `lead:${m.id}`} title={t('teams.setLeadTip')} onClick={() => onSetLead(m.id)}>
                   {t('teams.setLead')}
                 </Button>
               )}

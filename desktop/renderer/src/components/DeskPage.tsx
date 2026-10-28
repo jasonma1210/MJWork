@@ -15,7 +15,7 @@
 // 圆角映射（原型体系比本仓小一档，**禁止逐值替换**）：
 //   r-1 8px → rounded-lg（10px）· r-2 10px → rounded-lg · r-3 14px → rounded-xl · r-pill → rounded-full
 import { useEffect, useState } from 'react';
-import DeskIntake, { type DeskPolicyEcho, type DeskExtras } from './desk/DeskIntake';
+import DeskIntake, { type DeskExtras, type DeskProjectOption, type DeskPolicyPatch } from './desk/DeskIntake';
 import {
   deskModelOptions, deskModelKey, findDeskModel,
   type DeskProvider, type DeskModel, type DeskSelectedModel,
@@ -27,15 +27,6 @@ import LedgerPage from './LedgerPage';
 import Button from './ui/Button';
 import InlineAlert from './InlineAlert';
 import { useI18n } from '../i18n';
-import { loadJSON } from '../lib/appState';
-import { APPROVAL_MODES, SANDBOX_MODES } from '../constants/approval';
-
-/** 描述粒度档 → i18n key（值域来源：SettingsModal 的 AI 描述粒度选择器） */
-const STYLE_NAME_KEY: Record<string, string> = {
-  concise: 'settings.responseStyleConcise',
-  default: 'settings.responseStyleDefault',
-  detailed: 'settings.responseStyleDetailed',
-};
 
 /** 用量水位 → i18n key（值域来源：main/quotaLedger.js 的 QUOTA_STATES） */
 const USAGE_STATE_KEY: Record<string, string> = {
@@ -58,17 +49,27 @@ export interface DeskPageProps {
   threadId: string | null;
   /** 当前项目目录。本页不再用它做归属判断（任务表直接读 tasks:list），保留以不破坏 App 契约 */
   projectPath: string;
-  /** 派单：目标 + 会话内扩展（数字员工/技能/连接器）。App 建线程后写入 mj_extras_<id>，
-   *  ChatArea 切到该线程时按同一 localStorage 通道恢复 —— 与「会话内用 + 菜单选员工」等价。 */
-  onAutoRun: (goal: string, extras: DeskExtras) => void;
+  /** 派单：目标 + 会话内扩展（数字员工/技能/连接器）+ 派单前选定的工作空间（null = 跟随当前）。
+   *  App 建线程后写入 mj_extras_<id>，ChatArea 切到该线程时按同一 localStorage 通道恢复 ——
+   *  与「会话内用 + 菜单选员工」等价；project 对象交给 newThreadInProject(p)（内部会 selectProject）。 */
+  onAutoRun: (goal: string, extras: DeskExtras, project: DeskProjectOption | null) => void;
   /** 打开文件到右栏预览。本页暂无落点（工件卡已下线），保留以不破坏 App 契约 */
   onOpenFile: (path: string) => void;
-  /** 档位 chip → 设置页。缺省时 chip 只回显不可点 */
-  onOpenSettings?: () => void;
   /** 保留以不破坏 App 契约（原「待你决定」卡跳会话；该卡已下线） */
   onOpenThread?: (threadId: string) => void;
   /** 保留以不破坏 App 契约（原「最近交付」卡跳工件面板；该卡已下线） */
   onOpenArtifacts?: () => void;
+  /** 审批/沙箱/粒度**活值**（App 的 approvalSettings state）。
+   *  2026-10-28：废除本页的 localStorage 挂载快照（useState(readApproval) 只在挂载时读一次，
+   *  设置改完回来芯片永不刷新 —— 用户实测缺陷）；改由 App 传 state，改档即时反映。 */
+  approvalSettings?: Record<string, string> | null;
+  /** 档位变更（接单台就地选择）：直写 App 的 setApprovalSettings —— 与设置页/Composer 同一事实来源 */
+  onPolicyChange?: (patch: DeskPolicyPatch) => void;
+  /** 工作空间列表与当前项 id（派单前显式选工作区；空列表时选择器不渲染） */
+  projects?: readonly DeskProjectOption[];
+  activeProjectId?: string | null;
+  /** 新建项目：打开 App 既有的 ProjectPicker（选本地目录/新建目录）——工作空间面板顶部动作 */
+  onNewProject?: () => void;
   /** 模型 providers 树（App 的 allProviders）。摊平与还原在 lib/deskModels.ts 里做。 */
   providers?: readonly DeskProvider[];
   /** 当前选中模型（App 的 selectedModel，形状是 { provider, model }） */
@@ -141,10 +142,10 @@ function UsageCard({ threadId }: { threadId: string | null }) {
 }
 
 export default function DeskPage({
-  threads, threadId, onAutoRun, onOpenSettings, providers, selectedModel, onPickModel, projectPath,
+  threads, threadId, onAutoRun, providers, selectedModel, onPickModel, projectPath,
+  approvalSettings, onPolicyChange, projects, activeProjectId, onNewProject,
 }: DeskPageProps) {
   const { t, locale } = useI18n();
-  const [approval] = useState(readApproval);
   const [exporting, setExporting] = useState(false);
   const [exportMsg, setExportMsg] = useState('');
   const [flowOpen, setFlowOpen] = useState(false);
@@ -196,13 +197,18 @@ export default function DeskPage({
           {/* 接单区**始终渲染**：它不依赖用量数据，若跟着 status 一起显示/隐藏，
               每次进工作台都会闪一下「只剩一行加载中」，而且主操作会在首帧消失。 */}
           <DeskIntake
-            policies={policiesOf(t, approval)}
-            onPolicyClick={onOpenSettings}
+            approvalMode={approvalSettings?.approval_mode}
+            sandboxPolicy={approvalSettings?.sandbox_policy}
+            responseStyle={approvalSettings?.response_style}
+            onPolicyChange={onPolicyChange}
             onDispatch={onAutoRun}
             models={deskModelOptions(providers)}
             currentModel={deskModelKey(selectedModel)}
             onPickModel={(id) => { const hit = findDeskModel(providers, id); if (hit) onPickModel?.(hit); }}
             projectPath={projectPath}
+            projects={projects}
+            activeProjectId={activeProjectId}
+            onNewProject={onNewProject}
           />
 
           <div className="mt-4 flex flex-col gap-4">
@@ -248,25 +254,4 @@ export default function DeskPage({
       </div>
     </div>
   );
-}
-
-/** 档位只读回显：值来自**已持久化的真实设置**（App 每次改动都会写回 mj_approval_settings），
- *  不是写死的默认值 —— 写死默认值等于在界面上编一个用户并没有选的档位。 */
-function readApproval(): Record<string, string> {
-  const fallback = { sandbox_policy: 'workspace-write', approval_mode: 'on-request', response_style: 'default' };
-  try {
-    const raw = loadJSON('mj_approval_settings', fallback) as Record<string, string> | null;
-    return { ...fallback, ...(raw || {}) };
-  } catch {
-    return fallback;
-  }
-}
-
-function policiesOf(t: (k: string) => string, approval: Record<string, string>): DeskPolicyEcho[] {
-  const rows: Array<[string, string | undefined]> = [
-    ['desk.intake.policyApproval', APPROVAL_MODES.find((m) => m.id === approval.approval_mode)?.nameKey],
-    ['desk.intake.policySandbox', SANDBOX_MODES.find((m) => m.id === approval.sandbox_policy)?.nameKey],
-    ['desk.intake.policyStyle', STYLE_NAME_KEY[approval.response_style || 'default']],
-  ];
-  return rows.filter((r) => r[1]).map(([label, valueKey]) => ({ label: t(label), value: t(valueKey as string) }));
 }

@@ -12,6 +12,7 @@ const fs = require('fs');
 const { execFile, spawn } = require('child_process');
 const { LocalCollab, makeDocId } = require('../collab');
 const skillCompat = require('../skillCompat');
+const skillsLib = require('../skills');
 const ideLib = require('../ide');
 const ecosystemLib = require('../ecosystem');
 const searchProviders = require('../webSearchProviders');
@@ -340,6 +341,60 @@ function register() {
       }
       if (installed.length) deps.audit('skill_import', dir, `installed=${installed.length}`);
       return { ok: true, found: scan.skills.length, installed, failed };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // 2026-10-28：技能**表单直建**（此前只有文件夹导入）——目录名/正文清洗与去重都在 skills.js 单点
+  ipcMain.handle('skills:create', async (_, { name, description, content } = {}) => {
+    try {
+      guard.assertStrings({ name, content }, {
+        name: 120,
+        content: 200000,
+        description: { max: 500, optional: true, allowEmpty: true },
+      });
+      const r = skillsLib.createSkill(deps.getSkillsDir(), { name, description, content });
+      if (r.ok) deps.audit('skill_create', r.dir, `name=${r.name}`);
+      return r;
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // 2026-10-28 补齐：读正文（编辑表单预填）/ 更新 / 删除——路径安全判定全在 skills.js 单点
+  ipcMain.handle('skills:read', async (_, { dir } = {}) => {
+    try {
+      guard.assertStrings({ dir }, { dir: 64 });
+      const content = skillsLib.getSkill(deps.getSkillsDir(), dir);
+      return content == null ? { ok: false, error: `技能不存在：${dir}` } : { ok: true, dir, content };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('skills:update', async (_, { dir, name, description, content } = {}) => {
+    try {
+      guard.assertStrings({ dir, name, content }, {
+        dir: 64,
+        name: 120,
+        content: 200000,
+        description: { max: 500, optional: true, allowEmpty: true },
+      });
+      const r = skillsLib.updateSkill(deps.getSkillsDir(), { dir, name, description, content });
+      if (r.ok) deps.audit('skill_update', r.dir, `name=${r.name}`);
+      return r;
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('skills:delete', async (_, { dir } = {}) => {
+    try {
+      guard.assertStrings({ dir }, { dir: 64 });
+      const r = skillsLib.deleteSkill(deps.getSkillsDir(), dir);
+      if (r.ok) deps.audit('skill_delete', r.dir, '');
+      return r;
     } catch (err) {
       return { ok: false, error: err.message };
     }

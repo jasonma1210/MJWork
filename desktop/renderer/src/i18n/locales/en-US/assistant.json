@@ -166,5 +166,6 @@
     "statusReady": "Ready",
     "hintPickAssistant": "Pick an assistant above first"
   },
-  "tabDispatch": "Dispatch"
+  "tabDispatch": "Dispatch",
+  "tabBoard": "Board"
 }

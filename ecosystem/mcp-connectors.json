@@ -3087,6 +3087,47 @@
       "maturity": "stable",
       "notes": "官方 npm 包 dingtalk-mcp 由 open-dingtalk 发布；也可改用钉钉 MCP 广场发放的 streamable-http 地址（https://mcp-gw.dingtalk.com/...，URL 内含 key）。ACTIVE_PROFILES 可只激活需要的域，减少暴露面。",
       "auth_mode": "paste_key"
+    },
+    {
+      "id": "mcp-codegraph",
+      "name": "codegraph",
+      "display_name": "CodeGraph 代码图谱",
+      "vendor": "colbymchenry",
+      "official": false,
+      "category": "本地工具与文件系统",
+      "transport": "stdio",
+      "install": {
+        "type": "npm",
+        "pkg": "@colbymchenry/codegraph",
+        "args": [
+          "serve",
+          "--mcp",
+          "-p",
+          "${CODEGRAPH_PROJECT}"
+        ]
+      },
+      "env_vars": [],
+      "description": "本地代码图谱 MCP 服务：对指定工作区建立符号级索引，让 AI Agent 能直接读取相关源码、调用链与依赖关系（blast radius）。只读，不修改代码。",
+      "capabilities": [
+        "代码理解",
+        "读取源码",
+        "调用链分析",
+        "依赖关系",
+        "符号查询",
+        "blast radius"
+      ],
+      "permissions": [
+        {
+          "level": "filesystem",
+          "scope": "workspace"
+        }
+      ],
+      "auth_type": "none",
+      "official_url": "",
+      "maturity": "stable",
+      "notes": "本地代码图谱 MCP 服务：对指定工作区建立符号级索引，让 AI Agent 能直接读取相关源码、调用链与依赖关系（blast radius）。只读，不修改代码。安装连接时在表单里填一次工作区绝对路径（即你要它索引的项目根）；首次调用会在该工作区生成 .codegraph/ 索引。注意：MCP 工具按设计属 L3 审批档——首次调用会弹审批卡，点一次「始终允许」后免审批。",
+      "auth_mode": "none",
+      "recommended": false
     }
   ]
 }

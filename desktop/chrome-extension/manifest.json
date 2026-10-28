@@ -1,10 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "MJ Code Chrome 接管",
+  "name": "MJ Nexus Chrome 接管",
   "version": "1.0.0",
-  "description": "将本机 Chrome 的标签页操作能力（CDP）安全中继给 MJ Code 桌面端；每次连接需在 MJ Code 中逐次授权。",
-  "permissions": ["tabs", "debugger"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "description": "将本机 Chrome 的标签页操作能力（CDP）安全中继给 MJ Nexus 桌面端；每次连接需在 MJ Nexus 中逐次授权。",
+  "permissions": [
+    "tabs",
+    "debugger"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "background": {
     "service_worker": "background.js"
   }

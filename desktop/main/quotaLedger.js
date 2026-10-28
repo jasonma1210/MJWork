@@ -112,22 +112,24 @@ class QuotaLedger {
     return Math.max(n, this.latestConsumptionAt(projectId));
   }
 
-  /** 窗口内已消耗 token（单一求和口径；老化=过滤，不删数据）。 */
+  /** 窗口内已消耗 token（单一求和口径；老化=过滤，不删数据）。
+   *  仅计团队任务的 round/settle 源——'chat'（单人对话收尾记账）不计入，避免闲聊挤占派发额度。 */
   usedInWindow(projectId, now = Date.now()) {
     const b = this.getBucket(projectId);
     if (!b) return 0;
     const anchor = this.effectiveNow(projectId, now);
     const from = anchor - b.windowSeconds * 1000;
     const r = this.db.prepare(`SELECT SUM(tokens) AS s FROM quota_consumptions
-      WHERE project_id = ? AND created_at > ?`).get(String(projectId || '').trim(), from);
+      WHERE project_id = ? AND created_at > ? AND source <> 'chat'`).get(String(projectId || '').trim(), from);
     return safeNum(r && r.s);
   }
 
-  /** 某成员在窗口内的消耗（单 Bot 熔断的唯一数据源 §5.3）。 */
+  /** 某成员在窗口内的消耗（单 Bot 熔断的唯一数据源 §5.3）。
+   *  同样排除 'chat' 源（单人对话未绑定成员，本就多为 null，此处按口径一并过滤）。 */
   memberUsed(projectId, memberId, windowMs, now = Date.now()) {
     const anchor = this.effectiveNow(projectId, now);
     const r = this.db.prepare(`SELECT SUM(tokens) AS s FROM quota_consumptions
-      WHERE project_id = ? AND member_id = ? AND created_at > ?`)
+      WHERE project_id = ? AND member_id = ? AND created_at > ? AND source <> 'chat'`)
       .get(String(projectId || '').trim(), String(memberId || '').trim(), anchor - safeNum(windowMs, 600000));
     return safeNum(r && r.s);
   }
@@ -154,7 +156,7 @@ class QuotaLedger {
     const from = anchor - safeNum(windowMs, 30 * 24 * 3600 * 1000);
     return this.db.prepare(`SELECT member_id AS memberId, SUM(tokens) AS tokens, COUNT(*) AS rounds
       FROM quota_consumptions
-      WHERE project_id = ? AND created_at > ?
+      WHERE project_id = ? AND created_at > ? AND source <> 'chat'
       GROUP BY member_id
       ORDER BY tokens DESC`)
       .all(String(projectId || '').trim(), from)
@@ -239,6 +241,19 @@ class QuotaLedger {
    */
   recordRound({ projectId, runId, taskId, memberId, tokens, at }) {
     return this._insert({ projectId, runId, taskId, memberId, tokens, source: 'round', at });
+  }
+
+  /**
+   * 单人对话运行收尾的消耗记账（source='chat'）。
+   * 与 recordRound 的区别：团队任务运行由 quotaGate 另走 recordRound/settle（task_id 非空、
+   * 走 workerPool，不经过 finishRun），此处只补「普通派单对话」这条此前完全不落账本的缺口，
+   * 让「用量流水」对账本页能看到单人对话的真实消耗；workerPool 直跑 runAgent 不会触发本方法，故无双写。
+   *
+   * ⚠ 口径：'chat' 源**不计入**项目配额窗口（usedInWindow/memberUsed 均按 source 过滤），
+   * 否则单人闲聊会无端挤占团队任务的派发额度；它只服务于用量展示，不改变配额判定。
+   */
+  recordChat({ projectId, runId, memberId, tokens, at }) {
+    return this._insert({ projectId, runId, taskId: null, memberId, tokens, source: 'chat', at });
   }
 
   _insert({ projectId, runId, taskId, memberId, tokens, source, at }) {

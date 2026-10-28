@@ -99,6 +99,12 @@ contextBridge.exposeInMainWorld('mjcode', {
   getSkill: (payload) => ipcRenderer.invoke('skills:get', payload),
   installEcosystemSkill: (payload) => ipcRenderer.invoke('skills:installEcosystem', payload),
   importSkillsFromDir: (payload) => ipcRenderer.invoke('skills:importFromDir', payload),
+  // 2026-10-28：技能表单直建（本地技能区「新建技能」）
+  skillsCreate: (payload) => ipcRenderer.invoke('skills:create', payload),
+  // 2026-10-28 补齐：编辑（读正文/更新）与删除
+  skillsRead: (payload) => ipcRenderer.invoke('skills:read', payload),
+  skillsUpdate: (payload) => ipcRenderer.invoke('skills:update', payload),
+  skillsDelete: (payload) => ipcRenderer.invoke('skills:delete', payload),
   // 插件市场（M6）
   marketRefresh: () => ipcRenderer.invoke('market:refresh'),
   marketSearch: (payload) => ipcRenderer.invoke('market:search', payload),

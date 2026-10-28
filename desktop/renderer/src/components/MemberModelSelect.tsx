@@ -55,7 +55,8 @@ export function sameModelRef(
  * 成员行内的模型绑定下拉。
  * 选项值用**下标**：渲染层不必知道引用串格式，选中下标直接对回 modelOptions 里的
  * {providerId, modelId} 对象交给主进程做唯一的 canonical 化。
- * 空选项 = 默认模型（解绑）。
+ * 2026-10-28（用户裁决）：「默认模型」空选项取消——未绑定的成员显示模型列表第一项
+ * （TeamsPage 的迁移 effect 会把它落成真实绑定：显示即事实，不再有「看着有值、实际跑默认」）。
  */
 export default function MemberModelSelect({ member, options, t, busy, onChange }: {
   member: MemberLike; options: ModelOption[]; t: TFunc; busy: boolean;
@@ -65,20 +66,21 @@ export default function MemberModelSelect({ member, options, t, busy, onChange }
   // 已有绑定却在本机供应商列表里找不到（供应商/模型被删，或列表尚未加载）：
   // 显示为失效回显项——语义与运行期一致（该成员实际跑的是默认模型），且不可点选为「有效」。
   const stale = !!member.model && idx < 0;
+  // 未绑定 ⇒ 显示第一项（迁移 effect 会把它落成真实绑定；选项列表为空时 value 无匹配，显示空）
+  const value = idx >= 0 ? String(idx) : (stale ? 'stale' : (options.length ? '0' : ''));
   return (
     <select
-      value={idx >= 0 ? String(idx) : (stale ? 'stale' : '')}
+      value={value}
       disabled={busy}
       title={t('teams.modelSelectLabel')}
       onChange={(e) => {
         const v = e.target.value;
         if (v === 'stale') return; // 失效项只是回显，改绑请选其余项
-        const opt = v === '' ? null : options[Number(v)];
-        onChange(opt ? { providerId: opt.providerId, modelId: opt.modelId } : null);
+        const opt = options[Number(v)];
+        if (opt) onChange({ providerId: opt.providerId, modelId: opt.modelId });
       }}
       className="h-7 max-w-[180px] px-2 rounded-lg bg-input text-caption text-text2"
     >
-      <option value="">{t('teams.modelDefault')}</option>
       {stale && <option value="stale">{member.modelLabel || t('teams.modelUnresolved')}</option>}
       {options.map((o, i) => (
         <option key={`${o.providerId}#${o.modelId}`} value={String(i)}>{o.label}</option>

@@ -144,6 +144,10 @@
  *          `test/release-update.test.js` 的「三包版本一致」守护）；本条的钉值口径不变
  *          （仍与 package.json 实读值严格相等），只随发版推进期望值。A15a/A15c 不受影响
  *          （CLIENT_INFO 与 package.json 同源，无第二版本字面量）。
+ *      · 0.9.0-beta 发版批（2026-10-28，品牌更名 MJ Nexus + 三平台首发）—— 同一条版本钉值**原地重写**（总数仍 76）：
+ *        → A15b：`0.8.0-beta` → **`0.9.0-beta`**。
+ *          触发：产品更名 MJ Nexus 并首次产出 macOS/Windows/Linux 三平台制品（用户可感知），故走 minor；
+ *          三包版本同步由 `test/release-update.test.js` 与 `scripts/preflight-release.mjs` 的 P1 双重守护。
  *      · 0.8.0-beta 发版批（2026-10-28，已提交）—— 同样一条版本钉值**原地重写**（总数仍 76）：
  *        → A15b：`0.7.0-beta` → **`0.8.0-beta`**。
  *          触发：本批含 never 档审批行为变更（用户可感知），故走 minor 而非 patch；
@@ -742,7 +746,9 @@ function httpHeaderSegments() {
   const e = JSON.parse(read('ecosystem/digital-employees.json'));
   const sk = fs.readdirSync(P('ecosystem/skills'), { withFileTypes: true }).filter((x) => x.isDirectory());
   okTrue('A13a', 'mcp-connectors.json 顶层是 Object（不是数组）', !Array.isArray(c));
-  ok('A13b', '精选 connectors = 77', Array.isArray(c) ? c.length : c.connectors.length, 77);
+  // 2026-10-28：77→78 —— 精选目录新增 `mcp-codegraph`（见 docs/MJCode-CodeGraph集成方案-2026-10-28.md，
+  // 属**有意新增**的生态资产，不是重复条目），故同步上调；本条仍是「目录规模变更即红」的探测器。
+  ok('A13b', '精选 connectors = 78', Array.isArray(c) ? c.length : c.connectors.length, 78);
   ok('A13c', 'workbuddy connectors = 214', Array.isArray(w) ? w.length : w.connectors.length, 214);
   ok('A13d', 'digital employees = 51', e.length, 51);
   ok('A13e', 'skills 目录 = 100', sk.length, 100);
@@ -769,7 +775,7 @@ function httpHeaderSegments() {
   const proto = stripComments(read('desktop/main/mcpProtocol.js'));
   okTrue('A15a', "已修复：CLIENT_INFO version 不再硬编码 '1.0'（与 package.json 同源）",
     !/CLIENT_INFO\s*=\s*Object\.freeze\(\{[^}]*version:\s*'1\.0'/s.test(proto));
-  ok('A15b', 'desktop/package.json version', JSON.parse(read('desktop/package.json')).version, '0.8.0-beta');
+  ok('A15b', 'desktop/package.json version', JSON.parse(read('desktop/package.json')).version, '0.9.0-beta');
   okTrue('A15c', 'mcpClient 每次 initialize 都发 clientInfo',
     /clientInfo:\s*\{\s*\.\.\.CLIENT_INFO\s*\}/.test(stripComments(read('desktop/main/mcpClient.js'))));
 }

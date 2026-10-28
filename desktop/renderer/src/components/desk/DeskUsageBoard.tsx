@@ -90,17 +90,23 @@ export default function DeskUsageBoard({ totals, byModel, byDay }: {
         {/* 近 7 天消耗（柱 + 可访问数据表） */}
         <section className="rounded-xl border border-border bg-surface p-5" aria-label={t('desk.stats.daily')}>
           <h3 className="text-sm font-medium text-text">{t('desk.stats.daily')}</h3>
+          {/* 柱子高度用**像素**而不是百分比：此前的 `height:X%` 落在一个 auto 高度的列容器里，
+              百分比高度按规范退化为 auto（无内容 ⇒ 0px），于是无论有多少数据柱子都不可见（用户实测：
+              「近 7 天消耗」只有日期标签、没有柱）。改为按固定柱道高度 88px 折算像素，确定性可见。 */}
           <div className="mt-3 flex h-28 items-end gap-2" role="img" aria-label={t('desk.stats.daily')}>
-            {byDay.map((d) => (
-              <div key={d.key} className="flex min-w-0 flex-1 flex-col items-center gap-1">
-                <div
-                  className="w-full rounded-t bg-accent/80"
-                  style={{ height: `${Math.max(2, Math.round((d.total / maxDay) * 100))}%` }}
-                  title={`${d.key} · ${d.total}`}
-                />
-                <span className="text-caption text-text2">{d.label}</span>
-              </div>
-            ))}
+            {byDay.map((d) => {
+              const barPx = Math.max(2, Math.round((d.total / maxDay) * 88));
+              return (
+                <div key={d.key} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
+                  <div
+                    className="w-full rounded-t bg-accent/80"
+                    style={{ height: `${barPx}px` }}
+                    title={`${d.key} · ${d.total}`}
+                  />
+                  <span className="text-caption text-text2">{d.label}</span>
+                </div>
+              );
+            })}
           </div>
           <table className="sr-only">
             <caption>{t('desk.stats.dailyCaption')}</caption>

@@ -152,6 +152,8 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
           <option value="">{t('ledger.filterAllSources')}</option>
           <option value="round">round</option>
           <option value="settle">settle</option>
+          {/* 2026-10-28：单人对话收尾也会入账（source='chat'），筛选器不给这一档就查不到它们 */}
+          <option value="chat">chat</option>
         </select>
         {refreshing && <span className="text-caption text-text2">· {t('ledger.refresh')}</span>}
         <div className="ml-auto flex items-center gap-2">

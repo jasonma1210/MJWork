@@ -189,15 +189,18 @@ await check('A11 账本（ledger）优先于定时任务/助理/生态中心，�
 
 // ── B. 助理子页目录与挂载方式 ──
 
-await check('B1 助理子页目录恰为三个 Tab：派活（默认）/ 助手目录 / AI 建团', () => {
+await check('B1 助理子页目录恰为四个 Tab：派活（默认）/ 助手目录 / AI 建团 / 项目看板', () => {
   const ids = ASSISTANT_TABS.map((x) => x.id);
   // 第六版（2026-10-27）：'publish'（发布任务）下线 —— 它只能派给军团或自动，与助手毫无关系，
   // 且与目录/建团各自都有一套提交。改为 'dispatch'（派活面板，唯一提交出口）。
-  assert.deepEqual(ids, ['dispatch', 'directory', 'aiTeam']);
+  assert.deepEqual(ids, ['dispatch', 'directory', 'aiTeam', 'board']);
   assert.ok(!ids.includes('publish'), 'publish（发布任务）已下线，不应再出现');
   assert.ok(!ids.includes('teams'), '军团编制不应再是助理子 Tab（已迁入工作室）');
   // 定时任务已升回一级入口 ⇒ 不得再作为助理 Tab
   assert.ok(!ids.includes('scheduled'), '定时任务不应再是助理子 Tab');
+  // 2026-10-28：board（项目任务看板）自工作室迁入 —— 派完活在哪跟进，看板就跟人走到哪；
+  // 而 artifacts **不**迁入：会话右栏已挂同一 ArtifactPanel（threadId 维度），再加 Tab 是第三个重复入口
+  assert.ok(!ids.includes('artifacts'), '工件不应是助理子 Tab（右栏已有同一面板）');
 });
 
 await check('B2 每个 Tab 的文案键都存在且指向 assistant 模块（禁硬编码文案的第一道闸）', () => {
@@ -213,7 +216,7 @@ await check('B3 默认 Tab 是「派活」；isAssistantTab 对非法输入返�
   // 目录作为资源面退到第二个 Tab。
   assert.equal(DEFAULT_ASSISTANT_TAB, 'dispatch', `默认 Tab 应为 dispatch，实际 ${DEFAULT_ASSISTANT_TAB}`);
   assert.ok(isAssistantTab(DEFAULT_ASSISTANT_TAB), `默认 Tab 非法：${DEFAULT_ASSISTANT_TAB}`);
-  for (const ok of ['dispatch', 'directory', 'aiTeam']) assert.ok(isAssistantTab(ok), ok);
+  for (const ok of ['dispatch', 'directory', 'aiTeam', 'board']) assert.ok(isAssistantTab(ok), ok);
   assert.equal(isAssistantTab('publish'), false, 'publish 已下线，必须判为非法');
   // 'teams' 现已**不是**助理 Tab（迁去工作室）⇒ 必须判为非法，防止脏值把编制塞回助理
   for (const bad of ['', null, undefined, 'teams', 'teams ', 'Teams', 'unknown', 'scheduled', 'complex', 0]) {
@@ -243,12 +246,13 @@ await check('B5 App 把视图标志（含 showScheduled）传给 Sidebar，并�
   assert.ok(!/<TeamsPage\s*\/>/.test(app), 'App 仍直接挂载 <TeamsPage/>（应留在助理 Tab）');
 });
 
-await check('B6 AssistantPage 按 tab 条件挂载三个子视图，且不再有 scheduled/complex/teams 分支', () => {
+await check('B6 AssistantPage 按 tab 条件挂载各子视图，且不再有 scheduled/complex/teams 分支', () => {
   const page = stripComments(read('components/AssistantPage.tsx'));
   for (const pair of [
     ["tab === 'dispatch'", '<AssistantDispatch'],
     ["tab === 'directory'", '<AssistantDirectory'],
     ["tab === 'aiTeam'", '<AiTeamBuilder'],
+    ["tab === 'board'", '<StudioBoard'],
   ]) {
     const i = page.indexOf(pair[0]);
     assert.ok(i > 0, `AssistantPage 缺分支 ${pair[0]}`);
@@ -264,13 +268,15 @@ await check('B6 AssistantPage 按 tab 条件挂载三个子视图，且不再有
 
 // ── C. 工作室（Studio）子页目录与挂载方式 ──
 
-await check('C1 工作室子页目录恰为四个 Tab：项目空间（默认）/ 编制 / 看板 / 工件', () => {
+await check('C1 工作室子页目录恰为两个 Tab：项目空间（默认）/ 编制', () => {
   const ids = STUDIO_TABS.map((x) => x.id);
-  // 2026-10-27：补齐「看板」Tab（D-03：完整看板从 ArtifactPanel 内嵌提升为独立 Tab）
-  assert.deepEqual(ids, ['space', 'roster', 'board', 'artifacts']);
+  // 2026-10-28：board 迁入助理（派活与跟进同处一页）；artifacts Tab 下线
+  //（与会话右栏 ArtifactPanel 纯重复，D-03「消除重复而非造空壳」同一纪律）。
+  // 工作室收敛为纯「项目资产 + 编制」两Tab。
+  assert.deepEqual(ids, ['space', 'roster']);
   assert.equal(DEFAULT_STUDIO_TAB, 'space');
-  for (const ok of ['space', 'roster', 'board', 'artifacts']) assert.ok(isStudioTab(ok), ok);
-  for (const bad of ['', null, undefined, 'teams', 'unknown', 0]) {
+  for (const ok of ['space', 'roster']) assert.ok(isStudioTab(ok), ok);
+  for (const bad of ['', null, undefined, 'teams', 'board', 'artifacts', 'unknown', 0]) {
     assert.equal(isStudioTab(bad), false, String(bad));
   }
 });
@@ -285,7 +291,8 @@ await check('C4 项目上下文（IA-02）：StudioPage 不再写死 spaceId="de
   // 空间键必须来自 props（projectPath），且无项目时不挂载任何数据面
   assert.match(page, /spaceId=\{projectPath\}/, 'StudioPage 未把 projectPath 作为空间键传给 TeamSpace');
   assert.match(page, /if\s*\(!projectPath\)/, 'StudioPage 缺少「无项目空态」分支（会静默读写 default）');
-  assert.match(page, /<StudioBoard/, 'StudioPage 未挂载看板 Tab（D-03）');
+  // 2026-10-28：看板已迁助理（AssistantPage 挂 StudioBoard），StudioPage 不再含看板分支
+  assert.ok(!page.includes('<StudioBoard'), 'StudioPage 仍挂看板（已迁助理，会成双入口）');
 });
 
 await check('C5 看板数据源是真实项目级读取，不是前端伪造', () => {
