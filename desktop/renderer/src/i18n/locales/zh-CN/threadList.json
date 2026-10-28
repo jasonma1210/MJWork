@@ -4,7 +4,7 @@
   "statusDone": "已完成",
   "statusIdle": "待继续",
   "unassigned": "未归属项目",
-  "loadMore": "加载更多（还有 {n} 条）",
+  "loadMore": "查看更多 ({n})",
   "noProject": "尚未打开项目，点击选择目录",
   "openFolderFailed": "打开目录失败",
   "openFailed": "打开失败",

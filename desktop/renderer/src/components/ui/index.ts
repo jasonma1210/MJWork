@@ -10,3 +10,9 @@ export type { ButtonProps, ButtonVariant, ButtonSize } from './Button';
 
 export { default as Input, TextArea } from './Input';
 export type { InputProps, TextAreaProps } from './Input';
+
+export { default as MenuItem } from './MenuItem';
+export type { MenuItemProps } from './MenuItem';
+
+export { default as IconButton } from './IconButton';
+export type { IconButtonProps } from './IconButton';

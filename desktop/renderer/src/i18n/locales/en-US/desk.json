@@ -22,7 +22,8 @@
     "policyHint": "Read-only echo — click to change in Settings",
     "dispatch": "Dispatch",
     "model": "Model",
-    "newThread": "New conversation"
+    "newThread": "New conversation",
+    "addTip": "Add (file / new conversation)"
   },
   "scenario": {
     "office": {

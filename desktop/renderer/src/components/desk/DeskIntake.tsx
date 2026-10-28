@@ -12,15 +12,22 @@
 //   · 模型   → 原型同款原生 <select>，值来自 App 的 allProviders，选了就生效（下一次对话就用它）
 //   · 档位   → 只读回显 + 跳设置
 //   · ↵ 仍真绑定 Enter（IME-safe，见 onKeyDown）；冗余的「↵ 派单」视觉提示文本已移除（与派单按钮文案重复）
-//   · + 新建会话 → 同侧栏「新建任务」，退出 desk 回到新会话（onNewThread）
-// 原型还有「附件 / 怎么干这一单 / 预算 ¥」三个控件，**刻意不补**：
-//   · 附件与运行模式的真身都在 ChatArea 内部 state（attachments / runMode），desk 拿不到，
-//     复制一套会变成两处都能改、又都不生效 / 不唯一；
-//   · 预算 ¥ 全仓无价格表，做了就是死控件（团队预算三元组在 teamStore，只在挂军团时才有意义）。
-import { useState } from 'react';
+//   · + 加号菜单 → 2026-10-28 改为弹出菜单（此前是「直接跳新建会话」，与主输入框的 + 行为不一致：
+//     那边的 + 是弹菜单，不会把用户从当前页面带走）。菜单只保留两项**真有落点**的：
+//       ① 添加文件…：走与主输入框同一 IPC（pickFiles），选完以 `@路径` 拼进目标文案 ——
+//          与 useAgentRun 的附件注入同一约定（模型经 read_file 能读到），不需要新的 attahcments 通道；
+//       ② 新建会话：原 + 的功能保留在这里，不至于"改了一致性却丢了能力"。
+//     刻意**不接完整 PlusMenu**：它的其余项（从会话中引用 / 运行模式 / 数字员工 / 技能 /
+//     连接器 / 团队编制）语义都要求「已有一个会话」，而接单时**还没有会话**。PlusMenu 对缺失
+//     回调一律用 `?.()` 静默吞掉 —— 接进来会变成一排"点了没反应"的死控件，比不一致更糟。
+// 原型还有「怎么干这一单 / 预算 ¥」两个控件**仍刻意不补**：前者无对应 state；
+// 后者全仓无价格表，做了就是死控件（团队预算三元组在 teamStore，只在挂军团时才有意义）。
+import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import Button from '../ui/Button';
-import { IconPlus } from '../icons';
+import IconButton from '../ui/IconButton';
+import MenuItem from '../ui/MenuItem';
+import { IconFilePlus, IconPlus } from '../icons';
 import { useI18n } from '../../i18n';
 
 /** 档位回显的一行（label / value 都已由调用方解析成显示文案） */
@@ -57,8 +64,42 @@ export default function DeskIntake({
 }: DeskIntakeProps) {
   const { t } = useI18n();
   const [goal, setGoal] = useState('');
+  const [plusOpen, setPlusOpen] = useState(false);
+  const plusRef = useRef<HTMLDivElement | null>(null);
   const trimmed = goal.trim();
   const dispatch = () => { if (trimmed) onDispatch?.(trimmed); };
+
+  // 加号菜单：点外部 / Esc 关闭（与 PlusMenu 同一交互预期，避免菜单"点不掉"）
+  useEffect(() => {
+    if (!plusOpen) return;
+    const onDocDown = (e: MouseEvent) => {
+      if (!plusRef.current?.contains(e.target as Node)) setPlusOpen(false);
+    };
+    const onEsc = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') setPlusOpen(false); };
+    document.addEventListener('mousedown', onDocDown);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDocDown);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [plusOpen]);
+
+  // 添加文件：与主输入框同一 IPC 通道，选完以 `@路径` 追加到目标文案。
+  // 桥缺失或用户取消都属预期路径（不报错）；写失败只记日志，不打断填写。
+  const addFiles = async () => {
+    setPlusOpen(false);
+    try {
+      const pick = window.mjcode?.pickFiles;
+      if (typeof pick !== 'function') return;
+      const r = (await pick()) as { ok?: boolean; paths?: string[] } | undefined;
+      if (r?.ok && Array.isArray(r.paths) && r.paths.length) {
+        const refs = r.paths.map((p) => `@${p}`).join('\n');
+        setGoal((prev) => `${prev}${prev && !prev.endsWith('\n') ? '\n' : ''}${refs}`);
+      }
+    } catch (e) {
+      console.warn('[desk] pick files failed:', e);
+    }
+  };
 
   // Enter 派单 / Shift+Enter 换行。
   // isComposing 判断不可省：中文输入法下回车是「上屏候选词」，此时派单会把半截拼音当成目标发出去。
@@ -109,14 +150,32 @@ export default function DeskIntake({
           </label>
         ) : null}
 
-        <button
-          onClick={() => onNewThread?.()}
-          title={t('desk.intake.newThread')}
-          aria-label={t('desk.intake.newThread')}
-          className="ml-auto inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text2 hover:bg-hover hover:text-text"
-        >
-          <IconPlus size={16} />
-        </button>
+        {/* 加号：与主输入框（Composer）同一套交互 —— 点击弹菜单、展开时图标转 45°、带 aria-expanded。
+            此前这里是「点击直接新建会话」，属于同一个图标两种行为，用户预期落空。 */}
+        <div className="relative ml-auto shrink-0" ref={plusRef}>
+          <IconButton
+            label={t('desk.intake.addTip')}
+            active={plusOpen}
+            ariaExpanded={plusOpen}
+            onClick={() => setPlusOpen((v) => !v)}
+            className={plusOpen ? 'rotate-45' : ''}
+          >
+            <IconPlus size={16} />
+          </IconButton>
+          {plusOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 bottom-full mb-2 w-[200px] bg-raise border border-border rounded-xl shadow-[var(--shadow-pop)] overflow-hidden z-palette"
+            >
+              <MenuItem icon={<IconFilePlus size={15} />} label={t('plusMenu.addFiles')} onClick={addFiles} />
+              <MenuItem
+                icon={<IconPlus size={15} />}
+                label={t('desk.intake.newThread')}
+                onClick={() => { setPlusOpen(false); onNewThread?.(); }}
+              />
+            </div>
+          )}
+        </div>
 
         <Button variant="primary" size="md" disabled={!trimmed} onClick={dispatch}>
           {t('desk.intake.dispatch')}

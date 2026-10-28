@@ -4,7 +4,7 @@
   "statusDone": "Completed",
   "statusIdle": "Ready to continue",
   "unassigned": "Unassigned",
-  "loadMore": "Load more ({n} remaining)",
+  "loadMore": "View more ({n})",
   "noProject": "No project open — click to choose a folder",
   "openFolderFailed": "Failed to open folder",
   "openFailed": "Failed to open",

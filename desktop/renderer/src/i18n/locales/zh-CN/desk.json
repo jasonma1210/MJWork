@@ -22,7 +22,8 @@
     "policyHint": "只读回显，点击到设置里修改",
     "dispatch": "派单",
     "model": "模型",
-    "newThread": "新建会话"
+    "newThread": "新建会话",
+    "addTip": "添加（文件 / 新建会话）"
   },
   "scenario": {
     "office": {

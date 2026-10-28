@@ -10,9 +10,11 @@ import { useI18n } from '../i18n';
 
 // 会话列表（对标 Codex 侧栏）：按项目分组，线程项带三色状态指示
 //   ● 已完成 / ◉ 待审批 / ↻ 运行中
-// S1：组内默认渲染 20 条 + 「加载更多」，避免会话量大时整棵渲染卡顿
+// S1：组内默认渲染 N 条 + 「查看更多（剩余数量）」，避免会话量大时整棵渲染卡顿
 // S2：组内按时间分段（今天/昨天/本周/更早），不再纯平铺
-const GROUP_PAGE_SIZE = 20;
+// 2026-10-28：20 → 5。需求原话「每个任务超过 5 个，下面就被隐藏显示查看更多（剩余的会话数量）」，
+// 且**只作用于工作目录分组内的会话列表**（本文件的 groups / orphans 两处），不影响其他资源面。
+const GROUP_PAGE_SIZE = 5;
 // 顶层常量只存 i18n key，渲染时经 t() 求值（避免模块加载冻结译文）
 const STATUS_META = {
   running: { labelKey: 'threadList.statusRunning', Icon: IconSpinner, dot: 'text-accent' },
