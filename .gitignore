@@ -163,3 +163,6 @@ desktop/renderer/src/__*probe*.jsx
 # 纪律：只阻止误入库，不做删除。
 # ─────────────────────────────────────────────────────────────
 desktop/build/ocr/
+
+# codegraph 本地索引（平台相关、体积大，不入库）
+.codegraph/
