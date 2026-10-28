@@ -135,9 +135,12 @@ ipcMain.on('tool:approval-response', (_, payload) => {
 });
 
 function applyApprovalDecision(decision, tool, args, conversationId) {
-  if (decision === 'conversation') {
+  // P0-1（2026-10-29）：不可记忆工具（install_plugin / pr_review / pr_comment 等 L3）即便收到
+  // 「始终允许 / 本对话允许」决策也绝不沉淀为规则——与「L1/L3 不可同类豁免」纪律一致（NON_REMEMBERABLE）。
+  // 判据并入下方分支：命中 NON_REMEMBERABLE 时两个分支都不执行，等价于「收到也直接忽略」。
+  if (decision === 'conversation' && !approval.NON_REMEMBERABLE.has(tool)) {
     conversationRules.push({ tool, pattern: approval.approvalTarget(tool, args), conversationId });
-  } else if (decision === 'always') {
+  } else if (decision === 'always' && !approval.NON_REMEMBERABLE.has(tool)) {
     alwaysRules.push({ tool, pattern: approval.approvalTarget(tool, args), scope: 'always', createdAt: Date.now() });
     saveAlwaysRules();
   }
@@ -1494,6 +1497,10 @@ function setupTaskOrchestration(db) {
           return team && Array.isArray(team.members) ? team.members : null;
         } catch (e) { console.warn('[worker] 名册反查失败（按无成员身份运行）:', e.message); return null; }
       },
+      // P0-2（2026-10-29）：成员运行期状态机驱动入口。workerPool 在任务开始/等待/完成时经此写入
+      // team_members.state（idle/busy/waiting/offline）；resetMemberSession 经 teamControl 写入 offline。
+      // 按成员主键直更（与 teamStore.setMemberState 同口径），fail-open：缺依赖时不抛、不阻塞任务。
+      setMemberState: (memberId, state) => { try { return teamStore?.setMemberState?.(memberId, state); } catch (e) { console.warn('[worker] 成员状态写入失败（不阻塞）:', e.message); return null; } },
       // M5 / T5-12：批次探活的第二通道——团队消息序号（§13.4 三通道判据之一）。
       // 只取 O(1) 的 MAX(seq)：探活每 5 秒对每个在跑团队组各拍一次，读全表会把探活本身变成负载。
       getTeamMessageSeq: (runId) => {

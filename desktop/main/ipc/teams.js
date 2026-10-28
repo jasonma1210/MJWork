@@ -562,9 +562,11 @@ function registerHandlers() {
       const budget = normalizeBudget(budgetGiven ? payload.budget : (team.budget || {}));
 
       // 参与成员子集（软约束）：只保留团队在册成员 id；空/未传 ⇒ 全队（含 Lead）。
+      // P0-2（2026-10-29）：排除处于 offline 的成员（其会话已被重置/私有记忆已降权，不宜再派活）。
+      // 若过滤后为空（全员离线），由 planWaves 兜底（与「名册为空」极端情况同口径）。
       const memberIds = Array.isArray(payload.memberIds) && payload.memberIds.length
-        ? (team.members || []).filter((m) => payload.memberIds.includes(m.id)).map((m) => m.id)
-        : (team.members || []).map((m) => m.id);
+        ? (team.members || []).filter((m) => payload.memberIds.includes(m.id) && m.state !== 'offline').map((m) => m.id)
+        : (team.members || []).filter((m) => m.state !== 'offline').map((m) => m.id);
 
       // 派活三件中的「协作模式 / 预算上限」落库为团队默认值：既是本次的显式取值，
       // 也作为下次派活表单的预填底座（团队卡片同样可编辑这两项，语义一致）。

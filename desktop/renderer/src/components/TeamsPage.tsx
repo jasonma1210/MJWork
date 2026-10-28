@@ -587,6 +587,10 @@ function TeamCard(props: {
                   <span className="shrink-0 text-caption text-text2">
                     {m.source === 'template' ? t('teams.sourceTemplate') : t('teams.sourceCustom')}
                   </span>
+                  {/* P0-2：成员实时状态（空闲/忙碌/等待中/离线），由引擎 FSM 经 setMemberState 写入，UI 仅展示 */}
+                  <span className="shrink-0 text-caption px-2 rounded bg-border/40 text-text2">
+                    {t(`teams.state${m.state ? m.state.charAt(0).toUpperCase() + m.state.slice(1) : 'Idle'}`)}
+                  </span>
                 </div>
                 <div className="text-caption text-text2 truncate">
                   {t('teams.toolsLabel', { tools: (m.toolNames || []).join(' · ') || '—' })}

@@ -33,6 +33,9 @@ function registerTeamControl({ ipcMain, deps, guard, audit, broadcastSystem, DIS
       guard.assertStrings(payload, { teamId: 128, memberId: 128 });
       const member = store.getMember(payload.teamId, payload.memberId);
       if (!member) return { ok: false, error: '成员不存在' };
+      // P0-2（2026-10-29）：重置会话 ⇒ 成员进入 offline（FSM 流转）。状态由 teamStore.setMemberState
+      // 统一归一（非法值回落 idle），此处只表达「重置 = 离线」语义。
+      store.setMemberState(payload.memberId, 'offline');
       const sessionKey = `agent:${payload.memberId}`;
       const checkpointCleared = deps.clearCheckpoint
         ? deps.clearCheckpoint(sessionKey) === true : false;

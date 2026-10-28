@@ -527,6 +527,19 @@ class TeamStore {
     return this.setMemberEnabled(teamId, memberId, false);
   }
 
+  /**
+   * P0-2（2026-10-29）：驱动成员运行期状态机（idle/busy/waiting/offline）。
+   * 此前 `team_members.state` 仅由 `updateMember` 经 API 手填，引擎从不写入、UI 亦不读取，形同死字段。
+   * 现由 `workerPool.runWorkerTask`（任务开始/等待/完成）与 `teamControl.resetMemberSession`（重置→offline）
+   * 调用本方法，使 FSM 真正流转。memberId 是 `team_members` 主键（newId('mbr')），按 id 直更，无需 teamId。
+   * 非法值经 `oneOf` 回落 'idle'（fail-closed，不放大未知状态）。
+   */
+  setMemberState(memberId, state) {
+    const normalized = oneOf(state, MEMBER_STATES, 'idle');
+    this.db.prepare('UPDATE team_members SET state = ? WHERE id = ?').run(normalized, String(memberId));
+    return normalized;
+  }
+
   /** 指定统筹负责人：原 lead 降级为 member，lead_member_id 指向新 lead（单一判据落点） */
   setLead(teamId, memberId) {
     const member = this.getMember(teamId, memberId);

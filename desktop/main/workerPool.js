@@ -339,6 +339,8 @@ async function runWorkerTask({ group, task, runKey, controller, name, runCwd, gr
     const qrun = deps.quotaGate?.beginRun(group, task) || null;
     if (qrun && !qrun.ok) { activeRuns.delete(runKey); schedule(); return; }
     try {
+      // P0-2（2026-10-29）：成员任务开始即标记 busy（FSM 流转）。anon 键任务（无 ownerMemberId）不驱动成员状态。
+      if (task.ownerMemberId && deps.setMemberState) deps.setMemberState(task.ownerMemberId, 'busy');
       const core = await deps.loadAgentCore();
       // T6-6：threadId 透传——工件项目上下文由宿主按会话反查（project_spaces 单一事实源），池不读项目表。
       const rawHandlers = deps.createToolHandlers({
@@ -488,6 +490,8 @@ async function runWorkerTask({ group, task, runKey, controller, name, runCwd, gr
         textKey: 'runtime.workerWaiting', textParams: { name, deps: (deferred.waitingOn || []).join(', ') } });
       // 隔离副本不再有意义（唤醒后新副本重跑），清理不泄漏；不 resolveEffect（任务未终态）。
       if (entry?.iso) await workerIsolation.discardIsolated({ iso: entry.iso }).catch(() => {});
+      // P0-2（2026-10-29）：成员任务进入等待态 ⇒ 标记 waiting（槽位释放，成员不再 busy）。
+      if (task.ownerMemberId && deps.setMemberState) deps.setMemberState(task.ownerMemberId, 'waiting');
       memberSession.saveWaiting(sessionKey, group, task, deferred, result); // P1：等待即打轻量断点
       schedule(); // 槽位已释放，让泵立刻去领别的任务
       return;
@@ -620,6 +624,10 @@ async function runWorkerTask({ group, task, runKey, controller, name, runCwd, gr
     } catch (e) {
       console.warn('[workerPool] 等待唤醒失败:', e.message);
     }
+    // P0-2（2026-10-29）：成员任务到达终态（done/failed/skipped/cancelled）⇒ 标记 idle。
+    // 注意：上方 waiting 分支（return）与 consumeStall 重派（return）均提前返回，不会走到这里，
+    // 故此处只在「任务真正结束」时重置为 idle，不会把正在等待/被重派的成员误标 idle。
+    if (task.ownerMemberId && deps.setMemberState) deps.setMemberState(task.ownerMemberId, 'idle');
     schedule(); // 任务结束后推进调度
   }
 }
