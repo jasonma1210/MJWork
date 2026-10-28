@@ -32,6 +32,16 @@ const STATUS_META = {
 export default function ScheduledTasks() {
   const { t } = useI18n();
   const [tasks, setTasks] = useState([]);
+
+  // B-P0-2：渲染层不得假设 prompt / name 一定存在。
+  // 任务来源有三条：本页表单、模型侧 scheduledCreate 工具写入、用户手改 scheduled.json；
+  // 后两条都可能缺字段。此前渲染期裸取 task.prompt.slice() 会抛 TypeError，
+  // 而当时全应用只有根边界 + 右栏一处局部边界 —— 一个坏任务就能把整个 App（含正在跑的会话）
+  // 换成错误页。归一只在数据入口做一次，渲染处仍保留兜底（双保险）。
+  const normalizeTask = (raw) => {
+    const o = raw && typeof raw === 'object' ? raw : {};
+    return { ...o, prompt: String(o.prompt ?? ''), name: String(o.name ?? o.id ?? '') };
+  };
   const [filter, setFilter] = useState('all'); // all | enabled | disabled
   const [showForm, setShowForm] = useState(false);
   // Bug2：TRAE 同款表单——任务名称 + 提示词 + 重复/时间/有效期
@@ -91,7 +101,7 @@ export default function ScheduledTasks() {
     try {
       // 走 scheduledStore 拿完整信封：除了任务，还要 recoverable（主存储被写空但备份有货）
       const r = await api.scheduledStore();
-      setTasks(Array.isArray(r?.tasks) ? r.tasks : []);
+      setTasks((Array.isArray(r?.tasks) ? r.tasks : []).map(normalizeTask));
       setRecoverable(r?.recoverable || null);
     } catch (err) {
       console.warn('[scheduled] failed to load task list:', err);
@@ -221,11 +231,19 @@ export default function ScheduledTasks() {
   // 不是「没传」。
   async function changeTaskModel(task, value) {
     const o = modelOptions.find((x) => x.value === value);
-    const r = await api.updateScheduledTask(task.id, {
-      model: o ? { providerId: o.providerId, isGlobal: o.isGlobal, baseUrl: o.baseUrl, model: o.model } : null,
-    });
-    if (r && r.ok === false) {
-      setError(t('scheduled.modelChangeFailed', { msg: r.error || '' }));
+    // Guard：写失败此前是 unhandled rejection —— 下拉框弹回、无任何提示，
+    // 用户以为改成功了，下一轮仍在用旧模型。
+    try {
+      const r = await api.updateScheduledTask(task.id, {
+        model: o ? { providerId: o.providerId, isGlobal: o.isGlobal, baseUrl: o.baseUrl, model: o.model } : null,
+      });
+      if (r && r.ok === false) {
+        setError(t('scheduled.modelChangeFailed', { msg: r.error || '' }));
+        return;
+      }
+    } catch (err) {
+      console.warn('[scheduled] change model failed:', err);
+      setError(t('scheduled.modelChangeFailed', { msg: err?.message || String(err) }));
       return;
     }
     setError('');
@@ -255,8 +273,14 @@ export default function ScheduledTasks() {
   // 只留「新建时可设」等于让存量任务没有安全的关闭方式（tester S-a）。
   async function toggleExpectsFile(task) {
     const next = task.expects_file === false; // 当前关闭 → 打开
-    const r = await api.updateScheduledTask(task.id, { expects_file: next });
-    if (r && r.ok === false) setError(r.error || t('runtime.unknownError'));
+    // Guard：同上，写失败必须显式报错而非静默弹回。
+    try {
+      const r = await api.updateScheduledTask(task.id, { expects_file: next });
+      if (r && r.ok === false) setError(r.error || t('runtime.unknownError'));
+    } catch (err) {
+      console.warn('[scheduled] toggle expects_file failed:', err);
+      setError(t('scheduled.toggleFailed', { msg: err?.message || String(err) }));
+    }
     load();
   }
 
@@ -272,8 +296,15 @@ export default function ScheduledTasks() {
       });
       if (!ok) return;
     }
-    const r = await api.updateScheduledTask(task.id, { external_policy: next ? 'allow' : 'block' });
-    if (r && r.ok === false) setError(r.error || t('runtime.unknownError'));
+    // Guard：这是「允许无人值守写外部系统」的开关，写失败若不提示，
+    // 用户会以为已放行（或已关闭），实际状态与界面相反 —— 必须显式报错。
+    try {
+      const r = await api.updateScheduledTask(task.id, { external_policy: next ? 'allow' : 'block' });
+      if (r && r.ok === false) setError(r.error || t('runtime.unknownError'));
+    } catch (err) {
+      console.warn('[scheduled] toggle external policy failed:', err);
+      setError(t('scheduled.toggleFailed', { msg: err?.message || String(err) }));
+    }
     load();
   }
 
@@ -300,7 +331,19 @@ export default function ScheduledTasks() {
       confirmLabel: t('scheduled.delete'),
     });
     if (!ok) return;
-    await api.deleteScheduledTask(id);
+    // Guard：删除失败必须告知 —— 此前静默 unhandled rejection，列表还在但用户
+    // 以为删掉了，cron 到点照跑（最坏情况：以为关掉了定时任务，实际还在发内容）。
+    try {
+      const r = await api.deleteScheduledTask(id);
+      if (r && r.ok === false) {
+        setError(t('scheduled.deleteFailed', { msg: r.error || '' }));
+        return;
+      }
+    } catch (err) {
+      console.warn('[scheduled] delete task failed:', err);
+      setError(t('scheduled.deleteFailed', { msg: err?.message || String(err) }));
+      return;
+    }
     load();
   }
 
@@ -565,7 +608,7 @@ export default function ScheduledTasks() {
                   {/* §7.6：军团绑定徽标只按**任务里真实存在的 team_id** 显示（不按表单状态推断） */}
                   <ScheduledTeamBadge teamId={task.team_id} />
                 </div>
-                <div className="text-xs text-text2 mt-1 line-clamp-2">{task.prompt.slice(0, 100)}</div>
+                <div className="text-xs text-text2 mt-1 line-clamp-2">{String(task?.prompt || '').slice(0, 100)}</div>
                 {/* 熔断留痕：自动暂停必须给理由，否则用户只看到一个「已暂停」，会以为是自己关的 */}
                 {!task.enabled && task.auto_pause_reason && (
                   <div className="text-xs text-danger mt-1 line-clamp-2">{t('scheduled.autoPaused', { reason: task.auto_pause_reason })}</div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { IconCheck, IconChevronRight, IconFileDiff, IconGitBranch, IconRefresh } from './icons';
 import { confirm, countConfirm, toast } from './feedback';
 import { useI18n } from '../i18n';
@@ -45,21 +45,29 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
     });
   }
 
+  // B-P0-3：请求序号。此前切项目/切 scope 后旧请求无人取消、无 seq 校验：
+  // 项目 A（大仓库 diff 慢）的结果会在切换到 B 之后才回来，把 B 的面板内容换成 A 的改动。
+  // 此时点「全部放弃」会对 **A 的路径** 执行 gitDiscardFiles —— 用户是在 B 的上下文里做的决定。
+  // 迟到响应一律丢弃；finally 同样要判 seq，否则旧请求会把新请求的 loading 提前压掉。
+  const loadSeqRef = useRef(0);
   const load = useCallback(async () => {
     if (!projectPath || !window.mjcode?.gitDiff) { setLoading(false); return; }
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       // 视图口径：未暂存 = `git diff`（索引↔工作区）；已暂存 = `git diff --staged`（HEAD↔索引）。
       // 两者都取「相对索引」或「相对 HEAD」的 hunk 头，因此各自视图内的块可直接 apply。
       const r = await window.mjcode.gitDiff({ cwd: projectPath, staged: scope === 'staged' });
+      if (seq !== loadSeqRef.current) return;
       if (r.error && !r.stdout) { setError(r.error); setFiles([]); return; }
       setError('');
       setFiles(parseDiff(r.stdout || ''));
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       console.warn('[diffReview] load failed:', err);
       setError(err.message || t('diff.loadFailed'));
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [projectPath, t, scope]);
 

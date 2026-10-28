@@ -97,7 +97,9 @@ export default function App() {
   const [projectPicked, setProjectPicked] = useState(false);
   const [mcpTools, setMcpTools] = useState([]);
   // Bug3：启动时从主进程重建 MCP 工具集（重启后自动重连的服务不再丢工具）
-  useEffect(() => { restoreMcpTools().then(setMcpTools); }, []);
+  // Guard：桥/存储未就绪时 reject，此前无 catch → 每次上报失败都是一条 unhandled rejection，
+  // 且线程状态与侧栏徽标静默不同步。
+  useEffect(() => { restoreMcpTools().then(setMcpTools).catch((err) => console.warn('[app] restoreMcpTools failed:', err)); }, []);
   // 生态中心连接/断开/JSON 保存 → dirty 事件重建工具集（替代已删除的设置页 McpTab 回调）
   // 与其它跨组件动作一起收敛到 useWindowEventBus（见下方「窗口事件总线」），避免 App 累积样板。
   // A6：Skill 启用态持久化（此前 useState 初始值从不落盘，重启即重置）
@@ -506,9 +508,9 @@ export default function App() {
       </header>
       <div className="flex flex-1 min-h-0 relative">
       {sidebarOpen && (
-      // P1-E：归档管理仅本地模式可用（服务端归档 API 未实现）；在线模式隐藏入口，
-      // 此前点击直接弹英文错误（删除语义双轨分裂，服务端列后续）
-      <Sidebar
+      // B-P0-1：侧栏独立边界，任一子树抛错不再拖垮整屏（含正在跑的会话）。
+      // P1-E：归档管理仅本地模式可用（服务端归档 API 未实现）；在线模式隐藏入口（此前点击弹英文错误）
+      <ErrorBoundary compact><Sidebar
         threads={threads}
         activeThread={activeThread}
         view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, showDesk, showStudio, showLedger }}
@@ -567,13 +569,13 @@ export default function App() {
         onSelectProject={selectProject}
         onRemoveProject={removeProject}
         onRenameProject={renameProject}
-      />
+      /></ErrorBoundary>
       )}
       <div className="flex-1 min-w-0 flex flex-col">
-        {showDashboard && <Dashboard threadId={activeThreadId} />}
+        {showDashboard && <ErrorBoundary compact><Dashboard threadId={activeThreadId} /></ErrorBoundary>}
         <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => navDispatch({ type: 'page', page: 'assistant', tab: a === 'open_assistant_scheduled' ? 'scheduled' : undefined })} />
         {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}
-        {showAssistant && <AssistantPage
+        {showAssistant && <ErrorBoundary compact><AssistantPage
   tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path}
   onAutoRun={(goal) => { newThreadInProject(null, goal); }}
   onDispatchEmployee={({ employee, goal }) => {
@@ -582,29 +584,30 @@ export default function App() {
     window.dispatchEvent(new CustomEvent('mjcode:recruit-expert', { detail: { ...employee, goal } }));
   }}
   onDispatchTeam={async ({ teamId, goal }) => window.mjcode?.teamsDispatch?.({
-    teamId, goal, threadId: activeThreadId, projectPath: activeProject?.path || '',
-  })}
-/>}{showScheduled && <ScheduledTasks />}{showStudio && <StudioPage
-  threadId={activeThreadId} projectId={activeProject?.id || null} projectPath={activeProject?.path || null} projectName={activeProject?.name || null} onOpenFile={openFileInPane} onPickProject={() => setShowProjectPicker(true)} />}
-        {showLedger && <LedgerPage projectId={activeProject?.id || null} />}
+    teamId, goal, threadId: activeThreadId, projectPath: activeProject?.path || '' })}
+/></ErrorBoundary>}
+        {showScheduled && <ErrorBoundary compact><ScheduledTasks /></ErrorBoundary>}{showStudio && <ErrorBoundary compact><StudioPage
+  threadId={activeThreadId} projectId={activeProject?.id || null} projectPath={activeProject?.path || null} projectName={activeProject?.name || null} onOpenFile={openFileInPane} onPickProject={() => setShowProjectPicker(true)} /></ErrorBoundary>}
+        {showLedger && <ErrorBoundary compact><LedgerPage projectId={activeProject?.id || null} /></ErrorBoundary>}
         {/* 接单台（desk）：默认不落地（showDesk 初值 false），仅由侧栏入口/命令面板进入。
             派单与 AssistantPage.onAutoRun 完全同构 —— 只把目标交回主链路（setInitialPrompt），
             不新增任何派活分支；「打开工件」复用右栏既有的 paneTab/paneOpen 两态。 */}
         {showDesk && (
-          <DeskPage
+          <ErrorBoundary compact><DeskPage
             threads={threads} threadId={activeThreadId} projectPath={activeProject?.path || ''}
             providers={allProviders} selectedModel={selectedModel} onPickModel={chooseModel}
             onAutoRun={(goal) => { newThreadInProject(null, goal); }} onOpenFile={openFileInPane}
             onOpenSettings={() => setShowSettings(true)} onOpenArtifacts={() => { setPaneTab('artifact'); setPaneOpen(true); }}
             onOpenThread={(id) => { const th = threads.find((x) => String(x.id) === String(id)); if (th) selectThread(th); }}
             onNewThread={() => { newThreadInProject(null); }}
-          />
+          /></ErrorBoundary>
         )}
         {/* 任务编排已并入对话流（orchestrate_task 工具 + AgentDock 胶囊），不再有独立面板入口 */}
         {/* E4：ChatArea 常驻挂载（数据/助理视图下用 hidden 隐藏而非卸载）——
             条件渲染会卸载 ChatArea，导致生态中心「在当前会话启用」事件静默丢失，也避免重挂载带来的消息重拉。 */}
         <div className={showDashboard || showAssistant || showScheduled || showDesk || showStudio || showLedger ? 'hidden' : 'contents'}>
-          <ChatArea
+          {/* B-P0-1：会话区独立边界（ChatArea 状态最重：消息流 + 流式文本 + 审批），此前一抛错整棵 App 被替换 */}
+          <ErrorBoundary compact><ChatArea
             thread={activeThread}
             agentsMd={agentsMd}
             selectedModel={selectedModel}
@@ -619,7 +622,7 @@ export default function App() {
               setSubagentsByThread((prev) => ({ ...prev, [threadId]: [...(prev[threadId] || []), evt] }));
             }}
             onThreadStatus={(status) => {
-              if (activeThread?.id) api.setThreadStatus(activeThread.id, status).then(() => loadData());
+              if (activeThread?.id) api.setThreadStatus(activeThread.id, status).then(() => loadData()).catch((err) => console.warn('[app] setThreadStatus failed:', err));
             }}
             onNewMessage={scheduleLoadData}
             onThreadCreated={(t) => setActiveThread(t)}
@@ -631,7 +634,7 @@ export default function App() {
             onPromptConsumed={() => setInitialPrompt('')}
             approvalSettings={approvalSettings}
             onOpenFile={openFileInPane}
-          />
+          /></ErrorBoundary>
         </div>
       </div>
 
@@ -780,7 +783,7 @@ export default function App() {
       <ApprovalCard
         onPendingChange={(pending, originThreadId) => {
           if (!originThreadId) return;
-          api.setThreadStatus(originThreadId, pending ? 'awaiting_approval' : 'running').then(() => loadData());
+          api.setThreadStatus(originThreadId, pending ? 'awaiting_approval' : 'running').then(() => loadData()).catch((err) => console.warn('[app] setThreadStatus(pending) failed:', err));
         }}
       />
       <FeedbackHost />

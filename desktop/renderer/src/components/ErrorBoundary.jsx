@@ -26,6 +26,15 @@ export default class ErrorBoundary extends React.Component {
     } catch (e) { /* localStorage 异常时静默 */ }
   }
 
+  // B-P0-1：内容变更后自动复位。此前 error 状态会粘住——用户切到另一个页面，
+  // children 已经是新内容但仍渲染错误界面，只有手动点「重试」才恢复。
+  // 现在按路由/关键 key 变化时清掉错误，让页面自己试一次。
+  componentDidUpdate(prevProps) {
+    if (this.state.error && prevProps.children !== this.props.children) {
+      this.setState({ error: null });
+    }
+  }
+
   render() {
     if (this.state.error) {
       if (this.props.compact) {

@@ -1,5 +1,5 @@
 // @ts-nocheck -- T2-2 存量代码原样搬移（零行为变更）；渐进 TS 路线下补全类型属后续任务（T0-3 门禁只约束新文件扩展名）
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { runAgent, decomposeTask, looksLargeTask } from '../lib/agent';
 // P0-4：上下文压缩实现移到独立模块（窗口现算 / 运行中守卫 / 撤销带），本文件只做状态装配
 import { compactSession } from '../lib/compactSession';
@@ -197,15 +197,10 @@ export default function useAgentRun(d) {
   }, [voice.start, voice.stop]);
 
   async function pickFiles() {
-    try {
-      const r = await window.mjcode.pickFiles();
-      if (r.ok && r.paths?.length) addPaths(r.paths);
-    } catch (err) {
-      console.warn('[chat] file pick failed:', err);
-    }
+    try { const r = await window.mjcode.pickFiles(); if (r.ok && r.paths?.length) addPaths(r.paths); } catch (err) { console.warn('[chat] file pick failed:', err); }
   }
 
-  async function send(text, forcedThread, opts = {}) {
+  async function doSend(text, forcedThread, opts = {}) {
     const raw = text || input;
     // 附件 chips → `@路径` 上下文行（AI 经 read_file 读取的既有约定）；/mem 指令按原始输入判定
     let content = raw;
@@ -717,6 +712,14 @@ export default function useAgentRun(d) {
     if (pendingSteer && stillActive) setTimeout(() => send(pendingSteer, undefined, { force: true }), 0);
   }
 
+  // B-P0-4：同步闩锁防重复提交（连按两次 Enter 会建两个会话 + 双花 token）。必须在第一个 await 之前置位；.finally 覆盖所有 return 分支；steer 的 force 补发由 setTimeout 排队，不受影响。
+  const sendingRef = useRef(false);
+  async function send(text, forcedThread, opts = {}) {
+    if (!opts.force && sendingRef.current) return;
+    sendingRef.current = true;
+    return doSend(text, forcedThread, opts).finally(() => sendingRef.current = false);
+  }
+
   // steer（对标 Codex 运行中按 Enter）：立刻中止当前轮并用新指令重开
   // 价值：方向偏了立即纠偏，比等它跑完再重来便宜得多。
   // 补发改由 send 结束路径执行（steerPendingRef）——此处 loading 仍为 true，
@@ -730,11 +733,7 @@ export default function useAgentRun(d) {
   }
 
   // queue（对标 Codex 运行中按 Tab）：排队到下一轮，不打断当前轮
-  function queueNext(text) {
-    const t = String(text || '').trim();
-    if (!t) return;
-    setQueued((q) => [...q, t]);
-  }
+  function queueNext(text) { const t = String(text || '').trim(); if (t) setQueued((q) => [...q, t]); }
 
   // /clear：清空当前对话上下文
   function clearContext() {
@@ -784,7 +783,8 @@ export default function useAgentRun(d) {
       await compactSession({
         messages, model: selectedModel, loading,
         threadId: thread?.id,
-        chat: window.mjcode.chat,
+        // 桥缺失时兜底为可拒绝函数，由 compactSession 内既有 catch 转 toast（不静默）。
+        chat: window.mjcode?.chat ?? (() => Promise.reject(new Error('bridge-missing'))),
         replaceMessages: api.replaceMessages,
         setMessages, setWindowStart, toast, t: tGlobal,
       });

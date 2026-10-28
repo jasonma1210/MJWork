@@ -169,8 +169,12 @@ function refsKey(src, mod, keys) {
     && /onClick=\{\(\) => setReasonOpen\(\(v\) => !v\)\}/.test(cardSrc));
   check('审批卡引用 attachReason / reasonPlaceholder i18n key',
     /t\('approval\.attachReason'\)/.test(cardSrc) && /t\('approval\.reasonPlaceholder'\)/.test(cardSrc));
+  // 2026-10-28：放宽 optional chaining —— B-P0-1 批次把 resolveApproval 改为 `?.()` +
+  // try/catch（桥重建期间缺失时不再在事件处理器里抛 TypeError 丢决策）。
+  // 本条断言的是「负载有条件携带 reason」这个意图，不是「必须没有 ?.」这种形态；
+  // `\??\.?` 同时容忍 `(`、`?.(`、`.(` 三种写法。
   check('审批卡 resolve 负载有条件携带 reason（无理由时与旧版一致）',
-    /resolveApproval\(\s*reason\s*\n?\s*\?\s*\{\s*approvalId: pending\.approvalId,\s*decision,\s*reason\s*\}\s*:\s*\{\s*approvalId: pending\.approvalId,\s*decision\s*\}/.test(cardSrc));
+    /resolveApproval\??\.?\(\s*reason\s*\n?\s*\?\s*\{\s*approvalId: pending\.approvalId,\s*decision,\s*reason\s*\}\s*:\s*\{\s*approvalId: pending\.approvalId,\s*decision\s*\}/.test(cardSrc));
   check('审批卡队列推进时清空理由草稿（不带到下一条）',
     /useEffect\(\(\) => \{\s*setReasonText\(''\);\s*setReasonOpen\(false\);\s*\}, \[pending\?\.approvalId\]\)/.test(cardSrc));
   check('审批卡理由草稿走 ref（避免键盘监听随输入重挂）',

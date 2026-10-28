@@ -235,7 +235,9 @@ await check('B5 App 把视图标志（含 showScheduled）传给 Sidebar，并�
   const app = stripComments(read('App.jsx'));
   assert.match(app, /view=\{\{\s*showAssistant[^}]*showScheduled[^}]*\}\}/, 'App 未把 showScheduled 传给 Sidebar');
   // 定时任务是一级入口 ⇒ App 直接挂载它是**预期**（第一版这里是反面断言，已按新语义翻转）
-  assert.match(app, /showScheduled\s*&&\s*<ScheduledTasks/, 'App 未按 showScheduled 挂载定时任务页');
+  // 2026-10-28：容忍外层错误边界包壳。B-P0-1 批次给每个页面加了局部 ErrorBoundary，
+  // 挂载关系未变；本断言的是「按 showScheduled 挂载」这个意图，不是「必须紧邻」这种形态。
+  assert.match(app, /showScheduled\s*&&\s*(?:<ErrorBoundary[^>]*>\s*)?<ScheduledTasks/, 'App 未按 showScheduled 挂载定时任务页');
   // 助理页仍按 tab 挂载，且 onTab 走 navDispatch 单一来源（2026-10-27：page 态迁 route）
   assert.match(app, /<AssistantPage[^>]*tab=\{assistantTab\}[^>]*onTab=\{\(t\)\s*=>\s*navDispatch/, 'App 未按 tab 挂载 AssistantPage（且 onTab 应走 navDispatch 单一来源）');
   assert.ok(!/<TeamsPage\s*\/>/.test(app), 'App 仍直接挂载 <TeamsPage/>（应留在助理 Tab）');

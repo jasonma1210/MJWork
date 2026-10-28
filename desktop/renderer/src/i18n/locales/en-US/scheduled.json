@@ -16,6 +16,7 @@
   "invalidSchedule": "Invalid schedule: {err}",
   "createdNotice": "Task created and enabled. It will run automatically on schedule.",
   "createFailed": "Creation failed: {msg}",
+  "deleteFailed": "Failed to delete scheduled task: {msg}",
   "deleteTitle": "Delete scheduled task",
   "deleteMessage": "Delete scheduled task \"{name}\"? Its run history will be deleted too.",
   "delete": "Delete",

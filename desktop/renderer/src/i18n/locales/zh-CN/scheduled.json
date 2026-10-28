@@ -16,6 +16,7 @@
   "invalidSchedule": "执行计划无效：{err}",
   "createdNotice": "任务已创建并启用，到点将自动执行",
   "createFailed": "创建失败：{msg}",
+  "deleteFailed": "删除定时任务失败：{msg}",
   "deleteTitle": "删除定时任务",
   "deleteMessage": "确定删除定时任务「{name}」吗？其执行历史将一并删除。",
   "delete": "删除",

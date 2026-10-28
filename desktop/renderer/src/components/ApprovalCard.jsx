@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
-import { useI18n } from '../i18n'; // T3-2：i18n
+import { useI18n, tGlobal } from '../i18n'; // T3-2：i18n
 import { IconFile, IconPlug, IconTerminal } from './icons';
 import Button from './ui/Button';
+import { toast } from './feedback';
 
 // 顶层常量只存标题 key（求值推迟到渲染时经 t()，切换语言即时更新）
 const LEVEL_META = {
@@ -100,15 +101,27 @@ export default function ApprovalCard({ onPendingChange }) {
   // P1-6：resolve 包 useCallback。它原先是无记忆的普通函数，每次渲染新建引用；
   // 一旦被 useEffect 列入依赖（键盘处理器需要它），就会让监听每轮渲染卸载重挂。
   // 依赖只有 pending（理由草稿走 ref，其余是稳定 setter 与 ref），与键盘 effect 的触发条件一致。
-  const resolve = useCallback((decision) => {
+  const resolve = useCallback(async (decision) => {
     if (!pending?.approvalId) return;
     // P1-4：有理由时随决议回传（主进程拼进拒绝结果与审计）；无理由时负载与旧版一致
     // P0-2：决策负载必须回带 approvalId——主进程按 id 精确分发，
     // 并发审批时决策才能落到正确的请求上（否则把「允许」发给另一条命令）
     const reason = reasonTextRef.current.trim();
-    window.mjcode.resolveApproval(reason
-      ? { approvalId: pending.approvalId, decision, reason }
-      : { approvalId: pending.approvalId, decision });
+    // Guard（B-P0-1批次）：桥未就绪/重建期间 resolveApproval 不可用时，此前是在事件处理器里
+    // 直接抛 TypeError —— ErrorBoundary 捕获不到事件处理器错误，决策不声不响地丢失，
+    // 卡片挂在原地直到主进程 120s 超时按「拒绝」收尾。失败必须显式告知，且**不能乐观出队**
+    // （否则用户以为已经批准了，实际什么都没发生）。
+    try {
+      await window.mjcode?.resolveApproval?.(reason
+        ? { approvalId: pending.approvalId, decision, reason }
+        : { approvalId: pending.approvalId, decision });
+    } catch (err) {
+      console.warn('[approval] resolve failed:', err);
+      // 用 tGlobal 而非 useI18n 的 t：后者进依赖数组会让本 useCallback 每轮重建，
+      // 进而让键盘监听每轮卸载重挂（见上方 P1-6 注释）。tGlobal 是模块级函数，引用稳定。
+      toast({ message: tGlobal('approval.resolveFailed') });
+      return;
+    }
     // 乐观出队：主进程的 tool:approval-end 回执到达时会再过滤一次，幂等
     setQueue((q) => q.filter((r) => r.approvalId !== pending.approvalId));
   }, [pending]);

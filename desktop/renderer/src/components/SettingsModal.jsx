@@ -3,7 +3,7 @@ import { api } from '../lib/api';
 import { getModelOverrides, setModelOverrides, OVERRIDE_SLOTS } from '../lib/modelConfig';
 import TeamSpace from './TeamSpace';
 import EcosystemModal from './EcosystemModal';
-import { confirm } from './feedback';
+import { confirm, toast } from './feedback';
 import InlineAlert from './InlineAlert';
 import RecordReplayPanel from './RecordReplayPanel';
 import UpdateSection from './UpdateSection';
@@ -749,8 +749,16 @@ function ApprovalRulesSection() {
 
   async function revoke(rule) {
     if (!window.mjcode?.deleteApprovalRule) return;
-    const r = await window.mjcode.deleteApprovalRule({ id: rule.id });
-    if (r?.ok) load();
+    // Guard：撤销失败此前是 unhandled rejection —— 开关纹丝不动、列表不刷新，
+    // 控制台留一条没人看的报错，用户以为「点了没用」。
+    // 语义上撤销规则即删除规则，复用既有 deleteFailed 文案，不新增字典条目。
+    try {
+      const r = await window.mjcode.deleteApprovalRule({ id: rule.id });
+      if (r?.ok) load();
+    } catch (err) {
+      console.warn('[settings] revoke approval rule failed:', err);
+      toast({ message: t('settings.deleteFailed') });
+    }
   }
 
   return (
