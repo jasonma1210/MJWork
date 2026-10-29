@@ -14,6 +14,7 @@ const approval = require('../approval');
 // P2-7：用户偏好「执行后告知」（正交布尔，缺省关闭）
 const approvalSettings = require('../approvalSettings');
 const mcp = require('../mcpClient');
+const { newProgressToken, makeProgressBridge, settleProgress } = require('../mcpProgress'); // P3-1：进度桥（令牌 + 事件整形 + 收尾，与 IPC 无关故外置）
 // P1-3：MCP 崩溃后的自动重连调度（指数退避 + 上限 + 幂等）
 const { createMcpAutoReconnect } = require('../mcpAutoReconnect');
 // 2026-10-18：stdio 启动参数守卫（占位符未替换 / 空参数 → spawn 前 fail-closed）
@@ -298,7 +299,7 @@ function killAllMcpServers() {
 }
 
 // P0-D：提取为命名函数（IPC 与定时任务 Agent 通道共用）
-async function callMcpTool({ server, tool, arguments: args, approvalMode = 'on-request', conversationId }) {
+async function callMcpTool({ server, tool, arguments: args, approvalMode = 'on-request', conversationId }, ctx = {}) {
   let s = mcpServers.get(server);
   if (!s) {
     // 期 1：按需连接兜底（connect-on-demand）——懒启动下未连接的服务在**首次调用**时补连，
@@ -321,12 +322,20 @@ async function callMcpTool({ server, tool, arguments: args, approvalMode = 'on-r
   }
   let noticeOk = false;
   let noticeError = '';
+  // P3-1：只有「确实有人要收进度」时才发 progressToken——规范规定不发令牌服务端就不会发进度，
+  // 无人接收还发等于让服务端白算并往本进程灌通知。令牌/桥的实现见 main/mcpProgress.js。
+  const progressToken = typeof ctx.onProgress === 'function' ? newProgressToken(startedAt) : '';
+  if (progressToken) mcp.registerProgress(s, progressToken, ctx.onProgress);
   try {
     // P1-8：模型侧拿到的是「清洗后的工具名」（H-4：1–128 字符、仅 [A-Za-z0-9_.-]），
     // 调用前必须还原成服务端真实名字——否则服务端收到的名字已被替换，只会回 unknown tool。
     const realTool = mcp.resolveToolName(s, tool);
     // P1-8：走带会话恢复的 RPC（HTTP 会话 404 → 重新 initialize 后重试一次，H-4 要求）
-    const result = await mcp.mcpRpcWithSessionRetry(s, 'tools/call', { name: realTool, arguments: args || {} });
+    // P3-1：_meta.progressToken 必须进 params（不是顶层）——服务端按该令牌回报进度；
+    //   会话恢复重试沿用同一 token，故重试期间收到的进度同样能回到本次调用。
+    const callParams = { name: realTool, arguments: args || {} };
+    if (progressToken) callParams._meta = { progressToken };
+    const result = await mcp.mcpRpcWithSessionRetry(s, 'tools/call', callParams);
     // F-014 / A16c（结构化输出消费，用户裁决第三条路「校验走结构化，展示走文本」）：
     //   结构化数据（structuredContent）此前会经 agent-core 的 truncateToolResult
     //   （agent-core/index.js:1977 直接 JSON.stringify）**原样进模型上下文**，却没有任何一方
@@ -363,6 +372,9 @@ async function callMcpTool({ server, tool, arguments: args, approvalMode = 'on-r
     deps.audit(`mcp:${server}`, tool, `error: ${err.message}`, 'error');
     return { error: err.message };
   } finally {
+    // P3-1：登记必须在出口摘掉（成功/失败/超时都要）——否则长跑进程里每调一次就积一条，
+    // 且同一 token 旧回调会把后续进度送到已经结束的调用上。
+    if (progressToken) mcp.dropProgressListener(s, progressToken);
     // P2-7：执行后告知。MCP 写的是**外部系统**（通知里会标注不可补偿），这类最需要事后知情。
     // 放 finally：成功/失败都要告知；用 try 兜住——通知失败绝不能影响工具结果。
     try {
@@ -526,7 +538,7 @@ function register() {
     return { ok: true, authorized: !!(am && name && am.hasStoredAuth(String(name))) };
   });
 
-  ipcMain.handle('mcp:callTool', (_, payload) => {
+  ipcMain.handle('mcp:callTool', (event, payload) => {
     try {
       // 形状以 callMcpTool 的入参为准：{ server, tool, arguments }
       guard.assertStrings(payload, { server: 200, tool: 200 });
@@ -534,7 +546,11 @@ function register() {
     } catch (e) {
       return { ok: false, error: e.message };
     }
-    return callMcpTool(payload);
+    // P3-1：进度只推发起方窗口（不广播——那是「这次调用」的副作用，别的窗口无权知情）；
+    // end 由这里发而不由 callMcpTool 发：后者还被定时/引擎通道复用，那种调用没有「发起方窗口」。
+    const bridge = makeProgressBridge(event && event.sender, payload.server, payload.tool);
+    // settleProgress 而非 `.finally(bridge.done)`：理由见 main/mcpProgress.js 的注释（finally 会漏一个未捕获拒绝）
+    return settleProgress(callMcpTool(payload, { onProgress: bridge.onProgress }), bridge);
   });
 
   ipcMain.handle('mcp:disconnect', async (_, { name } = {}) => {

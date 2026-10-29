@@ -177,10 +177,22 @@ function handleServerMessage(server, msg, { onLog } = {}) {
     return;
   }
   if (method === 'notifications/progress') {
-    // 请求级进度：pending 只按 id 索引，progressToken 路由本轮未实现（列入遗留）。
-    // 只记录最近一条，避免长任务把内存撑起来。
+    // P3-1（2026-10-29）：按 progressToken 路由到本次调用登记的监听器。
+    // 此前这里是「只记 lastProgress、不路由」——但更根本的问题在**发送端**：MCP 规范里
+    // 客户端必须在 `tools/call` 的 `params._meta.progressToken` 带一个令牌，服务端才会用
+    // 同一 token 回报进度。从不发令牌 ⇒ 服务端一条 progress 都不会发 ⇒ 本分支是**死代码**。
+    // 现在 token 由 ipc/mcp.js 的 callMcpTool 生成并登记（见 registerProgress），两条边才接上。
     const p = msg.params || {};
-    server.lastProgress = { token: p.progressToken, progress: p.progress, total: p.total, ts: Date.now() };
+    const entry = { token: p.progressToken, progress: p.progress, total: p.total, message: p.message, ts: Date.now() };
+    // 只记录最近一条（诊断用）+ 立刻转发给本次调用的监听器；未登记的 token 只留痕不报错
+    //（可能来自别的窗口/已结束的调用，按「无处可送」处理，不当成异常）。
+    server.lastProgress = entry;
+    const listener = server.progressListeners instanceof Map
+      ? server.progressListeners.get(String(p.progressToken == null ? '' : p.progressToken))
+      : null;
+    if (typeof listener === 'function') {
+      try { listener(entry); } catch (e) { log(`进度监听器抛错（不影响调用）：${e && e.message}`); }
+    }
     return;
   }
   log(`未处理的服务端消息：${method || '(无 method)'}`);
@@ -658,12 +670,34 @@ function killAllMcpServers() {
   return killed;
 }
 
+// ── P3-1：请求级进度登记（token ↔ 回调）────────────────────────────────────
+// 为什么需要这一层：MCP 的进度是**按 token 多路复用**的——同一条连接上可能同时跑着多个
+// tools/call，服务端的 notifications/progress 只带 progressToken，不带「属于哪次调用」。
+// 因此客户端必须自己记 token → 回调；不记就只能「留一条 lastProgress」，等于拿到数据没法
+// 送给正确的人（这也是此前该项被列为遗留的实际原因）。
+// 存放位置放在 `server` 上（而不是模块级全局 Map）：断连时 server 对象整体被丢弃，
+// 登记表随之回收——不会出现「服务断了，token 还挂在全局表里」的泄漏。
+function registerProgress(server, token, fn) {
+  if (!server || token == null || token === '' || typeof fn !== 'function') return false;
+  if (!(server.progressListeners instanceof Map)) server.progressListeners = new Map();
+  server.progressListeners.set(String(token), fn);
+  return true;
+}
+
+function dropProgressListener(server, token) {
+  if (!server || token == null || token === '') return;
+  if (server.progressListeners instanceof Map) server.progressListeners.delete(String(token));
+}
+
 module.exports = {
   mcpRpc, mcpRpcWithSessionRetry, dispatchMessage, handleServerMessage,
   shouldForwardLogLevel,
   createStdioTransport, createHttpTransport, consumeSse,
   connectMcpServer, checkServerNameBudget, getMcpServer, listMcpServers, disconnectMcpServer, killAllMcpServers,
   refreshTools, sanitizeToolName, resolveToolName, recoverSession,
+  // P3-1：请求级进度（token 登记 / 摘除）。放在这里而不是 ipc/mcp.js，是因为
+  // 「哪些 token 归哪个 server」是协议层事实，调用方只该关心「登记一个回调」。
+  registerProgress, dropProgressListener,
   // 纯核 + 缓存丢弃：可在纯 Node 下观测「按身份摘除」「先关传输再摘除」两条语义，
   // 无需起真实子进程（起进程验证会 flake，见 MAX_LINES 与并发纪律）
   detachFrom, detachServer, retireCached,

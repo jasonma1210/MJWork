@@ -101,5 +101,6 @@
   "artifactIndex": "工件索引",
   "artifactGetSection": "读取工件章节",
   "artifactPatchSection": "写入工件章节",
-  "artifactGetDiff": "工件版本差异"
+  "artifactGetDiff": "工件版本差异",
+  "mcpProgressLabel": "{server} · {tool} 执行中"
 }

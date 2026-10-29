@@ -29,6 +29,8 @@ import { restoreMcpTools } from './lib/mcpTools';
 import { loadAgentsMd } from './lib/agentsMd';
 import ipc from './lib/ipc';
 import FeedbackHost, { confirm, toast } from './components/feedback';
+// P3-1：MCP 工具执行的请求级进度条（全局一条，订阅主进程 mcp:progress）
+import McpProgressStrip from './components/McpProgressStrip';
 import { createProjectActions } from './lib/projectActions';
 import { getDefaultProject, loadJSON, applyThemeToDocument, rememberModel, pickInitialModel, pickOnboardingModel } from './lib/appState';
 import usePendingExpert from './hooks/usePendingExpert';
@@ -762,6 +764,7 @@ export default function App() {
         }}
       />
       <FeedbackHost />
+      <McpProgressStrip />
       {archiveOpen && (
         <ArchiveModal
           onClose={() => setArchiveOpen(false)}

@@ -101,5 +101,6 @@
   "artifactIndex": "Artifact index",
   "artifactGetSection": "Read artifact section",
   "artifactPatchSection": "Write artifact section",
-  "artifactGetDiff": "Artifact version diff"
+  "artifactGetDiff": "Artifact version diff",
+  "mcpProgressLabel": "Running {server} · {tool}"
 }

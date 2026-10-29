@@ -217,6 +217,13 @@ contextBridge.exposeInMainWorld('mjcode', {
   mcpCallTool: (payload) => ipcRenderer.invoke('mcp:callTool', payload),
   mcpDisconnect: (payload) => ipcRenderer.invoke('mcp:disconnect', payload),
   mcpListServers: () => ipcRenderer.invoke('mcp:listServers'),
+  // P3-1：MCP 工具执行的请求级进度（服务端经 notifications/progress 回报）。
+  // phase: 'update' 带 progress/total/message；'end' 表示这次调用已收尾，界面据此清卡片。
+  onMcpProgress: (cb) => {
+    const handler = (_, d) => cb(d);
+    ipcRenderer.on('mcp:progress', handler);
+    return () => ipcRenderer.removeListener('mcp:progress', handler);
+  },
   mcpListTools: () => ipcRenderer.invoke('mcp:listTools'),
   mcpGetConfig: () => ipcRenderer.invoke('mcp:getConfig'),
   mcpSetConfig: (payload) => ipcRenderer.invoke('mcp:setConfig', payload),
