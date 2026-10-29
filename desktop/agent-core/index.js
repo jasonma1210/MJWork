@@ -8,6 +8,7 @@
 // 可被渲染层 Vite 打包与引擎子进程共同消费）——本文件不写任何阈值数字。
 // B3 #10：同时取强制档判定（toolTableEnforcement，缺省 'warn' = 改前行为，见该函数注释）。
 import { inspectToolTableBudget, toolTableEnforcement, TOOL_TABLE_ENFORCE_ENV } from '../shared/contextBudget.mjs';
+import { parseSlashSkill, matchSkillsByQuery } from '../shared/skillTrigger.mjs';
 // P1-8：工具可用性闸（纯函数，零依赖）——通告过的工具必须真的调得动
 import { filterUnavailableTools } from './toolAvailability.js';
 // P1-8 / 讨论方案：工具三档分层 + 窗口自适应裁剪（纯常量 + 纯函数）
@@ -2677,6 +2678,23 @@ export async function runAgent({
     seenSkillNames.add(sName);
     sessionSkills.push(s);
   }
+  // P1-1（2026-10-29）：技能触发器——slash 强制注入正文 / 关键词命中在清单行标注「优先加载」。
+  const lastUserText = (() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i];
+      if (m && m.role === 'user') {
+        if (typeof m.content === 'string') return m.content;
+        if (Array.isArray(m.content)) return m.content.filter((p) => p && p.type === 'text').map((p) => p.text || '').join(' ');
+      }
+    }
+    return '';
+  })();
+  const slashHit = parseSlashSkill(lastUserText);
+  const kwMatched = new Set(matchSkillsByQuery(
+    slashHit ? slashHit.rest : lastUserText,
+    sessionSkills.map((s) => ({ name: s?.name, description: skillDescriptionOf(s) })),
+  ));
+  const forcedSkillName = slashHit && slashHit.name ? slashHit.name : '';
   const omittedSkillCount = Math.max(0, skills.length - sessionSkills.length);
   // P1-6：技能两段式（索引按需加载 / 全量正文）。
   // auto 模式下只在宿主提供 loadSkill 通道时启用（零破坏：旧宿主行为与改动前完全一致）；
@@ -2700,7 +2718,9 @@ export async function runAgent({
     const manifest = sessionSkills.map((s) => {
       const name = String(s?.name || 'unnamed');
       const desc = skillDescriptionOf(s).replace(/\s+/g, ' ').slice(0, SKILL_SUMMARY_MAX_CHARS);
-      return `- ${name}: ${desc || '（该技能未提供 description）'}`;
+      // P1-1：关键词命中的技能在清单行标注（只标不强制注入正文，保持 summary 的省 token 语义）
+      const hint = kwMatched.has(name) && name !== forcedSkillName ? '（本次消息提到，建议优先加载）' : '';
+      return `- ${name}: ${desc || '（该技能未提供 description）'}${hint}`;
     }).join('\n');
     const mGuard = guardUntrusted(manifest, {
       source: 'skill-manifest', label: '可用技能清单（按需加载）', maxChars: SKILL_MANIFEST_MAX_CHARS,
@@ -2713,7 +2733,9 @@ export async function runAgent({
   // 技能包属第三方分发内容（插件市场 / 他人仓库），命中注入特征即整块不注入并留痕。
   // P1-6：summary 模式下正文不进 system（改由 load_skill 按需加载），这里跳过。
   for (const s of sessionSkills) {
-    if (skillDisclosureMode === 'summary') break;
+    // P1-1：summary 模式默认不注入正文（按需 load_skill），但 slash 显式点名的技能强制注入。
+    const slashForced = !!forcedSkillName && String(s?.name || '') === forcedSkillName;
+    if (skillDisclosureMode === 'summary' && !slashForced) continue;
     if (!s?.content) continue;
     const g = guardUntrusted(s.content, {
       source: `skill:${s.name || 'unnamed'}`,

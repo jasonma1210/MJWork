@@ -238,5 +238,29 @@ const skills = [
     `命中 ${(code.match(/when_to_use/g) || []).length} 处`);
 }
 
+// ── P1-1：技能触发器（slash 强制注入正文 / 关键词仅标注优先加载）──
+{
+  const model = { provider: { id: 1, isGlobal: false, base_url: 'http://local' }, model: { id: 1, model_id: 'm', context_window: 200000 } };
+  const body = `---\nname: demo\ndescription: 用来生成报表\n---\n\n# 步骤\n${'第'.repeat(2000)}`;
+  const mkRun = async (msg) => {
+    const systemSeen = [];
+    await runAgent({
+      messages: [{ role: 'user', content: msg }],
+      model,
+      toolHandlers: { chat: async (p) => { systemSeen.push(String(p.messages?.[0]?.content || '')); return { content: '完成', usage: { prompt_tokens: 10, completion_tokens: 2 } }; } },
+      skills: [{ name: 'demo', content: body }],
+      skillDisclosure: 'summary',
+      tokenBudget: 0, maxRounds: 2, onMessage: () => {}, onDone: () => {},
+    });
+    return systemSeen[0] || '';
+  };
+  const sysSlash = await mkRun('/skill demo 生成报表');
+  check('P1-1 slash /skill demo 强制注入正文（summary 模式）', sysSlash.includes('第第第第'));
+  const sysKw = await mkRun('用 demo 技能生成报表');
+  check('P1-1 仅关键词命中不注入正文（summary 语义不变）', !sysKw.includes('第第第第'));
+  check('P1-1 关键词命中在清单行标注「建议优先加载」', sysKw.includes('建议优先加载'));
+  check('P1-1 无 slash 时清单仍含技能名（格式未破）', sysKw.includes('demo: 用来生成报表'));
+}
+
 console.log(`\nskill-disclosure: ${pass}/${pass + fail} 通过`);
 process.exit(fail === 0 ? 0 : 1);
