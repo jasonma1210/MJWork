@@ -215,12 +215,7 @@ function notifyExecuted({
 //   · G-CUA cua_action：逐次界面动作——CUA 的敏感动作设计上恒逐次确认（决策不落规则库），
 //     若 UI 仍给「本会话/始终允许」按钮，用户点了却对后续动作无效 → 即为产品撒谎，
 //     故与顶层调用一并标记为不可记忆（ApprovalCard 只显示「允许一次 / 拒绝」）。
-const NON_REMEMBERABLE = new Set(['unconfined_exec', 'scheduled_create', 'computer_use', 'cua_action',
-  // P0-1（2026-10-29）：对话内插件安装 / PR 审查 / PR 评论 恒为 L3，且注释（下方 TOOL_LEVEL）明定
-  // 「不可经本对话同类规则静默放行」。此前三者未入本集合 ⇒ 审批 UI 给出「始终允许」⇒ 规则入库 ⇒
-  // needsApproval 的 always/conversation 豁免分支将其静默放行，与设计纪律直接矛盾。
-  // 入本集合后 isRememberable 返回 false ⇒ UI 不渲染「记住」按钮 ⇒ 规则无从沉淀 ⇒ 每次仍弹卡。
-  'install_plugin', 'pr_review', 'pr_comment']);
+const NON_REMEMBERABLE = new Set(['unconfined_exec', 'scheduled_create', 'computer_use', 'cua_action', 'install_plugin', 'pr_review', 'pr_comment']); // P0-1: 三者恒 L3 不可记忆
 const isRememberable = (tool) => !NON_REMEMBERABLE.has(tool);
 
 // 工具 → 默认分级
