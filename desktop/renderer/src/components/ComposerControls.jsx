@@ -34,7 +34,7 @@ export function getModeOptions() {
 const CHIP = 'h-7 shrink-0 inline-flex items-center gap-2 rounded-lg border px-2 text-xs text-text bg-transparent hover:bg-hover cursor-pointer transition-colors';
 const CHIP_SELECT = 'bg-transparent outline-none cursor-pointer max-w-[140px] truncate';
 
-export default function ComposerControls({ providers, selectedModel, onSelectModel, approval, onApprovalChange, project: _project, mode, onModeChange, worktreeInfo }) {
+export default function ComposerControls({ providers, selectedModel, onSelectModel, approval, onApprovalChange, project, mode, onModeChange, worktreeInfo }) {
   const { t } = useI18n();
   const modeOptions = getModeOptions();
   const permissionOptions = getPermissionOptions();

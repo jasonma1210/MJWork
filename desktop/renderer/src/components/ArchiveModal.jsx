@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { confirm, toast } from './feedback';
 import InlineAlert from './InlineAlert';
@@ -14,9 +14,7 @@ export default function ArchiveModal({ onClose, onChanged, onSelect }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // load 依赖的 setXxx（useState）稳定、t 仅在语言切换时变化（i18n 中 t=useCallback([locale])），
-  // 故用 useCallback([t]) 固定引用后列入依赖是安全的：effect 只在挂载与语言切换时执行，不会每轮重挂。
-  const load = useCallback(async () => {
+  async function load() {
     setLoading(true);
     setError('');
     try {
@@ -25,9 +23,9 @@ export default function ArchiveModal({ onClose, onChanged, onSelect }) {
       setError(err.message || t('archive.loadFailed'));
     }
     setLoading(false);
-  }, [t]);
+  }
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, []);
 
   async function restore(thread) {
     const r = await api.restoreThread(thread.id);

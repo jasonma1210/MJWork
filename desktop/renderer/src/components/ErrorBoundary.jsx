@@ -23,9 +23,7 @@ export default class ErrorBoundary extends React.Component {
       const crumbs = JSON.parse(localStorage.getItem('mj_crash_log') || '[]');
       crumbs.unshift({ at: new Date().toISOString(), message: String(error.message).slice(0, 300) });
       localStorage.setItem('mj_crash_log', JSON.stringify(crumbs.slice(0, 20)));
-    } catch (e) {
-      console.warn('[crash] persist crash log failed:', e);
-    }
+    } catch (e) { /* localStorage 异常时静默 */ }
   }
 
   // B-P0-1：内容变更后自动复位。此前 error 状态会粘住——用户切到另一个页面，

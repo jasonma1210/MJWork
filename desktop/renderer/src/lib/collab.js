@@ -287,7 +287,7 @@ export function listApprovals(docId) {
 // ── 合并归约：墓碑单调化 + 状态 LWW 物化 ─────────────────────
 function reconcile(docId) {
   const { doc } = getLocal(docId);
-  doc.getMap('tombstones').forEach((rec, _key) => {
+  doc.getMap('tombstones').forEach((rec, key) => {
     if (rec.get('kind') !== 'message') return;
     const msg = doc.getMap('messages').get(String(rec.get('entityId')));
     if (msg && msg.get('deleted') !== true) msg.set('deleted', true);

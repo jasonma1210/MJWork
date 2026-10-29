@@ -1,26 +1,32 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { makeCoalescer } from '../lib/streamCoalescer';
+import remarkGfm from 'remark-gfm';
 import { useI18n, tGlobal } from '../i18n'; // T3-2：i18n（渲染文案 useI18n；effect 内命令式生成文案用 tGlobal）
 import { api } from '../lib/api';
 import { BUILTIN_SKILL_IDS } from '../lib/agent';
 // T2-2：compactHistory 调用随运行流程迁至 hooks/useAgentRun.ts
 import InlineAlert from './InlineAlert';
 import { toast, confirm } from './feedback';
+import ComposerControls from './ComposerControls';
 import WelcomePage from './WelcomePage'; // T2-2：欢迎页拆分（composerProps 与对话页共享）
 import MessageStream, { MSG_WINDOW, RunFooter, renderMessages } from './MessageStream'; // T2-2：消息流域拆分
 // T2-2：RunFooter/renderMessages 实现随消息流域拆出 MessageStream.jsx，此处 re-export 保持测试与外部引用契约
 export { RunFooter, renderMessages };
 import AgentDock from './AgentDock';
 import TodoPanel from './TodoPanel';
-import { contextUsageOf, useLiveContextUsage } from './ContextRing';
+import ContextRing, { contextUsageOf, useLiveContextUsage } from './ContextRing';
 import { effectiveContextWindow } from '../lib/modelConfig';
 import { projectDisplayName } from '../lib/projectName';
+import PlusMenu from './PlusMenu';
 import Composer from './Composer'; // T2-2：输入区拆分
 import WorktreeBar from './WorktreeBar';
+import ToolTrace, { ToolTraceGroup } from './tools/ToolTrace'; // T1-1/T1-2：语义化工具轨迹 + 轮次折叠分组
 import { useVoice } from '../hooks/useVoice';
 // F-005：MCP 工具名 → 服务名的反解。与 agent-core / mcpToolDefs 共用 shared/mcpNameCodec.mjs
 //（零 Node 内置依赖，渲染层可直接静态 import；与 lib/mcpTools.js 引 shared/mcpToolDefs.mjs 同一模式）
 import { decodeToolName } from '../../../shared/mcpNameCodec.mjs';
+import { IconArrowUp, IconBot, IconCopy, IconCpu, IconFile, IconFolder, IconGitBranch, IconHammer, IconMic, IconPlus, IconPlug, IconRefresh, IconSearch, IconSpinner, IconSquare, IconWrench, IconX, IconZap } from './icons';
 
 
 // C1：消息窗口大小 —— 历史全量在 state，渲染只取最近 N 条，避免长会话 DOM 爆炸
@@ -111,6 +117,7 @@ export default function ChatArea({
   const EMPTY_EXTRAS = { expert: null, skillIds: [], mcpServers: [], candidateRoster: null };
   const [sessionExtras, setSessionExtras] = useState(EMPTY_EXTRAS);
   const [plusOpen, setPlusOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false); // A12：拖拽悬停提示
   // 候选编制（candidate roster）—— 2026-10-24 双入口重组 / 设计文档 §7.2、§9 P0-6。
   // 语义变更（此前是「模式开关」）：选中军团不再**强制**走派活，而是「编制偏好」——
   //   · 徽标表示「本次任务可被该编制承接」，普通对话照常可发起；
@@ -402,11 +409,7 @@ export default function ChatArea({
 
   useEffect(() => {
     if (!thread?.id) return;
-    try {
-      localStorage.setItem(`mj_extras_${thread.id}`, JSON.stringify(sessionExtras));
-    } catch (e) {
-      console.warn('[chat] persist session extras failed:', e);
-    }
+    try { localStorage.setItem(`mj_extras_${thread.id}`, JSON.stringify(sessionExtras)); } catch (e) { /* ignore */ }
   }, [sessionExtras, thread?.id]);
 
   // C2：生态中心「在当前会话启用」事件（与 PlusMenu 共用 sessionExtras 通道）
@@ -445,8 +448,6 @@ export default function ChatArea({
   }, [project?.path, onAgentFilesChange]);
 
 
-  // commitStream 由 useMemo([]) 生成，引用在组件生命周期内稳定；列入依赖既满足
-  // exhaustive-deps，也不会让 onDelta 监听器反复重注册（避免流式事件丢失）。
   useEffect(() => {
     if (!window.mjcode?.onDelta) return;
     // 返回 cleanup，避免 StrictMode 重复注册导致流式文本翻倍。
@@ -467,11 +468,10 @@ export default function ChatArea({
       }
     });
     return () => { if (typeof off === 'function') off(); };
-  }, [commitStream]);
+  }, []);
 
   // 推理模型思考流：mimo / DeepSeek-R 系在 content 之前输出 reasoning_content，
   // 实时展示（灰色折叠区），消除「思考中...长时间无输出」的慢错觉；标签归属协议同 delta
-  // commitReason 由 useMemo([]) 生成，引用稳定；列入依赖不会让 onReasoning 监听器反复注册。
   useEffect(() => {
     if (!window.mjcode?.onReasoning) return;
     const off = window.mjcode.onReasoning((payload) => {
@@ -489,7 +489,7 @@ export default function ChatArea({
       }
     });
     return () => { if (typeof off === 'function') off(); };
-  }, [commitReason]);
+  }, []);
 
   // T2-2：Agent 运行流程（发送/中止/引导/排队/清空/规划/模式/压缩 + 快捷键）已拆出 hooks/useAgentRun.ts
   const { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext, activeRunId, runBaselineSha } = useAgentRun({

@@ -57,9 +57,7 @@ export function useVoice({ onText } = {}) {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     const rec = recRef.current;
     if (rec) {
-      try { rec.processor?.disconnect(); rec.source?.disconnect(); } catch (e) {
-        console.warn('[voice] disconnect audio node failed:', e);
-      }
+      try { rec.processor?.disconnect(); rec.source?.disconnect(); } catch (e) { /* ignore */ }
       rec.stream?.getTracks().forEach((t) => t.stop());
       rec.ctx?.close?.();
       recRef.current = null;

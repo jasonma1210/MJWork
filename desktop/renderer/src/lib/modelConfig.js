@@ -42,7 +42,7 @@ export function modelKeyOf(provider, model) {
 function loadAll() {
   try {
     return JSON.parse(localStorage.getItem(STORE_KEY)) || {};
-  } catch {
+  } catch (e) {
     console.warn('[modelConfig] parse failed, falling back to empty config');
     return {};
   }

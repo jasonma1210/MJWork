@@ -155,10 +155,7 @@ export default function EcosystemModal({ onClose, embedded = false, enabledSkill
       const cfg = await window.mjcode?.mcpGetConfig?.();
       if (cfg?.servers) names = cfg.servers.map((s) => String(s.name || '')).filter(Boolean);
       if (cfg?.path) configPath = String(cfg.path);
-    } catch (e) {
-      // 取不到就用目录名兜底查重，不阻断打开表单
-      console.warn('[eco] load mcp config for dedup failed:', e);
-    }
+    } catch (e) { /* 取不到就用目录名兜底查重，不阻断打开表单 */ }
     const catalogNames = connectors.map((c) => String(c.name || '')).filter(Boolean);
     setCustom({ existingNames: [...new Set([...names, ...catalogNames])], configPath });
   }

@@ -48,7 +48,7 @@ function humanSize(n) {
 
 // Markdown 内的链接：默认行为在 Electron 里会「用链接导航当前窗口」——文档一点就白屏。
 // 统一改走链接打开策略（设置页「浏览器与链接」），本地路径交给系统默认应用。
-function MarkdownLink({ node: _node, href, children, ..._rest }) {
+function MarkdownLink({ node, href, children, ...rest }) {
   const { t } = useI18n();
   async function onClick(e) {
     e.preventDefault();

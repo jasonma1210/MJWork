@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { humanizeError } from '../lib/api';
+import { api, humanizeError } from '../lib/api';
 import { rememberModel } from '../lib/appState';
 import CreateProjectForm from './CreateProjectForm';
 import InlineAlert from './InlineAlert';

@@ -162,7 +162,7 @@ function parseAction(llmOutput) {
     try {
       obj = JSON.parse(c.trim());
       if (obj && typeof obj === 'object') break;
-    } catch { obj = null; } // 候选解析失败属预期控制流：继续尝试下一候选，不刷日志
+    } catch (e) { obj = null; }
   }
   // 3) JSON 损坏：正则提取 action 字段（容忍缺失冒号/引号残缺）
   if (!obj) {
@@ -391,7 +391,7 @@ function parseVisionAction(llmOutput, screenSize = null) {
     try {
       const parsed = JSON.parse(c.trim());
       if (parsed && typeof parsed === 'object') { obj = parsed; break; }
-    } catch { obj = null; } // 同上：视觉坐标候选解析失败属预期控制流
+    } catch (e) { obj = null; }
   }
   if (!obj) {
     const m = llmOutput.match(/"action"\s*:?\s*"?([a-zA-Z_]+)"?/);
@@ -615,9 +615,7 @@ async function isScreenLocked(deps = {}) {
     const lg = await runOsascript('tell application "System Events" to (name of processes) contains "loginwindow"', deps);
     return String(lg).trim() === 'true';
   } catch (e) {
-    // fail-open：探测失败按未锁定处理不阻塞主流程；但这是安全相关降级，留痕便于发现 osascript 权限异常
-    console.warn('[cua] 锁屏探针失败，按未锁定处理:', e?.message || e);
-    return false;
+    return false; // 探针失败按未锁定处理，不阻塞主流程
   }
 }
 
@@ -736,8 +734,8 @@ async function getScreenSize(deps = {}) {
           });
       });
       return parseDesktopBounds(out) || { width: 0, height: 0 };
-    } catch {
-      return { width: 0, height: 0 }; // fail-closed：尺寸未知由上层拒绝坐标动作
+    } catch (e) {
+      return { width: 0, height: 0 };
     }
   }
   if (platform !== 'darwin') {
@@ -745,8 +743,8 @@ async function getScreenSize(deps = {}) {
     try {
       const shot = await captureScreen(deps);
       return { width: shot.width, height: shot.height };
-    } catch {
-      return { width: 0, height: 0 }; // fail-closed：尺寸未知由上层拒绝坐标动作
+    } catch (e) {
+      return { width: 0, height: 0 }; // 探针失败按尺寸未知处理，由上层拒绝坐标动作
     }
   }
   const script = `
@@ -756,8 +754,8 @@ end tell
 return (item 1 of b) & "," & (item 2 of b) & "," & (item 3 of b) & "," & (item 4 of b)`.trim();
   try {
     return parseDesktopBounds(await runOsascript(script, deps)) || { width: 0, height: 0 };
-  } catch {
-    return { width: 0, height: 0 }; // fail-closed：尺寸未知由上层拒绝坐标动作
+  } catch (e) {
+    return { width: 0, height: 0 }; // 探针失败按尺寸未知处理，由上层拒绝坐标动作
   }
 }
 
@@ -840,7 +838,7 @@ async function captureScreen(deps = {}) {
       ocrText: '',
     };
   } finally {
-    try { fs.unlinkSync(file); } catch (e) { console.warn('[cua] 临时文件清理失败:', e?.message || e); }
+    try { fs.unlinkSync(file); } catch (e) { /* 临时文件清理失败不影响主流程 */ }
   }
 }
 
@@ -862,7 +860,7 @@ async function captureScreenDarwin(deps = {}) {
       ocrText: '',
     };
   } finally {
-    try { fs.unlinkSync(file); } catch (e) { console.warn('[cua] 临时文件清理失败:', e?.message || e); }
+    try { fs.unlinkSync(file); } catch (e) { /* 临时文件清理失败不影响主流程 */ }
   }
 }
 
@@ -985,10 +983,10 @@ function createHudWindow(BrowserWindow) {
     update(text) {
       try {
         win.webContents.executeJavaScript(`window.setCuaText(${JSON.stringify(String(text || ''))})`).catch(() => {});
-      } catch { /* HUD 已销毁时忽略：正常生命周期竞态 */ }
+      } catch (e) { /* HUD 已销毁时忽略 */ }
     },
     destroy() {
-      try { win.destroy(); } catch { /* 忽略重复销毁：正常生命周期竞态 */ }
+      try { win.destroy(); } catch (e) { /* 忽略重复销毁 */ }
       if (activeHud === hud) activeHud = null;
     },
   };
@@ -1029,8 +1027,7 @@ class ComputerUseLoop {
   }
 
   emit(evt) {
-    try { this.onEvent({ ...evt, step: evt.step !== undefined ? evt.step : this.step }); }
-    catch (e) { console.warn('[cua] 事件回调异常（不中断循环）:', e?.message || e); }
+    try { this.onEvent({ ...evt, step: evt.step !== undefined ? evt.step : this.step }); } catch (e) { /* 回调异常不中断循环 */ }
   }
 
   // 立即中断：等待中的 await 返回后循环在下一检查点退出
@@ -1051,8 +1048,7 @@ class ComputerUseLoop {
       // 锁屏/屏保检测：暂停并要求重新确认
       if (this.toolHandlers.isLocked) {
         let locked = false;
-        try { locked = await this.toolHandlers.isLocked(); }
-        catch (e) { locked = false; console.warn('[cua] 锁屏检测异常，按未锁定处理:', e?.message || e); }
+        try { locked = await this.toolHandlers.isLocked(); } catch (e) { locked = false; }
         if (locked) {
           this.emit({ type: 'paused', reason: '检测到锁屏或屏保，已暂停' });
           const resume = await this.requestConfirm(
@@ -1269,8 +1265,7 @@ class ComputerUseLoop {
     try {
       decision = await this.approval.requestApproval(summary, action, node);
     } catch (e) {
-      decision = 'deny'; // fail-closed：审批通道异常一律拒绝
-      console.warn('[cua] 审批请求异常，按 deny 处理:', e?.message || e);
+      decision = 'deny';
     }
     return this.stopped ? 'deny' : (decision || 'deny');
   }

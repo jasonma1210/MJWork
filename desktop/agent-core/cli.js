@@ -13,6 +13,7 @@
 // MJ_AGENT_MOCK=1 时走确定性假模型（固定一轮 tool_call + 一轮最终文本），用于冒烟测试。
 
 import { exec, execFile, spawn } from 'node:child_process';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { runAgent } from './index.js';

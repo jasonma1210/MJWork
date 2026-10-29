@@ -129,7 +129,7 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
     await load();
   }
 
-  function offerUndo(snapshotId, _files) {
+  function offerUndo(snapshotId, files) {
     toast({
       message: t('diff.undone'),
       actionLabel: t('diff.undo'),

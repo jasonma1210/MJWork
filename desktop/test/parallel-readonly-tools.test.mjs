@@ -84,33 +84,21 @@ const call = (id, name, args) => ({ id, type: 'function', function: { name, argu
     call('t3', 'read_file', { id: 'c', path: '/tmp/c' }),
     call('t4', 'write_file', { id: 'w', path: '/tmp/w' }),
   ];
+  const r = await runTools(calls, {
+    readFile: async () => { await sleep(120); return { content: 'x' }; },
+    writeFile: async () => ({ ok: true }),
+  });
   const serialBound = 3 * 120; // 360ms
   // 判据用「执行区间相交」而不是「总耗时 < 上界」（2026-10-18 team-lead 口径）：
   // 绝对墙钟**无法区分「没并发」与「机器忙」**——多 agent 并发跑测试时，上界断言会假红。
   // 区间相交才是这条断言真正想表达的性质，且与机器速度无关。
-  const overlaps3 = (r) => {
-    const a = r.timeline.get('readFile:a');
-    const b = r.timeline.get('readFile:b');
-    const c = r.timeline.get('readFile:c');
-    const ov = (x, y) => !!x && !!y && x.start < y.end && y.start < x.end;
-    return ov(a, b) && ov(b, c) && ov(a, c);
-  };
-  // 并发区间相交是「尽力而为」性质：CI 多套件并行抢 CPU 时单跑可能不相交（非代码回归）。
-  // 有限重试（≤3 次）到相交为止；结构性不变量（条数/顺序/串行阈值/收尾）不参与重试，必须每跑都成立。
-  let r, attempt = 0;
-  do {
-    r = await runTools(calls, {
-      readFile: async () => { await sleep(120); return { content: 'x' }; },
-      writeFile: async () => ({ ok: true }),
-    });
-    attempt += 1;
-  } while (!overlaps3(r) && attempt < 3);
   const a = r.timeline.get('readFile:a');
   const b = r.timeline.get('readFile:b');
   const c = r.timeline.get('readFile:c');
-  check('3 个只读调用的执行区间两两相交（真并发，与机器负载无关）' + (attempt > 1 ? `（重试 ${attempt} 次命中）` : ''),
-    overlaps3(r),
-    `try=${attempt} a=${a?.start}-${a?.end} b=${b?.start}-${b?.end} c=${c?.start}-${c?.end}`);
+  const overlaps = (x, y) => !!x && !!y && x.start < y.end && y.start < x.end;
+  check('3 个只读调用的执行区间两两相交（真并发，与机器负载无关）',
+    overlaps(a, b) && overlaps(b, c) && overlaps(a, c),
+    `a=${a?.start}-${a?.end} b=${b?.start}-${b?.end} c=${c?.start}-${c?.end}`);
   check(`并发后工具阶段远低于串行上界 ${serialBound}ms（参考值，非判据）`,
     r.toolPhaseMs > 0 && r.toolPhaseMs < serialBound, `toolPhase=${r.toolPhaseMs}ms`);
   check('只读并发不改消息条数（4 条 tool 消息）', r.toolMsgs.length === 4, `msgs=${r.toolMsgs.length}`);
@@ -127,31 +115,20 @@ const call = (id, name, args) => ({ id, type: 'function', function: { name, argu
     call('c2', 'read_file', { id: 'b', path: '/tmp/b' }),
     call('c3', 'read_file', { id: 'c', path: '/tmp/c' }),
   ];
-  const overlapsAB = (r) => {
-    const a = r.timeline.get('readFile:a');
-    const b = r.timeline.get('readFile:b');
-    return !!a && !!b && a.start < b.end && b.start < a.end;
-  };
-  // 同 ①：并发区间相交是「尽力而为」，CI 负载高时单跑可能不相交（非回归）。有限重试 ≤3 次；
-  // 消息顺序是不变量，不参与重试。
-  let r, attempt = 0;
-  do {
-    r = await runTools(calls, {
-      readFile: async (args) => {
-        await sleep(args?.id === 'a' ? 150 : 10); // a 最慢，b/c 先完成
-        return { content: args?.id };
-      },
-    });
-    attempt += 1;
-  } while (!overlapsAB(r) && attempt < 3);
+  const r = await runTools(calls, {
+    readFile: async (args) => {
+      await sleep(args?.id === 'a' ? 150 : 10); // a 最慢，b/c 先完成
+      return { content: args?.id };
+    },
+  });
   const order = r.toolMsgs.map((m) => m.tool_call_id).join(',');
   check('最慢的先发时，tool 消息仍按 tool_calls 顺序落位（c1,c2,c3）', order === 'c1,c2,c3', order);
   // 交叉验证「确实是并发而非碰巧串行」：串行时 b 只能在 a 结束后才开始 → 区间不相交。
   const a = r.timeline.get('readFile:a');
   const b = r.timeline.get('readFile:b');
-  const overlaps = overlapsAB(r);
-  check('慢调用与快调用区间相交（并发生效；串行时二者必然不相交）' + (attempt > 1 ? `（重试 ${attempt} 次命中）` : ''), overlaps,
-    `try=${attempt} a=${a?.start}-${a?.end} b=${b?.start}-${b?.end}`);
+  const overlaps = !!a && !!b && a.start < b.end && b.start < a.end;
+  check('慢调用与快调用区间相交（并发生效；串行时二者必然不相交）', overlaps,
+    `a=${a?.start}-${a?.end} b=${b?.start}-${b?.end}`);
 }
 
 // ── ③ 写工具串行：两个 80ms 的 write_file 总耗时 ≥160ms ──

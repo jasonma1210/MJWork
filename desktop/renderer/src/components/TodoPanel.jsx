@@ -39,7 +39,6 @@ export default function TodoPanel({ runId, compact = false }) {
         setState({ todos: evt.data?.todos || [], doneCount: evt.data?.doneCount || 0, total: evt.data?.total || 0 });
       });
     } catch (e) {
-      console.warn('[todo] subscribe agent event failed:', e);
       return undefined;
     }
     return typeof off === 'function' ? off : undefined;

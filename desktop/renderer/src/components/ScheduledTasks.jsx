@@ -109,12 +109,7 @@ export default function ScheduledTasks() {
     }
   }
 
-  // load 依赖组件内每次重建的 normalizeTask，直接列入 effect 依赖会让监听随每轮渲染重挂。
-  // 沿用本文件 showRuns 的 latest-ref 惯例：ref 持有最新 load，effect 只注册一次且闭包不过期。
-  const loadRef = useRef(load);
-  loadRef.current = load;
-
-  useEffect(() => { loadRef.current(); }, []);
+  useEffect(() => { load(); }, []);
 
   // P0-8c：开机自启现状读取（主进程侧为唯一事实源：localStore preference + 系统登录项）
   useEffect(() => {
@@ -135,7 +130,7 @@ export default function ScheduledTasks() {
   useEffect(() => {
     if (!window.mjcode?.onScheduledChanged) return;
     const off = window.mjcode.onScheduledChanged(() => {
-      loadRef.current();
+      load();
       if (expandedRuns?.taskId) showRunsRef.current(expandedRuns.taskId, true);
     });
     return off;
