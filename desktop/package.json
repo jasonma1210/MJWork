@@ -18,7 +18,7 @@
     "eval:hard": "node eval/run-eval.mjs --tasks eval/tasks-hard.json",
     "eval:compare": "node eval/run-compare.mjs",
     "eval:compare:hard": "node eval/run-compare.mjs --tasks eval/tasks-hard.json",
-    "lint": "eslint main/ agent-core/ renderer/src/ chrome-extension/ --max-warnings=157",
+    "lint": "eslint main/ agent-core/ renderer/src/ chrome-extension/ --max-warnings=0",
     "lint:strict": "eslint main/ agent-core/ renderer/src/ chrome-extension/ --max-warnings=0",
     "format": "prettier --write \"main/**/*.js\" \"agent-core/**/*.js\" \"renderer/src/**/*.{js,jsx}\"",
     "format:check": "prettier --check \"main/**/*.js\" \"agent-core/**/*.js\" \"renderer/src/**/*.{js,jsx}\"",

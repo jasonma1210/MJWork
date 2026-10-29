@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { confirm, toast } from './feedback';
 import InlineAlert from './InlineAlert';
@@ -14,7 +14,7 @@ export default function ArchiveModal({ onClose, onChanged, onSelect }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -23,9 +23,9 @@ export default function ArchiveModal({ onClose, onChanged, onSelect }) {
       setError(err.message || t('archive.loadFailed'));
     }
     setLoading(false);
-  }
+  }, [t]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   async function restore(thread) {
     const r = await api.restoreThread(thread.id);

@@ -104,7 +104,7 @@ function assertResolvedPublic(hostname, { lookup = dns.lookup, timeoutMs = DNS_R
         }
         finish(resolve);
       });
-    } catch (e) {
+    } catch {
       // lookup 实现本身抛错（注入的假解析器 / 平台差异）：按「无法判定」处理
       finish(resolve);
     }

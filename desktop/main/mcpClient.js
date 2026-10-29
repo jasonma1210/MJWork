@@ -89,7 +89,7 @@ function dispatchMessage(server, msg) {
     return;
   }
   if (typeof server.onNotify === 'function') {
-    try { server.onNotify(msg); } catch (e) { /* 通知处理失败不影响主流程 */ }
+    try { server.onNotify(msg); } catch (e) { console.warn('[MCP] 通知处理异常（不影响主流程）:', e?.message || e); }
   }
 }
 
@@ -283,16 +283,21 @@ async function performHandshake(server, version = PROTOCOL_VERSION) {
   }
   // 落状态时以**服务端实际返回值**为准：peerVersion 为空（服务端未声明版本）时保持空，
   // 不拿我们自己提议的版本冒充协商结果（提议值单独记在 proposedProtocolVersion）。
-  server.protocolVersion = peerVersion;
+  // 一次性写入（同 tryStatelessDiscovery 的做法）：逐条 `server.x =` 都发生在 await 之后，
+  // 会各触发一次 require-atomic-updates，而 lint 警告是只减不增的棘轮。
+  const handshakeState = {
+    protocolVersion: peerVersion,
+    capabilities: (initRes && initRes.capabilities) || {},
+    serverInfo: (initRes && initRes.serverInfo) || {},
+  };
+  if (initRes && typeof initRes.instructions === 'string') handshakeState.instructions = initRes.instructions;
+  Object.assign(server, handshakeState);
   // 第七轮 F-006 / B1-B-04：把**协商结果**交给传输层，供后续所有 POST 带 MCP-Protocol-Version。
   // 放在版本校验之后、notifications/initialized 之前：initialized 与 tools/list 都必须带这个头。
   // 只对实现了该方法的传输生效（stdio / 旧 SSE 传输没有这个方法，协议里也不要求）。
   if (server.transport && typeof server.transport.setProtocolVersion === 'function') {
     server.transport.setProtocolVersion(peerVersion);
   }
-  server.capabilities = (initRes && initRes.capabilities) || {};
-  server.serverInfo = (initRes && initRes.serverInfo) || {};
-  if (initRes && typeof initRes.instructions === 'string') server.instructions = initRes.instructions;
   // 2026-10-18 ⑥降噪：服务端采纳的版本与本端提议不同，**且仍在支持集内**——这不是错误，
   // 是 MCP 规范的正常协商结果（如 git-mcp 回 2025-03-26）。此前用 console.warn 每次都刷一行，
   // 把启动日志里的真实告警淹没；降为 info 级并合并为「协商结论」一句话。
@@ -335,7 +340,7 @@ async function negotiateHandshake(server) {
       + `按兼容性降级用 ${MIN_PROTOCOL_VERSION} 重试一次（不是静默降级，将留痕）`,
     );
     const res = await performHandshake(server, MIN_PROTOCOL_VERSION);
-    server.legacy = true;
+    Object.assign(server, { legacy: true });
     console.warn(`[MCP ${server.name}] 该服务已降级为 ${MIN_PROTOCOL_VERSION} legacy 模式（协商结果：${server.protocolVersion || '服务端未声明'}）`);
     return res;
   }
@@ -564,7 +569,7 @@ async function connectMcpServer({
     if (server.handshakeDone) return;
     for (const [id, cb] of [...server.pending]) {
       server.pending.delete(id);
-      try { cb({ error: { message } }); } catch (e) { /* 回调所属请求已结束 */ }
+      try { cb({ error: { message } }); } catch (e) { console.warn('[MCP] 挂起请求结算回调异常:', e?.message || e); }
     }
   };
   // stderr 尾巴由**传输层**写入（transport.stderrTail），server.stderrTail 从来没人写：
@@ -609,7 +614,7 @@ async function connectMcpServer({
     const usedStateless = await tryStatelessDiscovery(server);
     if (!usedStateless) await negotiateHandshake(server); // 1. initialize（被拒时最多一次 legacy 降级）
     await refreshTools(server);
-    server.handshakeDone = true;
+    Object.assign(server, { handshakeDone: true });
     markServerReady(true);
     return {
       ok: true, server: name, kind: server.kind, toolCount: server.tools.length, tools: server.tools,

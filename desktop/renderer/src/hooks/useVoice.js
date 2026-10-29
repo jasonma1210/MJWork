@@ -57,7 +57,7 @@ export function useVoice({ onText } = {}) {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     const rec = recRef.current;
     if (rec) {
-      try { rec.processor?.disconnect(); rec.source?.disconnect(); } catch (e) { /* ignore */ }
+      try { rec.processor?.disconnect(); rec.source?.disconnect(); } catch { /* ignore */ }
       rec.stream?.getTracks().forEach((t) => t.stop());
       rec.ctx?.close?.();
       recRef.current = null;

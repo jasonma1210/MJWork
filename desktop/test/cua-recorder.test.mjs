@@ -196,7 +196,14 @@ await check('main.js 接线：record 参数 + 回放/列表/删除 IPC + 互斥�
   assert.match(mainSrc, /ipcMain\.handle\('cua:replay'/);
   assert.match(mainSrc, /ipcMain\.handle\('cua:recordings:list'/);
   assert.match(mainSrc, /ipcMain\.handle\('cua:recordings:delete'/);
-  assert.match(mainSrc, /activeCuaLoop \|\| activeReplayLoop/);
+  // 互斥守卫已收口到 cuaLoopRegistry（占用/释放都在同步函数里完成）：
+  // 这里只守接线，行为由第 8 节覆盖 —— 静态断言看不出「后到者覆盖占用」这类竞态。
+  assert.match(mainSrc, /require\('\.\/cuaLoopRegistry'\)/);
+  assert.equal((mainSrc.match(/cuaLoopRegistry\.hasRunning\(\)/g) || []).length, 3, '三处入口都应先查占用');
+  assert.match(mainSrc, /cuaLoopRegistry\.claimCua\(loop\)/);
+  assert.match(mainSrc, /cuaLoopRegistry\.claimReplay\(loop\)/);
+  assert.match(mainSrc, /cuaLoopRegistry\.stopCurrent\(\)/);
+  assert.doesNotMatch(mainSrc, /activeCuaLoop|activeReplayLoop/, '旧模块级互斥变量不应残留');
   assert.match(mainSrc, /userData'\), 'recordings'\)/); // 录制数据仅存本机 userData
   assert.match(mainSrc, /cua\.captureScreen\(\)/); // 每步截图
 });
@@ -218,6 +225,64 @@ await check('渲染层接线：面板嵌入 SettingsModal + i18n 双语键齐全
     assert.ok(k in zh, `zh-CN 缺少键 settings.${k}`);
     assert.ok(k in en, `en-US 缺少键 settings.${k}`);
   }
+});
+
+// ── 8. cuaLoopRegistry：并发互斥与释放令牌（行为测试）──
+// 事故形态：原先的守卫「读互斥变量」与「写互斥变量」之间隔着建 HUD/建会话等 await，
+// 两个请求并发进来都能通过守卫，后到者覆盖前者占用 ⇒ cua:stop 停错对象、先来的循环成孤儿。
+const registry = require(path.join(DESKTOP, 'main', 'cuaLoopRegistry.js'));
+function mkRegistryLoop(label) {
+  return { label, stopped: 0, stop() { this.stopped += 1; } };
+}
+
+await check('registry：占用成功后第二路必须被拒（CUA 与回放共用一把锁）', () => {
+  assert.equal(registry.hasRunning(), false, '初始态不应有占用');
+  const a = mkRegistryLoop('a');
+  const releaseA = registry.claimCua(a);
+  assert.equal(typeof releaseA, 'function', '占用成功应返回释放句柄');
+  assert.equal(registry.hasRunning(), true);
+  assert.equal(registry.claimCua(mkRegistryLoop('b')), null, '占用中不得再占 CUA');
+  assert.equal(registry.claimReplay(mkRegistryLoop('c')), null, '占用中不得再占回放');
+  releaseA();
+  assert.equal(registry.hasRunning(), false, '释放后应可再占');
+});
+
+await check('registry：回放通道占用与释放后 CUA 可再占', () => {
+  const replayer = mkRegistryLoop('r');
+  const releaseReplay = registry.claimReplay(replayer);
+  assert.equal(typeof releaseReplay, 'function');
+  assert.equal(registry.claimReplay(mkRegistryLoop('r2')), null, '回放通道同一时刻只允许一个');
+  assert.equal(registry.claimCua(mkRegistryLoop('c')), null, '回放占用时 CUA 也应被拒');
+  releaseReplay();
+  const releaseCua = registry.claimCua(mkRegistryLoop('c2'));
+  assert.equal(typeof releaseCua, 'function', '回放结束后 CUA 应可占用');
+  releaseCua();
+});
+
+await check('registry：迟到的旧释放不得清掉新占用（身份令牌）', () => {
+  const releaseA = registry.claimCua(mkRegistryLoop('a'));
+  releaseA(); // A 正常结束
+  const releaseB = registry.claimCua(mkRegistryLoop('b'));
+  releaseA(); // A 的句柄被重复调用（迟到/重复释放）
+  assert.equal(registry.hasRunning(), true, '旧句柄不得清掉 B 的占用');
+  assert.equal(registry.claimCua(mkRegistryLoop('c')), null, 'B 仍在占用，新请求应被拒');
+  releaseB();
+  assert.equal(registry.hasRunning(), false);
+});
+
+await check('registry：stopCurrent 停当前占用者并如实报出是哪一路', () => {
+  assert.equal(registry.stopCurrent(), null, '没人跑时应返回 null');
+  const replayer = mkRegistryLoop('replay');
+  const releaseReplay = registry.claimReplay(replayer);
+  assert.equal(registry.stopCurrent(), 'replay');
+  assert.equal(replayer.stopped, 1, '回放应被 stop 一次');
+  releaseReplay();
+  const cuaLoop = mkRegistryLoop('cua');
+  const releaseCua = registry.claimCua(cuaLoop);
+  assert.equal(registry.stopCurrent(), 'cua');
+  assert.equal(cuaLoop.stopped, 1, 'CUA 应被 stop 一次');
+  releaseCua();
+  assert.equal(registry.hasRunning(), false);
 });
 
 console.log(`\ncua-recorder: ${pass}/${total} 通过`);

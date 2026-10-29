@@ -21,7 +21,7 @@ function init(deps) {
 function loadWindowState() {
   try {
     return JSON.parse(fs.readFileSync(WINDOW_STATE_FILE(), 'utf8'));
-  } catch (e) {
+  } catch {
     return null; // 首次启动或文件损坏时回落默认值
   }
 }

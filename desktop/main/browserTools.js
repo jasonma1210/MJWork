@@ -173,7 +173,7 @@ async function toolBrowserScreenshot(args = {}) {
   const gate = await gateApproval('browser_screenshot', args);
   if (gate.ok === false) return gate;
   const shotDir = path.join(deps.userDataDir, 'browser-shots');
-  try { fs.mkdirSync(shotDir, { recursive: true }); } catch (e) { /* 已存在 */ }
+  try { fs.mkdirSync(shotDir, { recursive: true }); } catch (e) { console.warn('[browser] 截图目录创建失败:', e?.message || e); }
   const outPath = path.join(shotDir, `shot-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.png`);
   let result;
   try {

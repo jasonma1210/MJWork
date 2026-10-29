@@ -21,15 +21,20 @@ function relayUrl() {
 async function connect() {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
   const url = await relayUrl();
-  try { ws = new WebSocket(url); } catch { scheduleReconnect(); return; }
-  ws.onopen = () => { reconnectDelay = 2000; };
-  ws.onmessage = async (ev) => {
+  // await 之间可能已有别的 connect 建好连接（alarm 与 onStartup/onInstalled 会并发触发）：
+  // 必须重判一次，否则后到者会覆盖正在握手/已连通的 socket，旧 socket 的 onclose 还会把新连接误清掉。
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
+  let socket;
+  try { socket = new WebSocket(url); } catch { scheduleReconnect(); return; }
+  ws = socket; // 单次发布：本函数此后只操作局部 socket，不再回读全局 ws
+  socket.onopen = () => { reconnectDelay = 2000; };
+  socket.onmessage = async (ev) => {
     let msg;
     try { msg = JSON.parse(String(ev.data)); } catch { return; }
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 'hello') {
       helloNonce = String(msg.nonce || '');
-      ws.send(JSON.stringify({
+      socket.send(JSON.stringify({
         t: 'identify',
         extension: EXTENSION_ID,
         version: chrome.runtime.getManifest().version,
@@ -46,15 +51,15 @@ async function connect() {
       } catch (err) {
         res = { t: 'callRes', callId: msg.callId, ok: false, error: String(err && err.message || err) };
       }
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(res));
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(res));
     }
   };
-  ws.onclose = scheduleReconnect;
-  ws.onerror = () => { try { ws.close(); } catch { /* 已关闭 */ } };
+  // 身份守卫：只有「当前在册的那根 socket」关闭才清位并重连，迟到的旧 socket 事件不参与决策
+  socket.onclose = () => { if (ws === socket) { ws = null; scheduleReconnect(); } };
+  socket.onerror = () => { try { socket.close(); } catch { /* 已关闭 */ } };
 }
 
 function scheduleReconnect() {
-  ws = null;
   setTimeout(connect, reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 2, 30000); // 指数退避封顶 30s：桌面端未启动时不狂重连
 }

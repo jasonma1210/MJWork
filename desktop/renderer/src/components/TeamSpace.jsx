@@ -83,7 +83,8 @@ export default function TeamSpace({ spaceId = 'default', projectId = null }) {
       reloadLocal();
       setError('');
     } catch (err) {
-      // 离线属正常态：本地内容照常可用，仅提示未同步
+      // 离线属正常态：本地内容照常可用，仅提示未同步；但同步异常（鉴权/网络/协议）仍需留痕排查
+      console.warn('[teamSpace] collaboration sync failed:', err?.message || err);
       setNotice(t('teamSpace.offlineNotice'));
     } finally {
       setSyncing(false);

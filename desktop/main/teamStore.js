@@ -165,12 +165,6 @@ function newId(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
 }
 
-function assertId(raw, label) {
-  const s = String(raw == null ? '' : raw).trim();
-  if (!s) throw new Error(`${label} 必填`);
-  return s;
-}
-
 function rowToTeam(r) {
   return {
     id: r.id,

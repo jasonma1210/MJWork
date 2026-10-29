@@ -109,7 +109,12 @@ export default function ScheduledTasks() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  // load 与 showRuns 同理走 latest-ref：普通 async 函数声明每次渲染新建，
+  // 直接列入依赖会让加载 effect 反复重跑，遗漏则闭包过期。ref 两者兼顾。
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
+  useEffect(() => { loadRef.current(); }, []);
 
   // P0-8c：开机自启现状读取（主进程侧为唯一事实源：localStore preference + 系统登录项）
   useEffect(() => {
@@ -130,7 +135,7 @@ export default function ScheduledTasks() {
   useEffect(() => {
     if (!window.mjcode?.onScheduledChanged) return;
     const off = window.mjcode.onScheduledChanged(() => {
-      load();
+      loadRef.current();
       if (expandedRuns?.taskId) showRunsRef.current(expandedRuns.taskId, true);
     });
     return off;

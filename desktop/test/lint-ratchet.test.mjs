@@ -20,7 +20,11 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 // require-atomic-updates，团队记忆开关改用 ui/Button 原语也不再新增 unused 告警 ⇒ 161 → 159。
 // 2026-10-27 复测 157：artifacts/studio/ledger 三个只读域 IPC 收口到 registerDomains.js 后，
 // 原 main.js 内的若干 unused 告警随冗余装配代码一并消失 ⇒ 159 → 157（棘轮只降不升）。
-const LINT_WARNINGS_BASELINE = 157;
+// 2026-10-30 收尾实测 **0**：四处（main/ agent-core/ renderer/src/ chrome-extension/）
+// 全部告警清零——unused catch 参数按「预期控制流→optional catch binding / 真实失败路径→补
+// console.warn」分类处理，真实竞态（CUA 互斥、浏览器单飞、relay socket 身份守卫）抽模块真修，
+// 没有新增任何 eslint-disable ⇒ 157 → 0（从此零容忍，新增 1 条 warning 即红）。
+const LINT_WARNINGS_BASELINE = 0;
 
 let pass = 0;
 let fail = 0;
@@ -35,7 +39,9 @@ const m = lintScript.match(/--max-warnings=(\d+)/);
 const scriptMax = m ? Number(m[1]) : null;
 check('① package.json lint 脚本 --max-warnings 等于基线常量', scriptMax === LINT_WARNINGS_BASELINE,
   `script=${scriptMax} baseline=${LINT_WARNINGS_BASELINE}`);
-check('③ 基线不是「假大值」（已脱离 9999 假绿）', LINT_WARNINGS_BASELINE < 9999 && LINT_WARNINGS_BASELINE > 0,
+// ③ 只拦「假大值」：9999 那种等于不限 warning 的假绿。0 是最严的一档（零容忍），不是假绿，
+//    故下界是 >= 0 而不是 > 0——清零后若仍要求 >0，就只能在 1 与 0 之间留一条无效告警凑数。
+check('③ 基线不是「假大值」（已脱离 9999 假绿）', LINT_WARNINGS_BASELINE >= 0 && LINT_WARNINGS_BASELINE < 9999,
   `baseline=${LINT_WARNINGS_BASELINE}`);
 
 // ② 真跑 eslint（本地二进制），按 severity 统计

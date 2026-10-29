@@ -43,7 +43,7 @@ function createStdioTransport({ command, args = [], env, onLog, dispatch }) {
     for (const line of lines) {
       if (!line.trim()) continue;
       try { dispatch(transport.serverRef, JSON.parse(line)); }
-      catch (e) { if (onLog) onLog(`非 JSON 输出: ${line.slice(0, 120)}`); }
+      catch { if (onLog) onLog(`非 JSON 输出: ${line.slice(0, 120)}`); }
     }
   });
   child.stderr.on('data', (d) => {

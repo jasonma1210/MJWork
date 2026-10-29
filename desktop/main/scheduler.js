@@ -11,7 +11,6 @@
 // - P0-8b：runTask 收尾把 status/last_run_at/last_result 写回任务对象（UI 卡片直读，此前主进程从不写）
 // - 与服务端 /scheduled-tasks 同构：list 返回任务数组，runs 返回执行历史数组
 const path = require('path');
-const fs = require('fs');
 const { app, ipcMain } = require('electron');
 const scheduledStore = require('./scheduledStore');
 const scheduledOutput = require('./scheduledOutput');

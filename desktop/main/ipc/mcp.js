@@ -29,7 +29,7 @@ const { writeFileDurableWithMode } = require('../data/durableWrite');
 const { shellEnv } = require('../tools/exec');
 // 期 1（2026-10-18）：懒启动地基——预热白名单/灰度开关（mcpPrewarm）+ 工具清单缓存（mcpToolCache）
 // 期 2（2026-10-18）：三层分级（auto-start/whitelist/manual）+ profile 分流 + 治理偏好读写
-const { isLazyMode, autoStartConfigs, normalizeProfile, readGovernance, classifyTier, TIER, PROFILES } = require('../mcpPrewarm');
+const { isLazyMode, autoStartConfigs, readGovernance, classifyTier, PROFILES } = require('../mcpPrewarm');
 const { createMcpToolCache } = require('../mcpToolCache');
 
 // 期 2：治理偏好存储在 localStore 的偏好键中（与其它用户偏好同源），默认值由 readGovernance 兜底。
@@ -288,7 +288,7 @@ async function connectMcpServer({ name, transport = 'stdio', command, args = [],
 function emitMcpStatus(name, status, code) {
   try {
     deps.emitTaskEvent({ type: 'mcp_status', name, status, code, ts: Date.now() });
-  } catch (e) { /* 事件发送失败不影响主流程 */ }
+  } catch (e) { console.warn('[mcp] 状态事件发送失败（不影响主流程）:', e?.message || e); }
 }
 
 // P1-1：统一清理全部 MCP 子进程（应用退出时调用）→ 委托 mcpClient（stdio SIGTERM→SIGKILL）
@@ -681,7 +681,8 @@ function register() {
     // 2026-10-16：同时回传配置文件路径 —— 生态中心连接器弹窗据此提供「打开 JSON 直接改」入口。
     // 只回路径、不读内容：文件里的 env 含 API Key，跨 IPC 出口仍一律剥离（见上一条注释）。
     path: MCP_CONFIG_FILE(),
-    servers: loadMcpConfig().map(({ env, ...rest }) => ({ ...rest, tier: rest.tier || classifyTier(rest) })),
+    // 剥离 env：配置里的 API Key 绝不跨 IPC 出口下发（见上方注释）
+    servers: loadMcpConfig().map(({ env: _env, ...rest }) => ({ ...rest, tier: rest.tier || classifyTier(rest) })),
     governance: getGovernance(),
   }));
 

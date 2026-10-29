@@ -123,6 +123,10 @@
  *        → A18b：TOOL_HANDLER_NAMES 55 → **56**（新增 team_read_messages → teamReadMessages）；
  *        → A18g：LINT_WARNINGS_BASELINE 161 → 159 → **157**（棘轮只降不升：本轮 descriptor/quotaLedger
  *          收口 + 导航接线迁移后实际 warning 降至 157，门禁与 harness 同步下调，基线只降不升）。
+ *      · lint 清零批（2026-10-30）—— 一条等位数字**原地重写**（总数仍 76）：
+ *        → A18g：157 → **0**（四处 in-scope 目录告警全部清零：unused catch 参数按「预期控制流→
+ *          optional catch binding / 真实失败路径→补 console.warn」分类，真实竞态抽模块真修，
+ *          零新增 eslint-disable ⇒ 棘轮基线同步下调到零容忍；断言改为要求 `= 0;`，写回 157 即红）。
  *        → BASE_TOOLS 仍 52（新工具同样属运行时条件追加，不进静态清单）。
  *      · 团队派活拆解修复批（2026-10-21，**未提交工作区**）—— 一条断言**原地重写**（总数仍 76）：
  *        → A14e：`DAG MAX_DEPS = 4` → 「DAG 不再设人工 fan-in 上限（依赖数上限已移除）」。
@@ -1004,7 +1008,7 @@ function httpHeaderSegments() {
   ok('A18f', '审批四档齐全',
     ['never', 'auto-safe', 'on-request', 'always'].filter((x) => new RegExp(`'${x}'`).test(ap)).length, 4);
   const lr = stripComments(read('desktop/test/lint-ratchet.test.mjs'));
-  okTrue('A18g', 'LINT_WARNINGS_BASELINE = 157', /LINT_WARNINGS_BASELINE\s*=\s*157/.test(lr));
+  okTrue('A18g', 'LINT_WARNINGS_BASELINE = 0（零容忍）', /LINT_WARNINGS_BASELINE\s*=\s*0\s*;/.test(lr));
 }
 
 // ══ 结构性加固：自检 + 断言总数闸 ═══════════════════════════════════════════

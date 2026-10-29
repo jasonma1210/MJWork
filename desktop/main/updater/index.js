@@ -25,7 +25,7 @@ function resolveManualDownloadUrl() {
   try {
     const pub = require('../../package.json').build?.publish;
     if (pub?.owner && pub?.repo) return `https://github.com/${pub.owner}/${pub.repo}/releases`;
-  } catch (e) { /* package.json 读取失败不影响主流程 */ }
+  } catch { /* package.json 读取失败不影响主流程 */ }
   return '';
 }
 const MANUAL_DOWNLOAD_URL = resolveManualDownloadUrl();
@@ -94,7 +94,7 @@ function classifyUpdateError(err) {
 function initUpdater() {
   if (!app.isPackaged || updaterInitialized) return autoUpdater;
   updaterInitialized = true;
-  // eslint-disable-next-line global-require
+  // electron-updater 体积大且仅打包后需要：按需加载，避免开发态启动开销
   autoUpdater = require('electron-updater').autoUpdater;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;

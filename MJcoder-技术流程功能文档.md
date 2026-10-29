@@ -1275,7 +1275,7 @@ flowchart TB
 ### 12.3 CI 语法门禁
 
 - 采用**全量扫描**而非白名单文件列表：通过 `find` 遍历所有 JS/TS 文件执行 `node --check`，杜绝新增文件假绿。
-- lint 警告棘轮阈值收紧至 157 并配套棘轮守护单元测试，确保警告数不反弹。（取法命令：`grep -n '"lint"' desktop/package.json` → `--max-warnings=157`；棘轮守护测试常量 `LINT_WARNINGS_BASELINE` 同为 `157`，二者同值。）
+- lint 警告棘轮阈值已收紧至 **0**（零容忍：任意一条 warning 即判红）并配套棘轮守护单元测试，确保警告数不反弹。（取法命令：`grep -n '"lint"' desktop/package.json` → `--max-warnings=0`；棘轮守护测试常量 `LINT_WARNINGS_BASELINE` 同为 `0`，二者同值。）
 - CI 平台为 `ubuntu-latest`，跑 lint / `npm test` / typecheck / build / 全量语法门禁，与本地 `npm test` **同一门禁**。
 
 ### 12.4 行数软档（两把尺子，勿混用）

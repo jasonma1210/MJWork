@@ -184,7 +184,10 @@ async function executeWriteTool(toolName, { path: p, content, search, replace, p
         const anchor = patchAnchorLine(patch);
         if (anchor) nearest = nearestContext(currentContent, anchor);
       }
-    } catch (e) { /* 读不到就不附加，不掩盖原始错误 */ }
+    } catch (e) {
+      // 读不到就不附加，不掩盖原始错误
+      console.warn('[patch] 补丁目标文件读取失败（跳过上下文补充）:', e?.message || e);
+    }
     return {
       ...retry,
       error: `patch exit ${retry.exitCode}（补丁上下文与文件当前内容不一致，未做任何修改）`,

@@ -117,7 +117,7 @@ class LocalStore {
   loadFromBackup() {
     try {
       return this.migrate(JSON.parse(fs.readFileSync(this.bak, 'utf8')));
-    } catch (e) {
+    } catch {
       return null;
     }
   }
@@ -384,7 +384,8 @@ class LocalStore {
 
   // ── 私有凭证（safeStorage 加密在调用方完成）──
   listProviders() {
-    return this.data.providers.map(({ keyEncrypted, ...rest }) => rest);
+    // 剥离 keyEncrypted：加密凭证不随列表返回渲染层
+    return this.data.providers.map(({ keyEncrypted: _keyEncrypted, ...rest }) => rest);
   }
 
   addProvider({ name, base_url, keyEncrypted, modelId, source, fileKey }) {

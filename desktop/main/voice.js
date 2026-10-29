@@ -15,7 +15,7 @@ function findWhisperBin() {
     '/usr/local/bin/whisper-cli',
   ].filter(Boolean);
   for (const c of candidates) {
-    try { fs.accessSync(c, fs.constants.X_OK); return c; } catch (e) { /* continue */ }
+    try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { /* continue */ }
   }
   return null;
 }
@@ -27,7 +27,7 @@ function listModels() {
       .filter((f) => f.endsWith('.bin'))
       .map((f) => path.join(dir, f))
       .sort((a, b) => fs.statSync(a).size - fs.statSync(b).size); // 优先小模型（更快出结果）
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -61,7 +61,7 @@ function transcribeWav({ wavBase64, language }) {
     // -nt：不输出时间戳；-l：语言（默认 auto 由模型判定，中文场景传 zh 更稳）
     const args = ['-m', model, '-f', tmp, '-nt', '--no-prints', '-l', language || 'auto'];
     execFile(bin, args, { timeout: 60000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
-      try { fs.unlinkSync(tmp); } catch (e) { /* ignore */ }
+      try { fs.unlinkSync(tmp); } catch (e) { console.warn('[voice] 录音临时文件清理失败:', e?.message || e); }
       if (err) {
         return resolve({ ok: false, error: `转写失败：${(stderr || err.message).slice(0, 300)}` });
       }

@@ -38,7 +38,7 @@ export default function TodoPanel({ runId, compact = false }) {
         if (evt.runId && runId && evt.runId !== runId) return;
         setState({ todos: evt.data?.todos || [], doneCount: evt.data?.doneCount || 0, total: evt.data?.total || 0 });
       });
-    } catch (e) {
+    } catch {
       return undefined;
     }
     return typeof off === 'function' ? off : undefined;

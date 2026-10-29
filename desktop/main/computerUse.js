@@ -162,7 +162,7 @@ function parseAction(llmOutput) {
     try {
       obj = JSON.parse(c.trim());
       if (obj && typeof obj === 'object') break;
-    } catch (e) { obj = null; }
+    } catch { obj = null; }
   }
   // 3) JSON 损坏：正则提取 action 字段（容忍缺失冒号/引号残缺）
   if (!obj) {
@@ -391,7 +391,7 @@ function parseVisionAction(llmOutput, screenSize = null) {
     try {
       const parsed = JSON.parse(c.trim());
       if (parsed && typeof parsed === 'object') { obj = parsed; break; }
-    } catch (e) { obj = null; }
+    } catch { obj = null; }
   }
   if (!obj) {
     const m = llmOutput.match(/"action"\s*:?\s*"?([a-zA-Z_]+)"?/);
@@ -615,6 +615,7 @@ async function isScreenLocked(deps = {}) {
     const lg = await runOsascript('tell application "System Events" to (name of processes) contains "loginwindow"', deps);
     return String(lg).trim() === 'true';
   } catch (e) {
+    console.warn('[cua] 锁屏探测失败，按未锁定处理:', e?.message || e);
     return false; // 探针失败按未锁定处理，不阻塞主流程
   }
 }
@@ -734,7 +735,7 @@ async function getScreenSize(deps = {}) {
           });
       });
       return parseDesktopBounds(out) || { width: 0, height: 0 };
-    } catch (e) {
+    } catch {
       return { width: 0, height: 0 };
     }
   }
@@ -743,7 +744,7 @@ async function getScreenSize(deps = {}) {
     try {
       const shot = await captureScreen(deps);
       return { width: shot.width, height: shot.height };
-    } catch (e) {
+    } catch {
       return { width: 0, height: 0 }; // 探针失败按尺寸未知处理，由上层拒绝坐标动作
     }
   }
@@ -754,7 +755,7 @@ end tell
 return (item 1 of b) & "," & (item 2 of b) & "," & (item 3 of b) & "," & (item 4 of b)`.trim();
   try {
     return parseDesktopBounds(await runOsascript(script, deps)) || { width: 0, height: 0 };
-  } catch (e) {
+  } catch {
     return { width: 0, height: 0 }; // 探针失败按尺寸未知处理，由上层拒绝坐标动作
   }
 }
@@ -838,7 +839,9 @@ async function captureScreen(deps = {}) {
       ocrText: '',
     };
   } finally {
-    try { fs.unlinkSync(file); } catch (e) { /* 临时文件清理失败不影响主流程 */ }
+    try { fs.unlinkSync(file); } catch (e) {
+      console.warn('[cua] 截图临时文件清理失败:', e?.message || e);
+    }
   }
 }
 
@@ -860,7 +863,9 @@ async function captureScreenDarwin(deps = {}) {
       ocrText: '',
     };
   } finally {
-    try { fs.unlinkSync(file); } catch (e) { /* 临时文件清理失败不影响主流程 */ }
+    try { fs.unlinkSync(file); } catch (e) {
+      console.warn('[cua] 截图临时文件清理失败:', e?.message || e);
+    }
   }
 }
 
@@ -983,10 +988,10 @@ function createHudWindow(BrowserWindow) {
     update(text) {
       try {
         win.webContents.executeJavaScript(`window.setCuaText(${JSON.stringify(String(text || ''))})`).catch(() => {});
-      } catch (e) { /* HUD 已销毁时忽略 */ }
+      } catch { /* HUD 已销毁时忽略 */ }
     },
     destroy() {
-      try { win.destroy(); } catch (e) { /* 忽略重复销毁 */ }
+      try { win.destroy(); } catch { /* 忽略重复销毁 */ }
       if (activeHud === hud) activeHud = null;
     },
   };
@@ -1027,7 +1032,8 @@ class ComputerUseLoop {
   }
 
   emit(evt) {
-    try { this.onEvent({ ...evt, step: evt.step !== undefined ? evt.step : this.step }); } catch (e) { /* 回调异常不中断循环 */ }
+    try { this.onEvent({ ...evt, step: evt.step !== undefined ? evt.step : this.step }); }
+    catch (e) { console.warn('[cua] 事件回调异常（不中断循环）:', e?.message || e); }
   }
 
   // 立即中断：等待中的 await 返回后循环在下一检查点退出
@@ -1048,7 +1054,10 @@ class ComputerUseLoop {
       // 锁屏/屏保检测：暂停并要求重新确认
       if (this.toolHandlers.isLocked) {
         let locked = false;
-        try { locked = await this.toolHandlers.isLocked(); } catch (e) { locked = false; }
+        try { locked = await this.toolHandlers.isLocked(); } catch (e) {
+          locked = false;
+          console.warn('[cua] 循环内锁屏检测失败，按未锁定继续:', e?.message || e);
+        }
         if (locked) {
           this.emit({ type: 'paused', reason: '检测到锁屏或屏保，已暂停' });
           const resume = await this.requestConfirm(
@@ -1266,6 +1275,7 @@ class ComputerUseLoop {
       decision = await this.approval.requestApproval(summary, action, node);
     } catch (e) {
       decision = 'deny';
+      console.warn('[cua] 审批请求异常，按 deny 处理:', e?.message || e);
     }
     return this.stopped ? 'deny' : (decision || 'deny');
   }

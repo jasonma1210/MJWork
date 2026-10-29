@@ -183,7 +183,7 @@ function register() {
     try {
       const r = await fetch(`${deps.serverBase()}/health`, { signal: AbortSignal.timeout(3000) });
       return { online: r.ok };
-    } catch (e) {
+    } catch {
       return { online: false };
     }
   });
@@ -599,7 +599,7 @@ function register() {
     if (scope === 'team') {
       try {
         guard.assertStrings({ teamId }, { teamId: 200 });
-      } catch (e) {
+      } catch {
         return { ok: false, error: '缺少团队标识（teamId）' };
       }
     }

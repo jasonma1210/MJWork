@@ -430,7 +430,7 @@ class PluginRegistry {
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       const list = Array.isArray(raw) ? raw : (Array.isArray(raw.plugins) ? raw.plugins : []);
       return { plugins: list.map((p) => ({ ...p, name: normalizeName(p.name) })) };
-    } catch (e) {
+    } catch {
       return { plugins: [] };
     }
   }
@@ -556,7 +556,6 @@ async function installFromGit(url, options = {}) {
   if (!check.ok) return { ok: false, stage: 'source', errors: [check.reason] };
   if (!isValidRef(options.ref)) return { ok: false, stage: 'source', errors: ['ref 格式非法'] };
 
-  const pluginsRoot = options.pluginsRoot;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-plugin-'));
   try {
     const args = ['clone', '--depth', '1'];

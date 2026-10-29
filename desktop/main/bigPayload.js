@@ -31,7 +31,9 @@ function initBigPayload({ dataDir } = {}) {
   // 启动清残留：上次进程退出时未释放的临时文件一律删除（句柄表本就不跨进程）
   try {
     for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { force: true });
-  } catch (e) { /* 清理失败不影响运行 */ }
+  } catch (e) {
+    console.warn('[bigpayload] 启动清理残留临时文件失败:', e?.message || e);
+  }
   // 周期清扫过期句柄（渲染层未展开的大结果不占永久空间）
   if (!sweepTimer) sweepTimer = setInterval(sweepExpired, 5 * 60 * 1000);
   if (sweepTimer.unref) sweepTimer.unref();

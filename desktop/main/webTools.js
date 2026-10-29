@@ -38,7 +38,7 @@ const { isPrivateHost, guardedLookup } = require('./ssrfGuard');
 function httpRequest(urlStr, { method = 'GET', headers = {}, body = null, timeoutMs = DEFAULT_TIMEOUT_MS, maxBytes = MAX_BODY_BYTES, hop = 0 } = {}) {
   return new Promise((resolve, reject) => {
     let parsed;
-    try { parsed = new URL(urlStr); } catch (e) {
+    try { parsed = new URL(urlStr); } catch {
       reject(new Error(`URL 格式非法：${urlStr}`));
       return;
     }

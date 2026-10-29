@@ -45,11 +45,10 @@ const verifierReady = import('../agent-core/verifier.js')
   });
 
 // J3：L3 规则引擎（同 ESM 加载模式）。加载失败只让 L3 失效，不影响 L1。
-// ⚠️ then 里**必须 return m**：调用方用 `await verifierL3Ready` 取模块，
-// 若只赋值不返回，await 得到 undefined → 永远走「未注入」降级分支（踩过一次）。
-let verifierL3Mod = null;
+// ⚠️ 调用方用 `await verifierL3Ready` 取模块本体；此处必须把模块透传下去，
+// 否则 await 得到 undefined → 永远走「未注入」降级分支（踩过一次）。
 const verifierL3Ready = import('../agent-core/verifierL3.js')
-  .then((m) => { verifierL3Mod = m; return m; })
+  .then((m) => m)
   .catch((e) => {
     console.error('[verifyRun] L3 引擎加载失败（L3 将降级为 L1）:', e.message);
     return null;

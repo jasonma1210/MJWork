@@ -54,10 +54,16 @@ function resolveLaunch(chromium) {
 }
 
 // ── 浏览器会话状态（一个子进程一个实例）──
+// 两个不变量，靠下面的 publishState/launching 保证：
+//   ① 并发调用 ensureBrowser（两个工具同时开干）只启动**一个**浏览器——否则后到者覆盖 state，
+//      先启动的 browser 子进程失去引用泄漏，且后续 close 只关掉其中一个；
+//   ② 跨 await 的状态写入只有 publishState 一个提交点，不再出现「await 后按旧 state 回写」。
 let state = null; // { browser, context, page }
+let launching = null; // 单飞中的启动 Promise
+function publishState(next) { state = next; }
+function clearLaunching(token) { if (launching === token) launching = null; }
 
-async function ensureBrowser() {
-  if (state && state.browser && state.browser.isConnected()) return state;
+async function launchBrowser() {
   const chromium = loadPlaywright();
   const launchOpts = resolveLaunch(chromium);
   const browser = await chromium.launch({ headless: true, ...launchOpts, timeout: 30000 });
@@ -68,9 +74,22 @@ async function ensureBrowser() {
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
   });
   const page = await context.newPage();
-  state = { browser, context, page };
-  browser.on('disconnected', () => { state = null; });
-  return state;
+  const next = { browser, context, page };
+  // 身份守卫：只有「仍是当前会话」的断开才清位，避免旧 browser 的 disconnected 抹掉新会话
+  browser.on('disconnected', () => { if (state === next) publishState(null); });
+  publishState(next);
+  return next;
+}
+
+async function ensureBrowser() {
+  if (state && state.browser && state.browser.isConnected()) return state;
+  const inflight = launching || launchBrowser();
+  launching = inflight;
+  try {
+    return await inflight;
+  } finally {
+    clearLaunching(inflight);
+  }
 }
 
 async function ensurePage() {

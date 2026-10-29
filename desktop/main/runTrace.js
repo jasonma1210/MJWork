@@ -55,7 +55,7 @@ function evictOldTraces(max = MAX_TRACE_FILES) {
       removed += 1;
     }
     return removed;
-  } catch (e) {
+  } catch {
     return 0; // 目录不存在等：无需淘汰
   }
 }

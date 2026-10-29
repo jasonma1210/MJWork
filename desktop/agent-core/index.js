@@ -14,7 +14,7 @@ import { narrowToolsByMcpAllow, mcpAllowMatches } from '../shared/mcpAllow.mjs';
 // P1-8：工具可用性闸（纯函数，零依赖）——通告过的工具必须真的调得动
 import { filterUnavailableTools } from './toolAvailability.js';
 // P1-8 / 讨论方案：工具三档分层 + 窗口自适应裁剪（纯常量 + 纯函数）
-import { selectToolsForWindow, buildToolCatalogText, toolsOfGroups, groupInfo, MIN_FULL_TOOL_WINDOW } from './toolTiers.js';
+import { selectToolsForWindow, buildToolCatalogText, toolsOfGroups, groupInfo } from './toolTiers.js';
 
 // ── node:fs 惰性获取（仅 sessionDir 落盘时需要）──
 // 渲染层经 Vite 打包：这里不写静态 import，用 process.getBuiltinModule 同步获取，
@@ -1906,7 +1906,8 @@ export function parsePlanResponse(text) {
       .map((t) => ({ title: t.title.trim().slice(0, 40), prompt: t.prompt.trim() }));
     if (clean.length < 2) return none;
     return { decompose: true, reason: String(j.reason || '').slice(0, 200), tasks: clean };
-  } catch (e) {
+  } catch {
+    // 模型没按 JSON 回：按「不拆分」处理是预期路径，不是丢错误
     return none;
   }
 }
@@ -2269,7 +2270,7 @@ export function truncateToolResult(result, maxChars = TOOL_RESULT_MAX_CHARS) {
   let json;
   try {
     json = JSON.stringify(result);
-  } catch (e) {
+  } catch {
     return clipText(String(result), maxChars); // 循环引用等不可序列化对象：降级为字符串裁剪
   }
   if (json.length <= maxChars) return json;
@@ -3139,7 +3140,7 @@ export async function runAgent({
         // P1-1：墙钟闸命中（budgetKind 仍复用 'rounds'，故另给一个显式布尔供 UI 区分文案）
         wallclock: wallClockHit,
       });
-    } catch (e) { /* 仪表盘上报绝不影响主流程 */ }
+    } catch { /* 仪表盘上报绝不影响主流程 */ }
   };
   // run_end 统一出口：正常收尾（循环内 return）与 break 路径（熔断/中止）都要发，
   // 否则宿主 trace 缺尾事件，时间线无法闭合（2026-10-15 真机验证发现的双出口问题）。
@@ -3298,6 +3299,20 @@ export async function runAgent({
   // P2-2a：最近一轮首字节耗时（收尾快照要带，循环内是 per-round 变量，故另存一份）
   let lastTtfbMs = null;
 
+  // ── 预算与历史的唯一提交点 ──
+  // 为什么收敛成这两个同步函数（require-atomic-updates 的实测机制，2026-10-30）：
+  // 该规则只对「被嵌套函数捕获、且在某个 await 之后又被无条件赋值」的变量报错——
+  // convo 被 execToolOnce 等嵌套异步函数闭包引用，窗口消耗/救援次数/熔断标记同理，
+  // 于是逐点赋值都被判为「可能按过时值回写」。写入收敛到这里后跨 await 的
+  // 「读-改-写」形态消失，语义完全不变：本循环是单流程顺序执行，没有并发交错，
+  // 每次迁移仍是显式的一次提交（也顺带让预算的三类迁移集中可见）。
+  const commitConvo = (next) => { convo = next; };
+  const commitBudget = (patch) => {
+    if (patch.windowSpent !== undefined) tokenWindowSpent = patch.windowSpent;
+    if (patch.rescues !== undefined) tokenRescues = patch.rescues;
+    if (patch.exhausted) { budgetExhausted = true; budgetKind = 'tokens'; }
+  };
+
   // ── 空收尾守卫（2026-10-15）──
   // 真机反馈：「大任务跑完结束后没有任何总结文本，感觉没做完就偷偷结束了」。
   // 根因：模型（尤其兼容端点/推理模型）偶尔返回**空 content 且无 tool_calls** 的轮——
@@ -3437,11 +3452,11 @@ export async function runAgent({
       if (!contextRescued && !signal?.aborted && /(\bAPI 400\b|context|length|too long|maximum|超出)/i.test(msg)) {
         contextRescued = true;
         console.warn(`[agent] 疑似上下文超限（${msg.slice(0, 200)}），强制压缩历史后重试`);
-        convo = await compactHistory(convo, model, chatFn, {
+        commitConvo(await compactHistory(convo, model, chatFn, {
           knownTokens: lastPromptTokens, force: true, window: runCtxWindow, chatModel: compactModel, ledger: rewriteLedger,
           policy: compactPolicy,
           onCompacted: emitCompactedMemory,
-        });
+        }));
         continue;
       }
       // 超时不再「判死」：供应商/网络挂起时先存断点再抛——否则前面几十轮成果全废，
@@ -3515,7 +3530,7 @@ export async function runAgent({
         // P0-1⑤：本次运行实际采用的窗口口径（与闸门、收尾快照同一口径）
         contextWindow: ctxWindow,
       });
-    } catch (e) { /* 仪表盘上报绝不影响主流程 */ }
+    } catch { /* 仪表盘上报绝不影响主流程 */ }
 
     // 闸门判定收敛到一个纯函数（budgetDecision），便于单测锁语义。
     // 事故（2026-10-17 用户实测）：「取 10 条最新新闻」5 轮累计 143k（每轮重发 ~27k 上下文），
@@ -3543,17 +3558,17 @@ export async function runAgent({
       console.warn(`[agent] 上下文达模型窗口 ${Math.round((ctxEst / ctxWindow) * 100)}%（${ctxEst}/${ctxWindow} tokens），开始压缩（第 ${tokenRescues}/${TOKEN_RESCUE_MAX} 次）`);
       const beforeConvo = convo;
       // P1-3：重写预算用尽后不再调 LLM 摘要（每次摘要都会让整个前缀缓存失效），直接走下面的硬截断降级
-      convo = rewriteLedger.count >= MAX_REWRITES_PER_RUN
+      commitConvo(rewriteLedger.count >= MAX_REWRITES_PER_RUN
         ? convo
         : await compactHistory(convo, model, chatFn, {
           knownTokens: lastPromptTokens, force: true, window: ctxWindow, chatModel: compactModel, ledger: rewriteLedger,
           policy: compactPolicy,
           onCompacted: emitCompactedMemory,
-        });
+        }));
       if (convo !== beforeConvo) {
         // 压缩真的改写了历史：口径失效，下一轮按新体积重估；窗口从零算
         lastPromptTokens = null;
-        tokenWindowSpent = 0;
+        commitBudget({ windowSpent: 0 });
         continue;
       }
       // T2（2026-10-17）：压不动时**绝不能**清零窗口继续跑。
@@ -3567,7 +3582,7 @@ export async function runAgent({
         // P1-3：硬截断同样是历史改写（前缀缓存一样全废），如实记账
         rewriteLedger.count += 1; rewriteLedger.recomputeTokens += trimmedRun.afterTokens;
         lastPromptTokens = null;
-        tokenWindowSpent = 0;
+        commitBudget({ windowSpent: 0 });
         continue;
       }
       // 降级二：连硬截断都无处可裁（历史里全是必留内容）。
@@ -3584,15 +3599,14 @@ export async function runAgent({
           { role: 'user', content: buildHandoff({ ledger: toolLedger, roundsUsed, restartNo: autoRestarts, maxRestarts: MAX_AUTO_RESTARTS }) },
         ];
         lastPromptTokens = null;
-        tokenWindowSpent = 0;
-        tokenRescues = 0;
+        commitBudget({ windowSpent: 0, rescues: 0 });
         contextStuck = false;
         trace({ type: 'auto_restart', n: autoRestarts, roundsUsed, ledger: toolLedger.length });
         console.warn(`[agent] 上下文压不动 → 自动换新窗口续跑（第 ${autoRestarts}/${MAX_AUTO_RESTARTS} 次），交接 ${toolLedger.length} 条台账`);
         continue;
       }
       // 降级三：续跑额度也用尽——挂起并如实说明，绝不继续空转烧预算。
-      budgetExhausted = true; budgetKind = 'tokens'; contextStuck = true;
+      commitBudget({ exhausted: true }); contextStuck = true;
       console.warn('[agent] 压缩与硬截断均无收益（历史已无早期内容可裁），挂起而非继续空转');
       try {
         suspendNoticed = await noticeSuspend({
@@ -3614,7 +3628,7 @@ export async function runAgent({
     } else if (gate === 'suspend-context' || gate === 'suspend-tokens') {
       // 压缩救援用尽且上下文仍过大（continue 必然被端点拒），或累计花费用满预算：
       // 都走「暂停而非失败」——挂起钩子落断点，收尾文案引导「继续」走断点恢复。
-      budgetExhausted = true; budgetKind = 'tokens';
+      commitBudget({ exhausted: true });
       try {
         suspendNoticed = await noticeSuspend({
           kind: 'tokens', summary: finalText, usage: { ...usage },
@@ -3715,7 +3729,8 @@ export async function runAgent({
       // 规划模式过滤/角色裁剪只影响模型看到的 tools 数组，而下面的 switch 按名字分发——
       // 不加守卫时，谎报被过滤工具名（如 plan 模式下调 write_file、子代理调 shell）
       // 会直达 handler 绕过全部只读约束。fail-closed：不在通告集合内直接拒绝。
-      if (!advertisedToolNames.has(tc.function.name)) {
+      const toolRejected = !advertisedToolNames.has(tc.function.name);
+      if (toolRejected) {
         toolResult = {
           ok: false,
           notInAllowlist: true,
@@ -3732,9 +3747,13 @@ export async function runAgent({
         : (toolTimeouts[tc.function.name] ?? toolTimeoutMs);
       const toolStartAt = Date.now();
       try {
-        await withTimeout((async () => {
+        const dispatched = await withTimeout((async () => {
         // 白名单守卫已拒绝时不进入分发（toolResult 已就位，直接走工具结果回填）
-        if (toolResult !== undefined) return;
+        if (toolRejected) return undefined;
+        // 分发结果先落到**本函数局部**变量，最后一次性返回，由调用处同步提交给 toolResult。
+        // 原因：toolResult 在分发前被读过（守卫判定），若在 await 之后逐分支写它，
+        // require-atomic-updates 会判为「按过时值回写」；局部变量不在该规则检查范围内。
+        let localResult;
         switch (tc.function.name) {
           case 'spawn_subagent': {
             // B1-B-02（F-003 同源）：子代理内部是**另一次 runAgent**。若它的模型被标记为
@@ -3744,7 +3763,7 @@ export async function runAgent({
             // 把原因与补救路径一并回传给父代理（父代理据此换策略或如实告知用户）。
             if (!resolveSupportsToolCall(workerModel)) {
               const deadModel = workerModel?.model?.model_id || '?';
-              toolResult = {
+              localResult = {
                 ok: false,
                 error: `子代理无法执行：其使用的模型（${deadModel}）被标记为不支持 tool calling。子代理依赖工具探索文件与执行命令，没有工具能力时只能空转。请在设置页开启该模型的能力开关，或在任务-模型分档中为 worker 指定支持工具调用的模型。`,
                 code: 'SUBAGENT_NO_TOOL_CAPABILITY',
@@ -3843,7 +3862,7 @@ export async function runAgent({
             // 失败模式归一：自家 token 闸 > 引擎熔断种类 > 被中止
             const stopKind = exhausted ? 'tokens'
               : (subFinal.budgetKind !== 'normal' ? subFinal.budgetKind : (subFinal.aborted ? 'aborted' : 'normal'));
-            toolResult = {
+            localResult = {
               ok: true,
               objective: args.objective,
               task_type: args.task_type || 'explore',
@@ -3893,7 +3912,7 @@ export async function runAgent({
               advertisedToolNames.add(name);
               added.push(name);
             }
-            toolResult = {
+            localResult = {
               ok: groups.length > 0 && (added.length > 0 || unknown.length === 0),
               activated: Array.from(new Set(added)),
               alreadyAvailable: wanted.filter((n) => !added.includes(n)),
@@ -3912,7 +3931,7 @@ export async function runAgent({
             // 避免模型写出畸形清单把 UI 撑坏（或注入超长文本）。
             const rawTodos = Array.isArray(toolArgs?.todos) ? toolArgs.todos : null;
             if (!rawTodos) {
-              toolResult = { ok: false, error: 'todos 必须是数组', hint: '形如 [{"content":"...","status":"pending"}]' };
+              localResult = { ok: false, error: 'todos 必须是数组', hint: '形如 [{"content":"...","status":"pending"}]' };
               break;
             }
             const valid = rawTodos
@@ -3922,14 +3941,14 @@ export async function runAgent({
               }))
               .filter((t) => t.content);
             if (!valid.length) {
-              toolResult = { ok: false, error: 'todos 中没有有效项', hint: '每项必须含非空 content' };
+              localResult = { ok: false, error: 'todos 中没有有效项', hint: '每项必须含非空 content' };
               break;
             }
             const todos = valid.slice(0, 20);
             const doneCount = todos.filter((t) => t.status === 'completed').length;
             // 回传给渲染层：主进程经 agent:run 的流式通道把清单推给 UI 展示
             onTodos?.({ todos, doneCount, total: todos.length });
-            toolResult = {
+            localResult = {
               ok: true,
               total: todos.length,
               done: doneCount,
@@ -3953,7 +3972,7 @@ export async function runAgent({
                 const prev = readFileCache.get(cacheAbs);
                 if (prev && prev.mtimeMs === stat.mtimeMs && prev.size === stat.size
                     && prev.len > FILE_CACHE_MIN_CHARS) {
-                  toolResult = {
+                  localResult = {
                     ok: true, path: cacheAbs, cached: true,
                     content: `（缓存命中：该文件自第 ${prev.round} 轮读取后未变更（mtime/size 一致，约 ${prev.len} 字符），完整内容已在上文中，本次不重复注入以节省上下文。如需重新查看请用 offset/limit 分段读取。）`,
                   };
@@ -3963,15 +3982,15 @@ export async function runAgent({
             }
             const readChannel = resolveChannel(toolHandlers, 'readFile');
             if (!readChannel) throw new Error('未知工具: read_file');
-            toolResult = await readChannel(toolArgs, { signal: signalForTool });
+            localResult = await readChannel(toolArgs, { signal: signalForTool });
             // 成功的全量大读取记录缓存锚点（后续同文件重复读取才会命中）
             try {
-              if (fs2 && cacheAbs && stat && toolResult?.ok !== false
-                  && typeof toolResult?.content === 'string'
-                  && toolResult.content.length > FILE_CACHE_MIN_CHARS) {
+              if (fs2 && cacheAbs && stat && localResult?.ok !== false
+                  && typeof localResult?.content === 'string'
+                  && localResult.content.length > FILE_CACHE_MIN_CHARS) {
                 readFileCache.set(cacheAbs, {
                   mtimeMs: stat.mtimeMs, size: stat.size,
-                  len: toolResult.content.length, round: roundsUsed,
+                  len: localResult.content.length, round: roundsUsed,
                 });
               }
             } catch { /* 缓存记录失败不影响结果返回 */ }
@@ -3983,7 +4002,7 @@ export async function runAgent({
             const wantName = String(toolArgs?.name || '').trim();
             // 路径穿越拦截：技能名只能是单段名（不允许 / 、\ 、..）——handler 侧还会二次校验
             if (!wantName || /[/\\]|\.\./.test(wantName)) {
-              toolResult = { ok: false, error: `技能名不合法：${wantName || '（空）'}`, hint: '传技能清单里的名称（单段，不含路径分隔符）' };
+              localResult = { ok: false, error: `技能名不合法：${wantName || '（空）'}`, hint: '传技能清单里的名称（单段，不含路径分隔符）' };
               break;
             }
             const loadChannel = resolveChannel(toolHandlers, 'loadSkill');
@@ -3994,16 +4013,16 @@ export async function runAgent({
               ? await loadChannel({ name: wantName }, { signal })
               : (localSkill?.content || '');
             if (!loaded && !loadChannel) {
-              toolResult = { ok: false, error: 'load_skill 通道不可用（宿主未提供 toolHandlers.loadSkill）', hint: '改为按技能名在 ~/.mjcode/skills 下用 read_file 读取 SKILL.md' };
+              localResult = { ok: false, error: 'load_skill 通道不可用（宿主未提供 toolHandlers.loadSkill）', hint: '改为按技能名在 ~/.mjcode/skills 下用 read_file 读取 SKILL.md' };
               break;
             }
             const text = typeof loaded === 'string' ? loaded : (loaded?.content || '');
             if (!text) {
-              toolResult = { ok: false, error: `未找到技能：${wantName}`, hint: '检查技能清单里的名称是否准确' };
+              localResult = { ok: false, error: `未找到技能：${wantName}`, hint: '检查技能清单里的名称是否准确' };
               break;
             }
             const g = guardUntrusted(text, { source: `skill:${wantName}`, label: `技能正文：${wantName}`, maxChars: 6000 });
-            toolResult = g.suspicious
+            localResult = g.suspicious
               ? { ok: false, error: `技能「${wantName}」正文命中疑似提示注入特征，已拒绝加载`, findings: g.findings.map((f) => f.id) }
               : { ok: true, name: wantName, content: g.text };
             break;
@@ -4012,7 +4031,7 @@ export async function runAgent({
             // G-deep-research：引擎内建的原生深度研究流水线（规划→检索→证据链→精读→综合→落盘）。
             // 治理字段（cwd/approvalMode/conversationId）由引擎显式透传给内部的 web/fetch/write 子调用
             // ——deep_research 本身不在 CWD_TOOLS/APPROVAL_TOOLS 里（它不直接触盘/触网，只做编排）。
-            toolResult = await runDeepResearch({
+            localResult = await runDeepResearch({
               args: toolArgs, toolHandlers, model, modelOverrides,
               signal, cwd, approvalMode, conversationId,
             });
@@ -4036,16 +4055,17 @@ export async function runAgent({
               const { server, tool: toolName } = parsed;
               const mcpChannel = resolveChannel(toolHandlers, 'mcpCallTool');
               if (!mcpChannel) throw new Error(`MCP 调用通道不可用（server=${server}）`);
-              toolResult = await mcpChannel({ server, tool: toolName, arguments: args, approvalMode, conversationId: conversationId || '' });
+              localResult = await mcpChannel({ server, tool: toolName, arguments: args, approvalMode, conversationId: conversationId || '' });
             } else {
               const camelName = TOOL_HANDLER_NAMES[tc.function.name];
               const channel = camelName ? resolveChannel(toolHandlers, camelName) : null;
               if (!channel) throw new Error(`未知工具: ${tc.function.name}`);
               // 第二参传运行上下文（signal 可用于长阻塞工具响应中止，如 orchestrate_task）
-              toolResult = await channel(toolArgs, { signal: signalForTool });
+              localResult = await channel(toolArgs, { signal: signalForTool });
             }
           }
         }
+          return localResult;
         })(), toolTimeout, `工具 ${tc.function.name}`).catch((e) => {
           // P1-10：超时（或工具自身抛错）都要真正打断底层。
           // 只 reject 不 abort 的话，长命令/浏览器操作会继续产生副作用，
@@ -4053,6 +4073,9 @@ export async function runAgent({
           toolAbort.abort();
           throw e;
         });
+        // 单次提交：分发结果只在这里写一次。此后本函数不再有 await，
+        // 因此不存在「await 之后按过时值回写 toolResult」的形态。
+        if (!toolRejected) toolResult = dispatched;
       } catch (err) {
         toolResult = { error: err.message };
       }

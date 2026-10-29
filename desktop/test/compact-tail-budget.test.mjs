@@ -46,6 +46,18 @@ function stripJsComments(s) {
   return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 }
 
+// 预算窗口清零的两种合法写法：① 直接赋值（历史形态）；② `commitBudget({ windowSpent: 0 })`
+// 单次提交（2026-10-30 lint 清零时引入——窗口消耗/救援次数/熔断标记收敛到唯一提交点）。
+// 两种都认，才能继续锁住「清零必须发生在『压缩真的发生』校验之后」这条不变量：
+// 只认旧写法时，改写本身会让 indexOf 返回 -1，报出的是误导性红；只认新写法又会放过历史形态。
+const RESET_PATTERNS = [/tokenWindowSpent = 0/, /commitBudget\(\{\s*windowSpent: 0/];
+function firstResetIdx(s) {
+  return RESET_PATTERNS.reduce((min, re) => {
+    const i = s.search(re);
+    return i >= 0 && (min < 0 || i < min) ? i : min;
+  }, -1);
+}
+
 const CTX = 128000;
 const model = { provider: { id: 'probe' }, model: { model_id: 'probe-model', context_window: CTX } };
 const fill = (n) => '压'.repeat(n);
@@ -115,7 +127,8 @@ check('源码：压缩无收益时不得清零预算窗口（必须校验引用�
   const block = src.slice(start, start + 2600);
   const guardIdx = block.indexOf('if (convo !== beforeConvo)');
   assert(guardIdx > 0, 'compact 分支缺少「压缩是否真的发生」的校验');
-  const firstReset = block.indexOf('tokenWindowSpent = 0');
+  const firstReset = firstResetIdx(block);
+  assert(firstReset >= 0, 'compact 分支内找不到预算窗口清零点（写法又变了？）');
   assert(firstReset > guardIdx, 'tokenWindowSpent = 0 出现在校验之前——压不动也会清零窗口（旧缺陷）');
   assert(block.includes('trimHistoryForRun'), '缺少压不动时的硬截断降级');
 });
@@ -130,8 +143,9 @@ check('A10 守卫：compact 分支去注释后仍先校验「压缩真的发生�
   const block = src.slice(start, start + 2600);
   const blockActive = stripJsComments(block);
   const guardIdx = blockActive.indexOf('if (convo !== beforeConvo)');
-  const firstReset = blockActive.indexOf('tokenWindowSpent = 0');
+  const firstReset = firstResetIdx(blockActive);
   assert(guardIdx > 0, '去注释 compact 分支内未找到「压缩是否真的发生」的校验（已被注释或移除）');
+  assert(firstReset >= 0, '去注释 compact 分支内找不到预算窗口清零点（写法又变了？）');
   assert(firstReset > guardIdx, 'tokenWindowSpent = 0 出现在校验之前——压不动也会清零窗口（旧缺陷）');
   assert(blockActive.includes('trimHistoryForRun'), '缺少压不动时的硬截断降级');
 });

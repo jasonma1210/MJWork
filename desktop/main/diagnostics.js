@@ -121,7 +121,8 @@ function reportError(kind, err, extra = {}) {
 
 // Electron 原生崩溃捕获（dump 落 userData/Crashpad，不上传）。
 // 非打包/测试宿主无 crashReporter 时静默跳过。
-function startCrashReporter(app) {
+// 保留 _app 形参以匹配调用方签名；内部直接用 electron.crashReporter，不消费该实例
+function startCrashReporter(_app) {
   try {
     const { crashReporter } = require('electron');
     if (!crashReporter || typeof crashReporter.start !== 'function') return false;

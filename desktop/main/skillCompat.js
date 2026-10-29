@@ -109,6 +109,7 @@ function importSkillsFromDir(sourceDir, { maxDepth = 4 } = {}) {
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch (e) {
+      console.warn('[skillCompat] 目录读取失败，已跳过:', dir, e?.message || e);
       return;
     }
     const skillFile = path.join(dir, 'SKILL.md');

@@ -16,7 +16,6 @@
 // 测试用本地 http mock 即可端到端跑通发现链与授权流。
 const http = require('http');
 const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 const { writeFileDurableWithMode } = require('./data/durableWrite');
 // P1-8：协议版本单点化——此处原有一份硬编码的版本字面量副本（本文件 _discover 的 401 探测 initialize）。

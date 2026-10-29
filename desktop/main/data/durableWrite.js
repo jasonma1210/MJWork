@@ -28,6 +28,7 @@ function fsyncDir(dir) {
     return true;
   } catch (e) {
     // 目录 fsync 失败不影响数据正确性，只降低掉电保护强度；如实上报
+    console.warn('[durableWrite] 目录 fsync 失败（掉电保护降级）:', e?.message || e);
     return false;
   } finally {
     if (fd !== null) { try { fs.closeSync(fd); } catch { /* 关闭失败无需处理 */ } }
@@ -38,12 +39,11 @@ function fsyncDir(dir) {
  * 持久化原子写。
  * @param {string} file   目标文件路径（父目录不存在时自动创建）
  * @param {string|Buffer} data
- * @param {{mode?: number}} [opts] mode 目标文件权限（如 0o600）。
- *   仅在目标文件【不存在】时生效——Node 的 mode 只在 open 创建时应用，
- *   对已存在文件无效。若目标已存在且需改权限，调用方应自行 chmod。
+ * @param {{mode?: number}} [_opts] 预留形参，当前实现不读取。若需设置文件权限请改用
+ *   writeFileDurableWithMode（rename 后 chmod，不受 open 创建时 mode 语义影响）。
  * @returns {{ok: boolean, dirFsynced: boolean, error?: string}}
  */
-function writeFileDurable(file, data, opts = {}) {
+function writeFileDurable(file, data, _opts = {}) {
   // tmp 带 pid：多实例/多进程并发 flush 时不会互相覆盖对方的临时文件
   const tmp = `${file}.${process.pid}.tmp`;
   try {

@@ -240,11 +240,12 @@ async function planGoal({ goal, cwd, projectPath, auto, replanDepth, replanOf, r
 // threadId：R6 组绑定会话——透传给建组（对话内编排时为发起会话；IPC 路径由调用方传入）。
 async function autoOrchestrate({ goal, cwd, projectPath, threadId } = {}) {
   if (!deps?.runGroup) return { ok: false, error: '自动编排依赖未就绪' };
-  let r = await planGoal({ goal, cwd, projectPath, auto: true, replanDepth: 0, threadId });
-  if (!r.ok && r.raw) {
-    // 拆解输出非法 → 带原始错误自动修复重试一次
-    r = await planGoal({ goal, cwd, projectPath, auto: true, replanDepth: 0, repairHint: r.error, threadId });
-  }
+  const first = await planGoal({ goal, cwd, projectPath, auto: true, replanDepth: 0, threadId });
+  // 拆解输出非法 → 带原始错误自动修复重试一次。
+  // 用两个不可变结果而不是 `let r` 反复赋值：避免「await 后按旧值回写 r」的竞态形态。
+  const r = (!first.ok && first.raw)
+    ? await planGoal({ goal, cwd, projectPath, auto: true, replanDepth: 0, repairHint: first.error, threadId })
+    : first;
   if (!r.ok) return r;
   deps.emit?.({ type: 'auto_run', groupId: r.groupId, tasks: r.tasks.length });
   deps.runGroup(r.groupId).catch((e) => deps.emit?.({ type: 'group_update', groupId: r.groupId, status: 'failed', error: e.message }));

@@ -525,7 +525,7 @@ function registerIpc() {
     if (bad) return bad;
     const raw = String(url || '').trim();
     let parsed;
-    try { parsed = new URL(raw); } catch (e) { return { ok: false, error: '链接格式不正确' }; }
+    try { parsed = new URL(raw); } catch { return { ok: false, error: '链接格式不正确' }; }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return { ok: false, error: `出于安全考虑，只允许打开 http/https 链接（当前：${parsed.protocol}）` };
     }

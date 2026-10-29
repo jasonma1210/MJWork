@@ -14,7 +14,6 @@
 //      现：损坏文件先留 .corrupt-<ts> 副本（可恢复），错误态经 getLoadError()
 //      可查询（UI/诊断可见），控制台留可行动告警；之后的新保存才允许覆盖。
 const fs = require('fs');
-const path = require('path');
 // P1-15：原子写原语（tmp+fsync+rename）——全项目单一事实来源
 const { writeFileDurableWithMode } = require('./data/durableWrite');
 

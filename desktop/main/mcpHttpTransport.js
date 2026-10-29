@@ -36,7 +36,8 @@ const NO_DISPATCH = () => {};
 //   getHeader() -> 'Bearer xxx' | null  —— 每次发送前取有效令牌（静态 headers 已带 Authorization 时不覆盖）
 //   refresh()   -> 'Bearer xxx' | null  —— 401 时强制续期，成功重试一次，仍 401 抛 mcpAuthRequired
 function createHttpTransport({
-  name, url, headers = {}, onLog, auth, dispatch = NO_DISPATCH, timeoutMs = 30000,
+  // name 为传输标识占位，当前工厂实现不读取；保留以匹配上层构造入参结构
+  name: _name, url, headers = {}, onLog, auth, dispatch = NO_DISPATCH, timeoutMs = 30000,
 }) {
   const base = String(url || '').trim().replace(/\/+$/, '');
   if (!base) throw new Error('HTTP 传输需要服务地址（url）');
@@ -146,7 +147,7 @@ function createHttpTransport({
       const text = await res.text();
       if (!text.trim()) return; // 通知（notifications/*）的 202 无 body：不是错误，别刷日志
       try { dispatch(transport.serverRef, JSON.parse(text)); }
-      catch (e) { if (onLog) onLog(`非 JSON 响应: ${text.slice(0, 120)}`); }
+      catch { if (onLog) onLog(`非 JSON 响应: ${text.slice(0, 120)}`); }
     },
     close() { /* HTTP 无子进程；会话随进程结束（DELETE 语义属服务端可选实现，不强制） */ },
     // H-4：重新 initialize 前必须清掉旧会话 id，否则新握手仍带着已失效的会话。
@@ -210,7 +211,8 @@ async function consumeSse(res, onData, onNamedEvent) {
 // 2026-10-17 新增：WorkBuddy 目录里有 11 条 `type: sse` 的服务，此前被直接跳过（导入时排除），
 // 用户点不到。这里补上，按官方实现顺序：GET → 等 endpoint → POST。
 function createSseTransport({
-  name, url, headers = {}, onLog, auth, dispatch = NO_DISPATCH, timeoutMs = 30000,
+  // name 为传输标识占位，当前工厂实现不读取；保留以匹配上层构造入参结构
+  name: _name, url, headers = {}, onLog, auth, dispatch = NO_DISPATCH, timeoutMs = 30000,
 }) {
   const base = String(url || '').trim();
   if (!base) throw new Error('SSE 传输需要服务地址（url）');

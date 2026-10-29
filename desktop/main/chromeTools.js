@@ -68,7 +68,8 @@ function relayFail(toolKey, args, err) {
 // 统一执行包装：审批 → 中继调用 → 审计
 async function runChromeTool(toolKey, args, { perCall, method, methodArgs } = {}) {
   if (!deps) return { ok: false, error: 'Chrome 接管工具未初始化' };
-  const { conversationId = '', ...rest } = args || {};
+  // conversationId 仅标识会话归属，按设计从审批/中继入参中剥离，工具调用不消费
+  const { conversationId: _conversationId = '', ...rest } = args || {};
   if (perCall) {
     const denied = await requirePerCallApproval(toolKey, rest);
     if (denied) return denied;
@@ -136,7 +137,8 @@ async function toolChromeFill(args = {}) {
 
 async function toolChromeScreenshot(args = {}) {
   if (!deps) return { ok: false, error: 'Chrome 接管工具未初始化' };
-  const { conversationId = '', ...rest } = args || {};
+  // conversationId 仅标识会话归属，按设计从审批/中继入参中剥离，工具调用不消费
+  const { conversationId: _conversationId = '', ...rest } = args || {};
   // 截图先过审批（可规则豁免），批准后才触页——审批覆盖 100%
   const gate = await gateApproval('chrome_screenshot', args);
   if (gate.ok === false) return gate;
@@ -148,7 +150,7 @@ async function toolChromeScreenshot(args = {}) {
   }
   // 证据落盘 + 预览句柄（T3-1 同机制）：base64 不过 IPC 消息体
   const shotDir = path.join(deps.userDataDir, 'chrome-shots');
-  try { fs.mkdirSync(shotDir, { recursive: true }); } catch (e) { /* 已存在 */ }
+  try { fs.mkdirSync(shotDir, { recursive: true }); } catch (e) { console.warn('[chrome] 截图目录创建失败:', e?.message || e); }
   const outPath = path.join(shotDir, `chrome-shot-${Date.now()}-${Math.random().toString(16).slice(2, 8)}.png`);
   let previewUrl = '';
   let bytes = 0;

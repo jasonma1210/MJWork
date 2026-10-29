@@ -100,7 +100,8 @@ function gitApplyStdin(flags, cwd, patch) {
   });
 }
 
-function registerGitHunkIpc(ipcMain, deps) {
+// 保留 _deps 形参以匹配统一注册签名；hunk 通道按设计不弹审批卡，不消费依赖
+function registerGitHunkIpc(ipcMain, _deps) {
   // 三个 hunk 通道：接受/取消暂存只写索引，拒绝则反向写工作区。都按设计不弹审批卡（用户在 Diff
   // 面板上的主动动作，再套审批＝同一动作两次打扰），但**必须留痕**——「静默改索引/抹工作区」事后
   // 若无记录，出问题无法归因。注意「git 可恢复」只对索引方向成立：拒绝方向会抹掉未暂存块的原文，

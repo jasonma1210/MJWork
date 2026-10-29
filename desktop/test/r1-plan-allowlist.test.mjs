@@ -20,6 +20,11 @@ const model = {
 let chatScript = [];
 let chatPayloads = [];
 const calls = { shell: [], writeFile: [], read: [] };
+// 工具结果收集器：只断言「handler 没被调用」是不够的——
+// 拒绝结果对象如果被后续 undefined 覆盖，handler 依然零调用，测试照样绿（A10：断言机制非结果）。
+// 这里把引擎回填给模型的 tool 消息一并收下来，断言拒绝形状真的落在了结果里。
+const toolResults = [];
+const collectTool = (e) => { toolResults.push(e); };
 function makeToolHandlers() {
   return {
     chat: async (payload) => {
@@ -42,6 +47,7 @@ function makeToolHandlers() {
 function reset() {
   chatScript = []; chatPayloads = [];
   calls.shell.length = 0; calls.writeFile.length = 0; calls.read.length = 0;
+  toolResults.length = 0;
 }
 
 (async () => {
@@ -56,9 +62,14 @@ function reset() {
     messages: [{ role: 'user', content: '做个计划' }],
     model, cwd: '/tmp/project', planMode: true,
     toolHandlers: makeToolHandlers(),
+    onToolCall: collectTool,
     onDone: (t) => { done1 = t; },
   });
   check('planMode: shell 未被执行（handler 零调用）', calls.shell.length === 0);
+  check('planMode: 拒绝结果形状未被覆盖（ok=false + notInAllowlist）', (() => {
+    const r = toolResults.find((e) => e?.name === 'shell')?.result;
+    return !!r && r.ok === false && r.notInAllowlist === true && /不在本运行的有效工具清单/.test(String(r.error || ''));
+  })());
   check('planMode: 通告工具集中无 shell/write_file/code_exec', (() => {
     const names = new Set((chatPayloads[0]?.tools || []).map((t) => t?.function?.name));
     return !names.has('shell') && !names.has('write_file') && !names.has('code_exec') && !names.has('edit_file');

@@ -130,9 +130,9 @@ function reversibilityOf(tool, level) {
  * 构造「执行后告知」的可见通知（纯函数，便于单测；发出去由宿主注入的 sink 负责）。
  *
  * 为什么带 textKey/textParams：渲染层文案必须走 i18n（项目纪律），主进程不能硬编码用户可见文案。
- * text 只作为日志/兜底的可读形态，UI 应以 textKey 为准（key 需 WP-D 侧补齐）。
+ * text 只作为日志/兜底的可读形态，UI 应以 textKey 为准（key 需 WP-D 侧补齐）；args 仅保留以匹配 payload 形状，本函数不消费其明细，故绑定为 _args（项目约定：有意不用的绑定加下划线前缀）。
  */
-function buildExecutionNotice({ tool, args = {}, level, ok, ms, error } = {}) {
+function buildExecutionNotice({ tool, args: _args = {}, level, ok, ms, error } = {}) {
   const t = String(tool || '(未知动作)');
   const cost = Number.isFinite(Number(ms)) ? Math.max(0, Math.round(Number(ms))) : null;
   const rv = reversibilityOf(t, level);
@@ -358,7 +358,7 @@ const SPECIAL_CASED_TOOLS = new Set([
 // `curl xxx | sh` / `rm --recursive --force` 在 on-request 档下不弹审批直接执行。
 // P1-2 / P2-8：Code Mode 危险代码与 CUA 强确认类目同样收敛到该模块（原各一份手抄副本）。
 const {
-  DANGEROUS_PATTERNS, isDangerousCommand, matchDangerousPattern, isDangerousCode, cuaStrongConfirm,
+  DANGEROUS_PATTERNS, isDangerousCode, cuaStrongConfirm,
 } = require('./dangerousPatterns');
 
 // 期 3：SQL 只读判定（单一事实来源）——2026-10-21 抽至 main/sqlReadonly.js

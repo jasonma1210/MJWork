@@ -193,7 +193,8 @@ function sandboxAvailable() {
   if (process.platform !== 'darwin') return false;
   try {
     return fs.existsSync(SANDBOX_EXEC);
-  } catch (e) {
+  } catch {
+    // existsSync 抛错（权限/路径异常）时按「沙箱不可用」保守兜底：fail-closed，不包沙箱就报未隔离
     return false;
   }
 }
@@ -206,6 +207,8 @@ function sandboxAvailable() {
 //（诚实上报，让调用方走 V03 的统一兜底而非运行时报晦涩错误）。
 let seatbeltProbe = null; // 进程级缓存：能力不随运行变化
 function resetSeatbeltProbe() { seatbeltProbe = null; }
+// 探测结论只有一个提交点：跨 await 的写入收敛到同步函数里，避免「await 后按旧值回写缓存」。
+function commitSeatbeltProbe(next) { seatbeltProbe = next; return next; }
 async function seatbeltUsable() {
   if (seatbeltProbe) return seatbeltProbe;
   if (process.platform !== 'darwin') {
@@ -245,8 +248,7 @@ async function seatbeltUsable() {
       console.warn(`[sandbox] Seatbelt 探测失败（allowlist + denylist 均不可用）：${result.reason}`);
     }
   }
-  seatbeltProbe = result;
-  return seatbeltProbe;
+  return commitSeatbeltProbe(result);
 }
 
 // 决策：本次 shell 是否应包沙箱

@@ -132,11 +132,11 @@ function auditLocal(action, target, detail, approvalResult) {
     });
     const line = JSON.stringify({ ...body, prev: chainPrev, hash: chainHashOf(body, chainPrev) }) + '\n';
     if (auditLogBytes < 0) {
-      try { auditLogBytes = fs.statSync(file).size; } catch (e) { auditLogBytes = 0; }
+      try { auditLogBytes = fs.statSync(file).size; } catch { auditLogBytes = 0; }
     }
     if (auditLogBytes + Buffer.byteLength(line) > AUDIT_LOG_MAX_BYTES) {
       // 滚动：旧文件转 .1（只保留一代），重新计数
-      try { fs.renameSync(file, `${file}.1`); } catch (e) { /* 不存在则忽略 */ }
+      try { fs.renameSync(file, `${file}.1`); } catch (e) { console.warn('[audit] 审计日志滚动失败（按新链继续）:', e?.message || e); }
       auditLogBytes = 0;
       // 滚动后旧文件整体搬走，新代从空链起（每代一条独立链；见 verifyAuditChain 注释）
       chainPrev = '';
