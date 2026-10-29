@@ -121,6 +121,21 @@ function check(name, ok, detail = '') {
   threw = false;
   try { store.setLead(team.id, tpl.id); } catch { threw = true; }
   check('已下架成员不能被指定为 Lead', threw);
+  // 2026-10-29 缺陷（同一不变式两条路只堵一条）：`updateMember` 改 roleKind 时直接调
+  // _setLeadInternal，绕过了 setLead 的 enabled 校验 → 已下架成员能变成 lead，且
+  // lead_member_id 指向它、leadMissing=false（团队看似有负责人、实际没有）。
+  // 修法是把判据钉在唯一写入口 _setLeadInternal，故这条断言覆盖的是**根本身**，不是补的第二处判断。
+  const leadBefore = store.getTeam(team.id).leadMemberId;
+  threw = false;
+  try { store.updateMember(team.id, tpl.id, { roleKind: 'lead' }); } catch { threw = true; }
+  check('updateMember 改 roleKind=lead 同样被拒（旁路已封）', threw);
+  const afterBypass = store.getTeam(team.id);
+  check('被拒后事务回滚干净：lead 未变、目标成员 roleKind 仍是 member',
+    afterBypass.leadMemberId === leadBefore
+    && store.getMember(team.id, tpl.id).roleKind === 'member');
+  check('被拒后 leadMissing 仍是 false（未被写成「假有统筹」的一半状态）',
+    afterBypass.leadMissing === false
+    && !!store.getMember(team.id, String(afterBypass.leadMemberId)));
 
   // ── 下架语义（软删，不物理删）──
   const removed = store.removeMember(team.id, custom.id);

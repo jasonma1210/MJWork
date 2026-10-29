@@ -230,6 +230,55 @@ function buildHandlersFromMainJs({ schedCtx, schedModel = { cwd: '/tmp/out' }, r
     assert.deepEqual(roster.members.map((m) => m.name).sort(), ['主管', '写手'].sort(), '名册成员应与团队一致');
   });
 
+  // ── ②b P2-2（2026-10-29）：模型侧**不得**出现任何改编制的入口 ─────────────
+  // 威胁模型：成员任务跑在无人值守通道（无审批面），若把 create/update/remove/member/
+  // interrupt 这类控制层动作接进工具表，等于让模型能在 run 里改自己或他人的
+  // toolNames / allowMcp / mcpAllow / approvalMode / sandboxPolicy —— 二阶越权。
+  // 设计上已按 teamTools.js 头注释挡住（控制层 4 个刻意不接），本条把该决定变成门禁：
+  // 将来有人「顺手接线」时必定红，而不是等到有人发现某个成员给自己开了全权。
+  await check('P2-2 守卫：模型侧 team 系工具只有 5 个协作原语，无改编制/改权限入口', () => {
+    const ctx = prepare({ teamId: TEAM.id });
+    const handlers = buildHandlersFromMainJs({ schedCtx: ctx, scheduledAgentChat: async () => ({ content: 'x' }) });
+    const teamKeys = Object.keys(handlers).filter((k) => /^team/i.test(k)).sort();
+    assert.deepEqual(teamKeys, [...TEAM_HANDLER_KEYS].sort(),
+      `模型侧 team 系工具面被改动：${teamKeys.join(',')}（只允许 5 个协作原语；控制层动作必须留在用户经 teams:* IPC）`);
+    // 反向：连"疑似"控制层键都不许出现（防止换个命名如 teamManageMember 绕过上面的精确集合）
+    const suspicious = teamKeys.filter((k) => /(create|update|remove|delete|interrupt|patch|set)/i.test(k));
+    assert.deepEqual(suspicious, [], `模型侧出现疑似控制层入口：${suspicious.join(',')}`);
+  });
+
+  // ── ②c P2-2：名册投影是字段白名单，不得把他人系统提示词/治理档喂进模型上下文 ──
+  await check('P2-2 守卫：team_list_members 投影不含 systemPrompt / 审批档 / 沙箱档 / 模型', () => {
+    const ctx = prepare({ teamId: TEAM.id });
+    const handlers = buildHandlersFromMainJs({ schedCtx: ctx, scheduledAgentChat: async () => ({ content: 'x' }) });
+    const roster = handlers.teamListMembers();
+    const allowed = new Set(['memberId', 'name', 'roleKind', 'isLead', 'enabled', 'toolNames']);
+    for (const m of roster.members) {
+      const extra = Object.keys(m).filter((k) => !allowed.has(k));
+      assert.deepEqual(extra, [], `名册投影多出字段 ${extra.join(',')}（他人系统提示词/治理档外泄进模型上下文）`);
+      assert.equal(m.systemPrompt, undefined, 'systemPrompt 不得出现在模型可见名册里');
+    }
+  });
+
+  // ── ②d P2-2：第二处通路也要守——子进程 RPC 白名单 ──────────────────────
+  // 「同一能力 ≥2 处装配点，只正配一处就会漏掉另一处」是本项目反复发作的形态：
+  // 引擎子进程的工具面由 main/engineProcess/registry.js 的 TOOL_CHANNELS 决定
+  //（漏登记 → 未知工具；多登记 → 多出一条可达通路）。故两处名单都要断言，不能只看
+  // scheduledTools 那一处。用 require 读真数组，不 grep 源码文本（避免注释误伤/空过）。
+  await check('P2-2 守卫：子进程 RPC 白名单里的 team 系条目也只有 5 个协作原语', () => {
+    const { TOOL_CHANNELS, MEMBER_TASK_ONLY_CHANNELS } = require(path.join(DESKTOP, 'main/engineProcess/registry.js'));
+    const teamOf = (list) => (Array.isArray(list) ? list : Object.keys(list || {}))
+      .filter((k) => /^team/i.test(String(k))).sort();
+    assert.deepEqual(teamOf(TOOL_CHANNELS), [...TEAM_HANDLER_KEYS].sort(),
+      `TOOL_CHANNELS 的 team 系条目被改动：${teamOf(TOOL_CHANNELS).join(',')}（控制层不得经 RPC 可达）`);
+    assert.deepEqual(teamOf(MEMBER_TASK_ONLY_CHANNELS), [...TEAM_HANDLER_KEYS].sort(),
+      `MEMBER_TASK_ONLY_CHANNELS 的 team 系条目被改动：${teamOf(MEMBER_TASK_ONLY_CHANNELS).join(',')}`);
+    for (const list of [TOOL_CHANNELS, MEMBER_TASK_ONLY_CHANNELS]) {
+      const bad = teamOf(list).filter((k) => /(create|update|remove|delete|interrupt|patch|set)/i.test(k));
+      assert.deepEqual(bad, [], `白名单出现疑似控制层入口：${bad.join(',')}`);
+    }
+  });
+
   // ── ③ 端到端到「模型可见工具表」：schema 通告 + 调用穿透 ─────────────────
   await check('引擎通告面：5 个 team_* schema 出现在下发给模型的 tools 里，且调用能穿透到 handler', async () => {
     const ctx = prepare({ teamId: TEAM.id });

@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "generatedAt": "2026-10-28T00:24:13.215Z",
+  "generatedAt": "2026-10-29T00:50:29.975Z",
   "note": "② ratchet 基线（位置级）：key = 文件#语句内容哈希；新增即红，消失请重跑 --write",
   "tiers": {
     "bareIife": 45,
@@ -344,7 +344,7 @@
       "line": 51,
       "text": "(async () => { await check('快照归一：完整形状原样保留', () => { assert.deepEqual(normalizeTaskModel(A), A); }); "
     },
-    "test/scheduled-team-tools.test.mjs#006e9a5300be": {
+    "test/scheduled-team-tools.test.mjs#3004ea72d0cf": {
       "tier": "bareIife",
       "line": 205,
       "text": "(async () => { // ── ① 引擎通告面：runParams 是否带 teamContext ────────────────────────── await check('声明了 t"
@@ -457,6 +457,14 @@
     },
     {
       "at": "2026-10-28T00:24:13.214Z",
+      "added": 1,
+      "removed": 1,
+      "net": 0,
+      "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-10-29T00:50:29.974Z",
       "added": 1,
       "removed": 1,
       "net": 0,

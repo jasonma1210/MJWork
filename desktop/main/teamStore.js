@@ -552,18 +552,18 @@ class TeamStore {
 
   /** 指定统筹负责人：原 lead 降级为 member，lead_member_id 指向新 lead（单一判据落点） */
   setLead(teamId, memberId) {
-    const member = this.getMember(teamId, memberId);
-    if (!member) throw new Error(`成员不存在：${teamId}/${memberId}`);
-    if (!member.enabled) throw new Error('不能指定已下架成员为统筹负责人');
-    const tx = this.db.transaction(() => {
-      this._setLeadInternal(teamId, memberId);
-      this.touchTeam(teamId);
-    });
+    const tx = this.db.transaction(() => { this._setLeadInternal(teamId, memberId); this.touchTeam(teamId); });
     tx();
     return this.getTeam(teamId);
   }
 
   _setLeadInternal(teamId, memberId) {
+    // 唯一的「成为统筹」写入口（setLead / updateMember / addMember / 自动移交都经此），故
+    // 「已下架成员不能当统筹」钉在这里，不在四个调用点各抄一遍。2026-10-29 修：此前只有
+    // setLead 判 enabled，updateMember 走本函数时绕过 → 已下架成员可变成 lead，lead_member_id
+    // 指向它且 leadMissing=false（团队看似有负责人、实际没有，而 leadMissing 是「缺统筹」的唯一判据）。
+    const m = this.getMember(teamId, memberId);
+    if (!m || !m.enabled) throw new Error(m ? '不能指定已下架成员为统筹负责人' : `成员不存在：${teamId}/${memberId}`);
     const prev = this.getTeam(teamId)?.leadMemberId;
     if (prev && prev !== memberId) {
       this.db.prepare(`UPDATE team_members SET role_kind = 'member' WHERE id = ?`).run(String(prev));
