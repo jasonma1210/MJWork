@@ -50,7 +50,10 @@ function pickOwnerMember(roster, task) {
  */
 function resolveOwnerMember(group, task, roster, planned = null) {
   const fromPlan = String(planned || group?.dag?.assignments?.[task?.taskId] || '').trim();
-  if (fromPlan) return fromPlan;
+  // D4-01：计划/旧指派里的成员必须仍在**本次可用名册**内。撤员后 `dag.assignments` 仍留着旧 id，
+  // 直接采信会把任务回派给已撤员成员（丢失成员人格与 team_* 工具），形成撤员/重派死循环。
+  // 调用方（workerPool.pump）传入的 roster 已是剔除撤员后的 `eligibleRoster`，故据此校验。
+  if (fromPlan && (!Array.isArray(roster) || roster.some((m) => String(m?.id) === fromPlan))) return fromPlan;
   return pickOwnerMember(roster, task);
 }
 

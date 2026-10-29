@@ -112,7 +112,7 @@ const vp = (runId, extra = {}) => ({
       runAgent: async (opts) => {
         opts.onMessage?.({ role: 'assistant', content: '中间轮', tool_calls: [{ id: 't1' }], tokens_input: 5, tokens_output: 2 });
         opts.onMessage?.({ role: 'tool', tool_call_id: 't1', content: 'tool 结果' });
-        opts.onDone?.('最终总结', { prompt_tokens: 10, completion_tokens: 5 }, false);
+        opts.onDone?.('最终总结', { prompt_tokens: 100, completion_tokens: 50, lastPromptTokens: 10, lastCompletionTokens: 5 }, false);
         return '最终总结';
       },
     }),
@@ -128,8 +128,12 @@ const vp = (runId, extra = {}) => ({
     persistedRoles.join(','));
   check('主进程落库：threadId 取自 conversationId', persisted.every((p) => p.conversationId === '42'));
   const finalPersisted = persisted[persisted.length - 1]?.message || {};
-  check('主进程落库：最终消息含 camelCase 用量与模型名',
-    finalPersisted.tokensInput === 10 && finalPersisted.tokensOutput === 5 && finalPersisted.modelName === 'test-model');
+  // 口径回归守卫（2026-10-29 双记账缺陷）：引擎每轮已落一轮用量，收尾消息只能记**该轮**的
+  // lastPromptTokens/lastCompletionTokens（这里 10/5）；若误用 run 累计 prompt_tokens/completion_tokens
+  // （这里 100/50），工作台总用量会系统性翻倍。断言故意让两套值不相等，回退即红。
+  check('主进程落库：最终消息记该轮用量（非 run 累计）与模型名',
+    finalPersisted.tokensInput === 10 && finalPersisted.tokensOutput === 5 && finalPersisted.modelName === 'test-model',
+    `tin=${finalPersisted.tokensInput} tout=${finalPersisted.tokensOutput}`);
   const doneEvt8 = s8.events.find((e) => e.type === 'done');
   check('done 事件携带 mainPersisted 标记（渲染层去重依据）', doneEvt8?.data?.mainPersisted === true);
 
@@ -145,6 +149,58 @@ const vp = (runId, extra = {}) => ({
   startAgentRun(vp('r9', { conversationId: '99' }), s9);
   await sleep(30);
   check('持久化失败仅告警，done 事件照常送达', s9.events.some((e) => e.type === 'done' && e.data.finalText === '总结'));
+
+  // ── 2026-10-29：兜底收尾的 token 记账（引擎未调 onDone 时宿主只能自己找真值）──
+  // 判据不是「有没有 token」，而是「有没有把已经落过库的轮再记一遍」：
+  //   上报轮数 > 已落库轮数 ⇒ 只剩最后一轮没记 → 取该轮真值；否则一律 0。
+  {
+    const mkFallback = (round) => ({
+      loadAgentCore: async () => ({
+        runAgent: async (opts) => {
+          opts.onMessage?.({ role: 'assistant', content: '中间轮', tool_calls: [{ id: 't1' }], tokens_input: 5, tokens_output: 2 });
+          opts.onBudget?.({ round, promptTokens: 1000, completionTokens: 500, lastPromptTokens: 77, lastCompletionTokens: 9 });
+          return '直接返回'; // 故意不调 onDone
+        },
+      }),
+      createToolHandlers: () => ({}),
+      persistMessage: ({ conversationId, message }) => { persisted.push({ conversationId, message }); return { ok: true }; },
+    });
+    const run = async (round, id) => {
+      persisted.length = 0;
+      initAgentRunner(mkFallback(round));
+      startAgentRun(vp(id, { conversationId: '42' }), makeSender());
+      await sleep(30);
+      return persisted[persisted.length - 1]?.message || {};
+    };
+    const unrecorded = await run(2, 'rfb1');
+    check('兜底收尾：还有一轮没记账时记该轮真值（不写 run 累计）',
+      unrecorded.tokensInput === 77 && unrecorded.tokensOutput === 9,
+      `tin=${unrecorded.tokensInput} tout=${unrecorded.tokensOutput}（run 累计是 1000/500）`);
+    const accounted = await run(1, 'rfb2');
+    check('兜底收尾：所有轮都已落库时记 0（否则总量翻倍）',
+      accounted.tokensInput === 0 && accounted.tokensOutput === 0,
+      `tin=${accounted.tokensInput} tout=${accounted.tokensOutput}`);
+  }
+
+  // ── 2026-10-29：失败/超时的运行也要进用量账本（否则「取消有量、失败无量」）──
+  {
+    const ledgerCalls = [];
+    initAgentRunner({
+      loadAgentCore: async () => ({
+        runAgent: async (opts) => { opts.onBudget?.({ round: 1, promptTokens: 300, completionTokens: 20 }); throw new Error('首请求超时'); },
+      }),
+      createToolHandlers: () => ({}),
+      persistMessage: () => ({ ok: true }),
+      recordUsage: (u) => { ledgerCalls.push(u); return u.tokens; },
+      resolveProjectOfConversation: () => 'proj-1',
+    });
+    startAgentRun(vp('rledger', { conversationId: '42', projectPath: '/tmp/p' }), makeSender());
+    await sleep(30);
+    // 账本记 run 累计（计费口径），与「占位消息记 0」不矛盾：前者答「这次花了多少」，后者答「这条消息花了多少」
+    check('失败运行按 run 累计入用量账本（未记则超时消耗凭空消失）',
+      ledgerCalls.length === 1 && ledgerCalls[0].tokens === 320 && ledgerCalls[0].modelName === 'test-model',
+      JSON.stringify(ledgerCalls));
+  }
 
   // ── T0-2：启动载荷契约校验（fail-closed）──
   {

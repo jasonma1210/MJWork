@@ -224,5 +224,48 @@ check('P2-8 普通代码 → L3', approval.toolLevel('code_exec', { code: 'const
 check('P2-8 isDangerousCode 与 dangerousPatterns 同源',
   approval.isDangerousCode === dangerous.isDangerousCode);
 
+// ── A4：不可记忆清单（NON_REMEMBERABLE）──
+// 尾注曾写「三者恒 L3 不可记忆」而集合实际 7 项；install_plugin / pr_review / pr_comment 三项
+// 此前既无注释依据也无断言覆盖 —— 一旦被误移出集合，「本会话允许」按钮就会出现在恒 L3 的动作上，
+// 而实现侧并不落规则库（用户点了却对后续无效 = 产品撒谎）。
+check('A4 不可记忆清单恰好 7 项（尾注与实际条目数一致）',
+  approval.NON_REMEMBERABLE.size === 7, `size=${approval.NON_REMEMBERABLE.size}`);
+check('A4 install_plugin / pr_review / pr_comment 均不可记忆',
+  ['install_plugin', 'pr_review', 'pr_comment'].every((t) => approval.isRememberable(t) === false));
+// 逐项钉分级：unconfined_exec 是 L1 硬地板（沙箱绕行），其余恒 L3。
+// 旧尾注「三者恒 L3」连分级都说错了 —— 所以这里按真实值逐项断言，而不是笼统写「都是 L3」。
+check('A4 不可记忆项分级：unconfined_exec=L1，其余恒 L3（且带 always 规则也照弹）',
+  [['unconfined_exec', 'L1'], ['scheduled_create', 'L3'], ['install_plugin', 'L3'],
+    ['pr_review', 'L3'], ['pr_comment', 'L3']].every(([t, lv]) => {
+    const v = approval.needsApproval({
+      tool: t, args: {}, approvalMode: 'auto-safe',
+      alwaysRules: [{ tool: t, pattern: '*', scope: 'always' }],
+    });
+    return v.need === true && v.level === lv;
+  }));
+check('A4 可记忆工具不被误杀（写文件类仍走规则豁免，反证清单不是全拒）',
+  approval.isRememberable('write_file') === true && approval.isRememberable('shell') === true);
+
+// ── O1：never 档不是「关掉安全」，只是「关掉打扰」──
+// 判据必须**双向**：只断言「不可逆项要弹卡」会把 never 悄悄改成 on-request 也能过；
+// 故另一半钉住「可逆写入/普通 shell/MCP 在 never 下仍不弹」——这才是 never 的本意。
+check('O1 never 档：L3 级不可逆动作仍逐次确认（install_plugin / pr_* / scheduled_create）',
+  ['install_plugin', 'pr_review', 'pr_comment', 'scheduled_create']
+    .every((t) => approval.needsApproval({ tool: t, args: {}, approvalMode: 'never' }).need === true));
+check('O1 never 档：L1 项照旧弹卡（unconfined_exec / computer_use / 敏感 cua_action）',
+  ['unconfined_exec', 'computer_use'].every((t) => approval.needsApproval({ tool: t, args: {}, approvalMode: 'never' }).need === true)
+  && approval.needsApproval({ tool: 'cua_action', args: { text: '立即支付' }, approvalMode: 'never' }).need === true);
+// 这条是 ① 唯一不能一并收紧的地方：CUA 的非敏感步是 L2，外层 computer_use 已是 L1 闸，
+// 「一次确认跑完一段 GUI 操作」正是 never 的用途；逐次再问会退化成每步一问（cuaVision 钉住该语义）。
+check('O1 never 档：CUA 非敏感步不被逐次追问（否则 GUI 任务退化成每步一问）',
+  approval.needsApproval({ tool: 'cua_action', args: { action: 'click', ref: 1 }, approvalMode: 'never' }).need === false);
+check('O1 never 档：可逆写入 / 普通 shell / MCP 仍不打扰（否则 never 被改成 on-request）',
+  [['write_file', {}], ['shell', { command: 'ls' }], ['mcp__a__b', {}], ['git_commit', {}], ['read_file', {}]]
+    .every(([t, args]) => approval.needsApproval({ tool: t, args, approvalMode: 'never' }).need === false));
+check('O1 第二把锁与 NON_REMEMBERABLE 同源（不是另抄一份清单，避免两处漂移）',
+  [...approval.NON_REMEMBERABLE]
+    .filter((t) => approval.toolLevel(t, {}) === 'L3')
+    .every((t) => approval.needsApproval({ tool: t, args: {}, approvalMode: 'never' }).need === true));
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);

@@ -11,6 +11,9 @@ const fsp = require('fs/promises');
 const workspace = require('../workspace');
 const worktree = require('../worktree');
 const guard = require('./payloadGuard');
+// 产出文件「另存为」的路径解析与工具层同一套语义（相对路径按项目根解析）。
+// exec.js 只是 re-export 了这个函数，直接引定义处，避免为一个 4 行 helper 拖入整个工具执行层。
+const { resolveToolPath } = require('../tools/execCwd');
 
 // X14：粘贴落盘的单文件上限（base64 字符数 ≈ 文件字节数 ×4/3）。无路径附件（粘贴图片等）
 // 只能走 IPC 传全文，不设上限等于让一次 IPC 把关不严的内存放大到渲染层与主进程两侧。
@@ -214,6 +217,27 @@ function register() {
       const dest = path.join(dir, `${Date.now()}-${safeName}`);
       await fsp.writeFile(dest, Buffer.from(String(dataBase64 || ''), 'base64'));
       return { ok: true, path: dest };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // 产出文件「另存为」：源路径由渲染层给出（相对路径按项目根 cwd 解析），
+  // 目标路径**只能**由用户在系统保存对话框里选——绝不接受渲染层传入的目标，
+  // 否则一条 IPC 就能把任意文件写到任意位置（越权覆盖）。
+  ipcMain.handle('files:saveAs', async (_, { path: rawPath, cwd } = {}) => {
+    try {
+      guard.assertStrings(
+        { rawPath, cwd },
+        { rawPath: 4096, cwd: { max: 4096, optional: true, allowEmpty: true } },
+      );
+      const src = resolveToolPath(rawPath, cwd);
+      const stat = await fsp.stat(src).catch(() => null);
+      if (!stat || !stat.isFile()) return { ok: false, error: `源文件不存在：${src}` };
+      const r = await dialog.showSaveDialog(deps.getMainWindow(), { defaultPath: path.basename(src) });
+      if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+      await fsp.copyFile(src, r.filePath);
+      return { ok: true, savedPath: r.filePath };
     } catch (e) {
       return { ok: false, error: e.message };
     }

@@ -38,6 +38,7 @@
   "colTask": "Task",
   "colRun": "Run",
   "colSource": "Source",
+  "colModel": "Model",
   "colMember": "Member id",
   "colTokens": "Tokens",
   "notRecorded": "Not recorded",

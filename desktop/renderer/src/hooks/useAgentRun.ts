@@ -468,9 +468,9 @@ export default function useAgentRun(d) {
         role: 'assistant',
         content,
         model_name: selectedModel.model.model_id,
-        // 底部 token 明细（参考 WorkBuddy：模型名 + 消耗量）+ 时间戳
-        tokens_input: usage?.prompt_tokens || 0,
-        tokens_output: usage?.completion_tokens || 0,
+        // 底部 token 明细：口径=**收尾轮**用量（与主进程落库同源）；用 run 累计会让同一条消息「刚跑完」与「刷新后」显示两个数
+        tokens_input: Number(usage?.lastPromptTokens) || 0,
+        tokens_output: Number(usage?.lastCompletionTokens) || 0,
         created_at: Date.now(),
       };
       // 注册表快照收敛（切回本会话时的恢复数据源）
@@ -483,6 +483,8 @@ export default function useAgentRun(d) {
         durationMs: rs.startedAt ? Date.now() - rs.startedAt : 0,
         tokensIn: usage?.prompt_tokens || 0,
         tokensOut: usage?.completion_tokens || 0,
+        // 渲染层上下文圆环优先用引擎真实「上一轮 prompt 体积」，而非本地对瘦消息数组的低估重估
+        contextTokens: Number.isFinite(usage?.lastPromptTokens) ? usage.lastPromptTokens : null,
         model: selectedModel?.model?.model_id || '',
         endedAt: Date.now(),
       };
@@ -507,8 +509,8 @@ export default function useAgentRun(d) {
         try {
           await api.sendMessage(currentThread.id, {
             ...assistantMsg,
-            tokens_input: usage?.prompt_tokens || 0,
-            tokens_output: usage?.completion_tokens || 0,
+            tokens_input: Number(usage?.lastPromptTokens) || 0,
+            tokens_output: Number(usage?.lastCompletionTokens) || 0,
           });
         } catch (err) {
           console.warn('[chat] done message persist failed (UI finalization unaffected):', err);
@@ -774,8 +776,7 @@ export default function useAgentRun(d) {
     }
   }
 
-  // /compact：把早期对话摘要化，保留最近若干轮（对标 Codex 的上下文压缩）
-  // P0-4：实现移到 lib/compactSession（窗口现算 / 运行中守卫 / 撤销带）；此处只做状态装配
+  // /compact：早期对话摘要化（对标 Codex 上下文压缩）；P0-4 实现移到 lib/compactSession，此处只做状态装配
   async function compactContext() {
     if (compacting) return;
     setCompacting(true);
@@ -793,7 +794,6 @@ export default function useAgentRun(d) {
     }
   }
 
-  // P0-6：activeRunId 供视图层（TodoPanel）按 run 订阅 todos 事件，run 结束后为 null
-  // P1：runBaselineSha 供「撤回本轮」把文件恢复到这一轮之前的状态
+  // P0-6：activeRunId 供 TodoPanel 按 run 订阅 todos 事件（run 结束为 null）；P1：runBaselineSha 供「撤回本轮」恢复到该轮之前状态
   return { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext, activeRunId, runBaselineSha };
 }

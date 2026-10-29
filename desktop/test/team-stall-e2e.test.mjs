@@ -44,6 +44,7 @@ function makeWorld(extraHost = {}) {
     woken: [],
     reassigned: [],
     failedTasks: [],
+    memberStates: [],   // D4-03：成员状态回写记录（{id, s}）
     maxConc: 4,
     concHistory: [],
     tasks: {
@@ -70,6 +71,8 @@ function makeWorld(extraHost = {}) {
       store,
       getTeamMessageSeq: () => world.msgSeq,
       resolveTeamRoster: () => world.roster,
+      // D4-03：成员状态回写通道（生产由 workerPool deps.setMemberState 提供，fail-open）
+      setMemberState: (id, s) => world.memberStates.push({ id, s }),
     }),
     activeRuns: new Map([
       [`${GID}/t1`, { name: 'worker-1', controller: { abort: (r) => world.arbs.push({ taskId: 't1', reason: r }) }, iso: null }],
@@ -166,6 +169,13 @@ function makeWorld(extraHost = {}) {
   check('④ 撤员后推进调度（schedule 被调用）', w.scheduled >= 1, `schedule=${w.scheduled}`);
   check('④ 意图只能消费一次（第二次为空，防重复重派）',
     w.engine.takeStall(GID, `${GID}/t1`) === null);
+  // D4-03：撤员使被撤成员永久停在 busy —— 因为 consumeStall 返回 true 后 workerPool 会**直接 return**，
+  // 那句「终态→idle」的回写根本不会执行。名册里留僵尸成员，后续派活还会再选中它。
+  check('④ D4-03 撤员后原成员被显式置 offline（终态→idle 回写在此分支不执行）',
+    w.memberStates.some((m) => m.id === 'm-slow' && m.s === 'offline'),
+    JSON.stringify(w.memberStates));
+  check('④ D4-03 不越权改备用成员状态（新 owner 由任务开始时统一置 busy）',
+    w.memberStates.every((m) => m.id !== 'm-backup'), JSON.stringify(w.memberStates));
 }
 
 // ── ⑤ 防雪崩：单任务最多撤 1 次、并发每组只降一次、detach 还原 ──

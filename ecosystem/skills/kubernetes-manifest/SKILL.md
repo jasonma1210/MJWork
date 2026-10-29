@@ -42,3 +42,22 @@ description: "编写与审查 Kubernetes 资源清单，覆盖 Deployment、Serv
 ### 失败处理
 - 无集群环境：仅输出清单并提供本地校验命令，标注未实际部署验证。
 - 应用启动依赖外部服务未就绪：给出就绪探针的依赖处理建议。
+
+## 默认参数与校准（工程基线）
+
+> 以下为**工程通行口径**（具名标准 / 公开的大厂实践），**不是本企业实测值**。首次落地按此开工；跑满 1–2 个迭代周期后用实测数据替换，替换过程按下方"校准规则"留痕。与公司内部规范冲突，以内部规范为准。
+
+### 门槛基线
+| 项 | 基线 | 依据 |
+|---|---|---|
+| 资源 | 所有 Pod 100% 设置 requests 与 limits，limits.memory 必填 | Kubernetes 官方文档（资源管理） |
+| 安全上下文 | runAsNonRoot=true、readOnlyRootFilesystem=true、allowPrivilegeEscalation=false、drop ALL | CIS Kubernetes Benchmark |
+| 探针 | readinessProbe 与 livenessProbe 100% 配置，initialDelay ≥ 实测冷启动 | Kubernetes 官方文档（探针） |
+| 镜像标签 | 禁止 latest，生产用 digest | Kubernetes 官方文档 |
+| 可用性 | 多副本工作负载配 PDB（minAvailable ≥1 或 maxUnavailable ≤25%） | Kubernetes 官方文档（PDB） |
+
+### 校准规则
+- 批处理 / 一次性 Job 无流量概念，可只保留 startupProbe，须在清单注释中写明理由。
+- 探针阈值按实测校准：initialDelaySeconds ≥ P99 启动耗时，不靠拍 30 秒。
+- resources 按 30 天 P95 用量定 requests，limits.memory 取 P99×1.2；频繁 OOMKill 先查内存泄漏再加限制。
+- PDB 的 minAvailable 按副本数调：副本 ≤3 时用 maxUnavailable ≤25%，避免滚动更新卡死。

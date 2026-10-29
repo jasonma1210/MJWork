@@ -232,6 +232,22 @@ check('已暂存视图：IPC/preload/面板三处都有取消暂存通道', () =
   assert.match(panel, /gitRestoreStaged\(\{ cwd: projectPath, conversationId: threadId, files: file\.path \}\)/, '面板缺少整文件取消暂存');
 });
 
+// B4（2026-10-29）：拒绝方向（`git apply --reverse` 抹掉工作区这一块）必须给「撤销出口」。
+// 设计裁决仍然是不弹审批卡（用户在面板上的主动动作，见 exec-governance 的「hunk 三通道按设计不弹卡」），
+// 所以安全要求改成落在这里：先快照 → 二次确认 → 成功后提供撤销。三件事缺一即红——
+// 只写 snapshot 不接 offerUndo 等于「备份了但没路口」，是最容易写漏的一半。
+// 判据锚在 rejectHunk 函数块内（不跨函数匹配，避免被别的函数的 snapshot 蒙过）。
+check('拒绝方向：rejectHunk 必须先快照 + 二次确认 + 提供撤销（不弹审批卡的安全兜底）', () => {
+  const panel = fs.readFileSync(path.join(ROOT, 'renderer/src/components/DiffReviewPanel.jsx'), 'utf8');
+  const at = panel.indexOf('async function rejectHunk');
+  assert.ok(at > 0, '未找到 rejectHunk 实现（是否已重构？请同步本测试）');
+  const block = panel.slice(at, panel.indexOf('\n  }', at));
+  assert.ok(block.length > 200, `rejectHunk 片段过短（${block.length} 字符），切片口径失效`);
+  assert.match(block, /await snapshot\(/, 'rejectHunk 未在抹掉前落快照');
+  assert.match(block, /await confirm\(/, 'rejectHunk 缺少二次确认');
+  assert.match(block, /offerUndo\(/, 'rejectHunk 快照后未提供撤销入口');
+});
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`\nhunk-stage: ${pass}/${pass + fail} 通过`);
 process.exit(fail === 0 ? 0 : 1);

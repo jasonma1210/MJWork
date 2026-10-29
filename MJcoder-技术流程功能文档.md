@@ -4,14 +4,19 @@
 > 所有内容均取自当前仓库源码（`desktop/`），用「文件 + 函数名 / 常量名」定位，供开发、审查与验收使用。
 > 文档按「完整视角」撰写，不做版本间对比。
 >
-> **本版为 2026-10-21 第八轮全量审查之后的增量修订版**：保留原有 13 章骨架与已验证内容，
-> 按第八轮结论补、改、删不一致处，并把全篇表述改为「**先说人话，再讲技术**」——
-> 每章开头先用一段大白话讲清「这块是干什么的、为什么这么设计」，再展开细节。技术标识符一律保留英文原文。
+> **本版为 2026-10-29 收口轮增量修订版**：在 2026-10-21「第八轮全量审查之后的增量修订版」之上，
+> **只同步已落地的事实**——本轮 P0 ~ P3 全部处置完毕（代码链：`9bcfc21` P0 → `fd8b1c0` 门禁回压 →
+> `f7f1ccd` P1-2 → `dedbf16` P1-1 → `04d6a04` P1-4 → `733eded` P2-2 → `4a97b57` P3-1），
+> 另有五项**复核撤销**（经复核确认不需要改代码，**不是没做**，见 13.10）。
+> 原有 13 章骨架、「先说人话再讲技术」的写法、两条阅读纪律**保持不变**（技术标识符一律保留英文原文）；
+> 历史章节中标注为「第八轮发现 / 已知缺口」的内容按原文保留，只在必要时补一行「处置」。
 >
 > **两条阅读纪律**：
-> 1. **数字纪律**：全篇数字只取自第八轮审查报告 §1「数字基线表」与三个角度审查文件；口径一律为**工作区**
->    （HEAD `24acc1531f55d70d8f591f0435d48eb114fbf3d0` + 99 项未提交改动）。凡 HEAD 与工作区不一致处**两个数字都给**。
->    数字是某一时刻的快照，不是常量，需要当期值时按报告附录 B 的命令现算。
+> 1. **数字纪律**：全篇数字都是**某一时点的快照**，不是常量。每处数字都必须能指出**取法命令**
+>    （本轮的取数命令集见 12.1 与 12.4；工具面口径见 4.2；测试基线口径见 12.1）。
+>    口径一律为**工作区**：现基线为 HEAD `4a97b57` + 工作区干净（`git status --short` 无输出）；
+>    凡 HEAD 与工作区不一致处**两个数字都给**。
+>    **同一口径在文中出现两次时，两处必须同值**——本轮更正了 §1.5 与 §4.2 的工具数、§12.1 与 §13.5 的测试数两处漂移。
 > 2. **定位纪律**：一律用「文件 + 函数名 / 常量名」定位，**不使用行号**（行号随编辑即刻位移）。
 
 ### 数据来源与本轮修订说明
@@ -24,9 +29,15 @@
 | 角度 C · 安全、持久化与交付层 | `docs/harness-r8/02-design/审查-角度C-安全与交付层.md`（发现 `C-01` ~ `C-07`） |
 | 主流技术判据 | `docs/harness-r8/01-research/主流技术基线简报.md` |
 | 审查基线 HEAD | `24acc1531f55d70d8f591f0435d48eb114fbf3d0`（工作区另有 99 项未提交改动） |
+| 收口轮代码基线 HEAD | `4a97b57`（`P3-1: MCP 工具进度全链路…`），工作区干净（`git status --short` 无输出） |
+| 本轮落地与撤销清单 | §13.10「2026-10-29 收口轮：P0 ~ P3 落地与复核撤销」 |
 
 > **读法约定**：文中的 `A-x` / `B-x` / `C-x` 是第八轮的**发现编号**（字母代表来源角度），`报告 D-8xx` 是**决策编号**。
 > 它们指向可复核的结论，不是待办清单；发现编号的严重度见报告 §3，本文不重复搬运。
+>
+> **编号体系消歧（2026-10-29 起）**：`A-x` / `B-x` / `C-x` 是**发现编号**（第八轮，指向「问题是什么」）；
+> `P0-x` ~ `P3-x` 是**修复项编号**（收口轮，指向「这次改了什么」），两者**不是同一体系**，不可互相引用为证据。
+> 修复项有两种处置：**落地**（改了代码）与**撤销**（经复核确认不需要改代码，理由随项写明）——见 13.10。
 
 ---
 
@@ -93,7 +104,7 @@ React 渲染界面，对标 codex app 等主流桌面 Agent，**排除云与在�
 │   ├── renderer/            # React + TypeScript 渲染层（Vite 打包）
 │   ├── shared/              # 主进程/引擎/渲染层共享的纯函数模块（ESM）
 │   ├── shared-ipc/          # IPC 契约（zod 校验）
-│   ├── test/                # 发现式全量测试（*.test.{js,mjs} + 2 个 smoke；第八轮实测 259 + 2 = 261 suite，另 5 个 GATES → 合计 266 个检查项）
+│   ├── test/                # 发现式全量测试（*.test.{js,mjs} + 2 个 smoke；2026-10-29 实测 309 + 2 = 311 suite，另 5 个 GATES → 合计 316 个检查项；取法命令见 12.1）
 │   └── eval/                # 离线评估任务集与自检脚本
 ├── ecosystem/               # 生态目录（数字员工、MCP 连接器、技能）
 ├── miniprogram/             # 微信小程序（功能开关默认冻结）
@@ -197,11 +208,11 @@ flowchart TB
 |---|---|---|---|---|---|
 | ① 交付层 · 渲染层（React + TS · Vite） | `renderer/src/components/ChatArea.jsx`（分层召回装配）、`ApprovalCard.jsx`、`MessageStream.tsx`、`renderer/src/hooks/useAgentRun.ts`、`renderer/src/i18n/locales/{zh-CN,en-US}/` | 分层召回前缀 `[本次会话] / [项目] / [个人]`；i18n **仅 zh-CN + en-US**；记忆归档空间键 = `projectPath`（≠ `cwd`） | `ui-conventions.test.js`（界面一致性基线）、`i18n.test.mjs`（双语包 key 完整性）、`smoke-load.mjs` / `render-smoke.mjs`（冒烟） | 改动 `renderer/src/**`（组件 / hooks / i18n 语言包），或新增 / 变更任一 UI 文案 key 时 | 总览图 ① · 图 4 |
 | ② 编排层 · 任务与 Worker 池（宿主） | `main/orchestrator/index.js`、`main/orchestrator/dag.js`、`main/workerPool.js`、`main/workerIsolation.js`、`main/worktree.js`、`main/aggregator/merge.js`、`main/taskStore.js` | `MIN_TASKS = 2` / `MAX_TASKS = 8`（提示词与 DAG 校验**共用同一常量**）；迁移 v7 `task_groups.project_path`；召回键 `group.project_path \|\| group.cwd`；建组即快照 `approvalMode` / `sandboxPolicy` | `orchestrator.test.js`（拆解 / DAG / 规模常量）、`workerPool.test.js`（派发 / 组收尾）、`tasks-ipc-wiring.test.mjs`（`tasks:*` deps 契约 + 治理快照接线） | 改动 `main/orchestrator/**`、`workerPool.js`、`taskStore.js`，或 `tasks:*` IPC 通道契约时 | 总览图 ② · 图 5 |
-| ③ 引擎层 · Agent Harness（utilityProcess 子进程） | `agent-core/index.js`、`main/agentRunner.js`、`main/engineProcess/{host.js,childEntry.js,registry.js,transport.js}`、`main/modelShape.js`、`main/runTrace.js`、`main/streamGuard.js`、`main/bigPayload.js` | `BASE_TOOLS` 52 / `TOOL_HANDLER_NAMES` 56 / **两者并集 58** / `TOOL_CHANNELS` **57**（均为第八轮工作区实测）；`TOOL_TIMEOUT_OVERRIDES`（引擎侧超时）；`runAgent(...)`；`NOTIFY_CBS` 8 条 / `REQUEST_CBS` 1 条（`onSuspend`）；`runId` + `AsyncLocalStorage runScope` | `engine-process.test.mjs`（子进程 RPC / 通道白名单）、`tool-registration-matrix.test.mjs`（**8 环节双向差集断言**，实跑 150/150；第三环节按调用形态求值，条件注册也在判据内，见 A-03） | 改动 `agent-core/**` 或 `main/engineProcess/**`，尤其**新增 / 改名任一原生工具**时（须同步 8 环节接线 + 白名单登记） | 总览图 ③ · 图 1 · 图 2 |
-| ④ 闸门层 · 审批 / 沙箱（宿主） | `main/approval.js`、`main/approvalChannel.js`、`main/approvalPolicy.js`、`main/approvalSettings.js`、`main/sandbox.js`、`main/sandboxLinux.js`、`main/sandboxWindows.js`、`main/dangerousPatterns.js`、`main/computerUse.js`、`main/cuaProcess/` | `LEVELS = { L1: danger-command, L2: file-write, L3: mcp-tool }`；`APPROVAL_MODES = { never, auto-safe, on-request（默认）, always }`；**L1 不可豁免** + 非法决策 / 超时 **fail-closed → deny**；`TOOL_LEVEL` 43 / `READONLY_TOOLS` 10 / `SPECIAL_CASED_TOOLS` 10（三对交集全空，死条目 0 条）；沙箱三档 `read-only / workspace-write / full-access`；规则库 `userData/approval-rules.json`（可撤销） | `approval.test.js`（分级 / `needsApproval` / 可补偿性）、`approvalChannel.test.js` / `approval-queue.test.js`（按 `approvalId` 分发 / fail-closed）、`exec-governance.test.mjs`（载荷只能收紧不能放宽）、`computer-use-wiring.test.mjs`（CUA 强门控） | 改动审批档位 / 分级 / `needsApproval` / 沙箱策略，或新增「可被审批」的工具时 | 总览图 ④ · 图 6 |
-| ⑤ 能力层 · 原生工具 + MCP tier（宿主） | `main/nativeTools.js`、`main/codeTools.js`、`main/codeProcess/`、`main/nativeSandbox/`、`main/webTools.js`、`main/docTools.js`、`main/latexTools.js`、`main/mcpPrewarm.js`、`main/intentMcpPrewarm.js`、`main/mcpClient.js`、`main/mcpHttpTransport.js`、`main/mcpProtocol.js`、`main/mcpAutoReconnect.js`、`main/mcpToolCache.js`、`main/tools/timeouts.js` | `TIER = { auto-start, whitelist, manual }`；`PREWARM_NAMES = { time, fetch }`；`DEVELOPER_AUTO_START_NAMES = { git, git-mcp }`；`MANUAL_NAMES`；灰度开关 `MJCODE_MCP_LAZY`；`PROTOCOL_VERSION = '2025-11-25'`；`SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25','2025-06-18','2025-03-26','2024-11-05']`（**不含 `2026-07-28`**）；`SHELL_DEFAULT_TIMEOUT_MS = 480000` / `SHELL_WATCHDOG_TIMEOUT_MS = 600000` | `mcp-lazy-prewarm.test.mjs`（tier 判定 / 懒启动）、`mcp-governance.test.mjs`（三层治理）、`timeouts-contract.test.mjs`（超时常量契约）、`native-tools-p3.test.mjs` / `native-doc-tools.test.mjs` / `native-latex-tools.test.mjs`（原生工具接线）、`code-mode.test.mjs`（Code Mode） | 改动原生工具实现、超时常量、MCP tier 判定 / 懒启动灰度开关 / 协议版本与时 | 总览图 ⑤ · 图 3 |
+| ③ 引擎层 · Agent Harness（utilityProcess 子进程） | `agent-core/index.js`、`main/agentRunner.js`、`main/engineProcess/{host.js,childEntry.js,registry.js,transport.js}`、`main/modelShape.js`、`main/runTrace.js`、`main/streamGuard.js`、`main/bigPayload.js` | `BASE_TOOLS` 52 / `TOOL_HANDLER_NAMES` 60 / **两者并集 62** / `TOOL_CHANNELS` **61**（2026-10-29 实测，口径与 4.2 节同源，取法命令见 4.2）；`TOOL_TIMEOUT_OVERRIDES`（引擎侧超时）；`runAgent(...)`；`NOTIFY_CBS` 8 条 / `REQUEST_CBS` 1 条（`onSuspend`）；`registry.MEMBER_TASK_ONLY_CHANNELS` 5 条（成员任务专属通道，交互式形态下不展开）；`runId` + `AsyncLocalStorage runScope` | `engine-process.test.mjs`（子进程 RPC / 通道白名单）、`tool-registration-matrix.test.mjs`（**8 环节双向差集断言**，实跑 150/150；第三环节按调用形态求值，条件注册也在判据内，见 A-03） | 改动 `agent-core/**` 或 `main/engineProcess/**`，尤其**新增 / 改名任一原生工具**时（须同步 8 环节接线 + 白名单登记） | 总览图 ③ · 图 1 · 图 2 |
+| ④ 闸门层 · 审批 / 沙箱（宿主） | `main/approval.js`、`main/approvalChannel.js`、`main/approvalPolicy.js`、`main/approvalSettings.js`、`main/sandbox.js`、`main/sandboxLinux.js`、`main/sandboxWindows.js`、`main/dangerousPatterns.js`、`main/computerUse.js`、`main/cuaProcess/` | `LEVELS = { L1: danger-command, L2: file-write, L3: mcp-tool }`；`APPROVAL_MODES = { never, auto-safe, on-request（默认）, always }`；**L1 不可豁免** + 非法决策 / 超时 **fail-closed → deny**；`TOOL_LEVEL` 42 / `READONLY_TOOLS` 14 / `SPECIAL_CASED_TOOLS` 11（三对交集全空，死条目 0 条 —— 2026-10-29 移除幻影条目 `mcp__` 后此句才成立）；沙箱三档 `read-only / workspace-write / full-access`；规则库 `userData/approval-rules.json`（可撤销） | `approval.test.js`（分级 / `needsApproval` / 可补偿性）、`approvalChannel.test.js` / `approval-queue.test.js`（按 `approvalId` 分发 / fail-closed）、`exec-governance.test.mjs`（载荷只能收紧不能放宽）、`computer-use-wiring.test.mjs`（CUA 强门控） | 改动审批档位 / 分级 / `needsApproval` / 沙箱策略，或新增「可被审批」的工具时 | 总览图 ④ · 图 6 |
+| ⑤ 能力层 · 原生工具 + MCP tier（宿主） | `main/nativeTools.js`、`main/codeTools.js`、`main/codeProcess/`、`main/nativeSandbox/`、`main/webTools.js`、`main/docTools.js`、`main/latexTools.js`、`main/mcpPrewarm.js`、`main/intentMcpPrewarm.js`、`main/mcpClient.js`、`main/mcpHttpTransport.js`、`main/mcpProtocol.js`、`main/mcpAutoReconnect.js`、`main/mcpToolCache.js`、`main/tools/timeouts.js`、`main/mcpProgress.js`（请求级进度桥：令牌生成 / 事件整形 / 收尾） | `TIER = { auto-start, whitelist, manual }`；`PREWARM_NAMES = { time, fetch }`；`DEVELOPER_AUTO_START_NAMES = { git, git-mcp }`；`MANUAL_NAMES`；灰度开关 `MJCODE_MCP_LAZY`；`PROTOCOL_VERSION = '2025-11-25'`；`SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25','2025-06-18','2025-03-26','2024-11-05']`（**不含 `2026-07-28`**）；`SHELL_DEFAULT_TIMEOUT_MS = 480000` / `SHELL_WATCHDOG_TIMEOUT_MS = 600000` | `mcp-lazy-prewarm.test.mjs`（tier 判定 / 懒启动）、`mcp-governance.test.mjs`（三层治理）、`timeouts-contract.test.mjs`（超时常量契约）、`native-tools-p3.test.mjs` / `native-doc-tools.test.mjs` / `native-latex-tools.test.mjs`（原生工具接线）、`code-mode.test.mjs`（Code Mode） | 改动原生工具实现、超时常量、MCP tier 判定 / 懒启动灰度开关 / 协议版本与时 | 总览图 ⑤ · 图 3 |
 | ⑥ 记忆层 · 四作用域记忆（SQLite 唯一事实源） | `main/memory/index.js`、`main/memory/scorer.js`、`main/memory/recall.js`、`main/memory/team.js`、`main/memory/memoryFile.js`、`main/memory/bgScheduler.js`、`main/db/index.js` | `SCOPES = ['session','team','project','global']`；`SOURCE_DEFAULT_SCOPE`（来源 → 默认作用域，`resolveScope` 为唯一事实来源，`team` 需归属键 `teamId`）；`LAYER_QUOTA = { session: 2, team: 3, project: 3, global: 2 }`（合计 10）；半衰期 session 7 / team 30 / project 30 / global 90 天（未知回落 14）；`SALVAGE_MIN_HITS = 3` / `PROMOTE_L1_MIN_HITS = 3` / `PROMOTE_L2_MIN_HITS = 5` / `PROMOTE_TEAM_MIN_HITS = 3`（团队提名制阈值）；`MAX_MEMORIES_PER_SPACE = 500` / `MAX_GLOBAL_MEMORIES = 300` / `MAX_TEAM_MEMORIES = 200` / `RECALL_TOP_K_MAX = 50` | `memory.test.js`（写入 / 去重 / 容量闸）、`memory-scope.test.mjs`（`resolveScope` 分流）、`memory-salvage.test.mjs`（salvage + 晋升阈值）、`memory-m4-hardening.test.mjs`（半衰期 / 全局硬闸）、`memory-file-channel.test.mjs`（文件只读双通道）、`memory-mem-command.test.mjs`（`/mem` 分流）、`memory-team.test.mjs`（团队记忆共享/私有/提名制门禁） | 改动记忆写入 / 召回装配 / 晋升阈值 / 半衰期 / 容量闸，或 `/mem` 分流规则时 | 总览图 ⑥ · 图 4 |
-| ⑦ 团队层 · MJ 军团（编排层之上的增量，非独立泳道） | `main/teamStore.js`、`main/ipc/teams.js`、`main/teamWaves.js`、`main/waveEngine.js`、`main/teamInterrupt.js`、`main/teamTools.js`、`main/workerSession.js`、`main/memory/team.js`、`main/memory/recall.js` | `TEAM_MODES = { lead, select }`；`MAX_MEMBERS_PER_TEAM = 20` / `MAX_ACTIVE_MEMBERS = 10` / `MAX_PER_TYPE_IN_RUN = 2` / `MAX_WAVES = 3`；探活 `WAVE_PROBE_INTERVAL_MS = 5000` × `WAVE_PROBE_MAX_MISSES = 3`；`MESSAGE_KINDS` 6 / `MODEL_MESSAGE_KINDS` 5；`MESSAGE_SUMMARY_MAX = 600` 字符 / `MESSAGE_TOTAL_MAX = 4000` 字节；`BUDGET_DEFAULTS = { max_rounds: 8, max_tokens: 200000, max_wall_ms: 1800000 }`（**运行期零强制点，见 B-02**）；`MAX_TOOLS`（成员工具子集，当前未被 Worker 消费，见 B-01） | `team-waves.test.js`、`team-store.test.js`、`team-tools.test.mjs`、`team-interrupt.test.js`、`team-message-bus.test.js`、`team-lead-dispatch.test.js`、`team-dag-wait.test.js`、`team-stream.test.mjs`、`member-model.test.js`、`worker-session.test.js`、`memory-team.test.mjs` | 改动 `main/team*.js`、`main/waveEngine.js`、`main/workerSession.js`、`ipc/teams.js`，或成员模型 / 工具集 / 消息总线契约时 | 总览图 ② · 图 5 |
+| ⑦ 团队层 · MJ 军团（编排层之上的增量，非独立泳道） | `main/teamStore.js`、`main/ipc/teams.js`、`main/teamWaves.js`、`main/waveEngine.js`、`main/teamInterrupt.js`、`main/teamTools.js`、`main/workerSession.js`、`main/memory/team.js`、`main/memory/recall.js`、`main/ipc/teamControl.js`（成员会话重置 → 写 `offline`）、`desktop/shared/mcpAllow.mjs`（成员级 MCP 授权判定） | `TEAM_MODES = { lead, select }`；`MAX_MEMBERS_PER_TEAM = 20` / `MAX_ACTIVE_MEMBERS = 10` / `MAX_PER_TYPE_IN_RUN = 2` / `MAX_WAVES = 3`；探活 `WAVE_PROBE_INTERVAL_MS = 5000` × `WAVE_PROBE_MAX_MISSES = 3`；`MESSAGE_KINDS` 6 / `MODEL_MESSAGE_KINDS` 5；`MESSAGE_SUMMARY_MAX = 600` 字符 / `MESSAGE_TOTAL_MAX = 4000` 字节；`BUDGET_DEFAULTS = { max_rounds: 8, max_tokens: 200000, max_wall_ms: 1800000 }`（**运行期零强制点，见 B-02**）；`MAX_TOOLS`（成员工具子集，当前未被 Worker 消费，见 B-01） | `team-waves.test.js`、`team-store.test.js`、`team-tools.test.mjs`、`team-interrupt.test.js`、`team-message-bus.test.js`、`team-lead-dispatch.test.js`、`team-dag-wait.test.js`、`team-stream.test.mjs`、`member-model.test.js`、`worker-session.test.js`、`memory-team.test.mjs` | 改动 `main/team*.js`、`main/waveEngine.js`、`main/workerSession.js`、`ipc/teams.js`，或成员模型 / 工具集 / 消息总线契约时 | 总览图 ② · 图 5 |
 
 > **⑦ 这一行为什么是「第八条」而不是「第七个子系统」**：团队层**没有第二份编排实现**。
 > `ipc/teams.js` 的派活（`teams:dispatch`）直接调用 `orchestrator.planGoal`，通过 `planWaves` 钩子把
@@ -212,9 +223,9 @@ flowchart TB
 
 | 命令 | 作用 | 通过标准 |
 |---|---|---|
-| `npm test` | 发现式全量测试（`test/run-all.mjs` 自动扫描 `test/**/*.test.*`），已把 3 个外部前置门禁并入 | 全量检查项全绿（第八轮三次收尾实测 **266 项 / EXIT=0**，见 §12.1） |
+| `npm test` | 发现式全量测试（`test/run-all.mjs` 自动扫描 `test/**/*.test.*`），已把 5 个外部前置门禁并入 | 全量检查项全绿（2026-10-29 实测 **总计 316 · 通过 313 · 失败 0 · 跳过 3 / EXIT=0**，见 §12.1） |
 | `npm run typecheck` | 全量 TS/JSX 类型检查 | **零错误** |
-| `npm run lint` | 静态规则检查（棘轮） | **0 error / ≤161 warnings**，警告数不得反弹 |
+| `npm run lint` | 静态规则检查（棘轮） | **0 error / ≤157 warnings**，警告数不得反弹 |
 | `npm run eval:check` | 离线评估自检（`eval/run-eval.mjs --check`） | 自检通过（亦为 `npm test` 前置门禁之一） |
 
 > 口径：表内「守护测试」列只列**该子系统的定点回归**，并非全集；跨子系统改动（如新增原生工具的 8 环节接线）须以 `tool-registration-matrix.test.mjs` 的双向差集断言为准，跑全量 `npm test` 兜底。
@@ -552,15 +563,37 @@ flowchart TB
 ### 5.4 MCP 连接与运维
 
 - `main/mcpClient.js`：工具名清洗与注册（服务端原始工具名规范化为模型可用名，并维护 `exposedName → originalName` 映射）。
-- `main/mcpProtocol.js`：协议版本与客户端能力声明（详见 5.6 节）。
+- `main/mcpProtocol.js`：协议版本与客户端能力声明（详见 5.7 节）。
 - `main/mcpHttpTransport.js`：HTTP 传输，`send()` 中按协商结果在每个 POST 上附加 `MCP-Protocol-Version` 头。
 - `main/mcpAutoReconnect.js`：重连采用**有界并发**，避免串行启动拉长工具可用时间；完成后输出汇总统计。
 - `main/mcpStdioTransport.js`：stdio 服务密钥通过环境变量配置表单输入。
 - 启动参数占位符必须在连接前完成替换；未填充参数会导致服务静默不可用，连接前做合法性校验，参数缺失时明确拒绝连接而非返回假健康状态。
 - `stderr` 与 `notifications/message` 默认仅透传 warn/error，可用 `MJCODE_MCP_VERBOSE` 开启全量。
 - 授权双轨分流：oauth 类型远程服务走浏览器授权引擎；paste_key 类型保留粘贴令牌入口；stdio 类走环境变量；手动类型仅提供文档指引。**OAuth 令牌全程在 Electron 主进程闭环处理**，不经渲染进程 IPC 传递。
+- **请求级进度（P3-1，2026-10-29 落地）**：服务端的进度要能走到界面，必须先补上「**发令牌**」这一环——
+  `tools/call` 的 `params._meta.progressToken` 不带令牌时，规范规定服务端**不会**产生任何进度通知
+  （此前客户端只有一条「记 `lastProgress`、不路由」的分支，等于死代码）。
+  现由 `main/ipc/mcp.js` 的 `callMcpTool` 在**确实有人要收进度**时（`ctx.onProgress` 存在）生成令牌并登记监听器，
+  `main/mcpClient.js` 以 `server.progressListeners`（Map）按令牌把 `notifications/progress` 路由回本次调用；
+  渲染层经 `preload.onMcpProgress` 收到 `mcp:progress` 事件，由 `renderer/src/components/McpProgressStrip.tsx` 显示浮动进度条。
+  两条纪律：① **只推发起方窗口**（进度是本次调用的副作用，别的窗口既无对应等待卡片，也无权知道另一会话在跑什么）；
+  ② **发送一律吞异常**（窗口中途关闭不得把一次工具调用变成失败——工具结果的价值高于一条进度条）。
+  进度事件的 `end` 相由**客户端**在调用落定时补发（`settleProgress`），不假装是协议给的。
 
-### 5.5 本实现为 MCP tools profile（能力边界显式声明）
+### 5.5 成员级 MCP 授权粒度（按服务 / 工具）
+
+> **大白话**：以前一个成员只有「能用 MCP / 不能用 MCP」一个开关。现在是**逐条授权**：
+> 这个成员能用哪个服务的哪个工具，一条一条列清楚；没列的，模型连看都看不到。
+
+- **授权数据**：`team_members.mcp_allow_json`（db 迁移 v17 `team-mcp-allow`），由 `main/teamStore.js` 持久化，
+  经 `main/teamRoster.js` 进入运行期编制快照，由 `main/rolePresetApply.js`（成员运行期配置的唯一事实来源）落到成员。
+- **判定实现**：`desktop/shared/mcpAllow.mjs` 的 `normalizeMcpAllow`（归一）/ `mcpAllowMatches`（单条命中）/ `narrowToolsByMcpAllow`（收窄工具集）。
+- **一条容易写错的细节**：**服务端名必须先经 `decodeToolName` 反解**再比较——
+  模型看到的是百分号编码后的名字（`shared/mcpNameCodec.mjs`），直接拿明文服务端名去比会**永远匹配不上**。
+- **收窄发生在 ②b 段**：`agent-core/index.js` 的 `toolCandidatePool` 在「角色子集」之后收窄，
+  因此**模型看到的工具表与最终工具集同源**；收窄后的集合同时收紧 `advertisedToolNames` 运行时白名单（见 10 节）。
+
+### 5.6 本实现为 MCP tools profile（能力边界显式声明）
 
 **一句话结论：连接器生态可用，但不应被表述为完整 MCP host。**
 
@@ -582,7 +615,8 @@ flowchart TB
 | 工具定义预算 | `description` 超限截断（构造侧与缓存落盘侧同一套阈值），`inputSchema` 超限/超深**标记不可用而非截断** |
 | OAuth | 远程服务浏览器授权引擎，令牌主进程闭环 |
 | 工具名拼装 | `mcp__<server>__<tool>` 百分号编码（`_`→`%5F`、`%`→`%25`）可逆，见 `shared/mcpNameCodec.mjs` |
-| 客户端能力声明 | `roots` / `completion` / `logging`——**每一项都有对应应答实现**（声明而不实现会让服务端一直等，表现为「连上了但一调用就挂死」）。能力本身的弃用状态见 5.6 节 |
+| 客户端能力声明 | `roots` / `completion` / `logging`——**每一项都有对应应答实现**（声明而不实现会让服务端一直等，表现为「连上了但一调用就挂死」）。能力本身的弃用状态见 5.7 节 |
+| 请求级进度 | `tools/call` 带 `params._meta.progressToken` → 按令牌路由回**发起方窗口**；`end` 相由客户端补发（协议无「结束」概念） |
 
 **未实现（显式缺口，均为刻意取舍而非疏漏）**
 
@@ -594,7 +628,7 @@ flowchart TB
 
 **读法约定**：本产品在 MCP 生态里的定位是 **client + tools profile**——能把用户已保存的连接器连起来、把它们的工具安全地交给模型并按审批策略调用。凡涉及「资源浏览 / 提示词模板 / 任务编排 / 反向采样」的表述，都应视为**未支持**，不得在文档、UI 文案与市场材料里被暗示为已实现。
 
-### 5.6 协议代际：落后一代，且是「已知且有意的推迟」
+### 5.7 协议代际：落后一代，且是「已知且有意的推迟」
 
 > **大白话**：MCP 协议本身在升级。最新一代做了个「拆掉握手」的大改：不再需要先打招呼建立会话，
 > 每个请求自带身份和版本。我们目前的做法还是老一代：必须先握手、必须带着会话 ID。
@@ -675,6 +709,12 @@ flowchart TB
 - `main/pluginDiscovery.js` / `pluginMarket.js`：插件发现与市场（本地已装 + 本地市场索引 + 公网源合并去重）。
 - 技能与 MCP 的区别：技能是**提示词与工作流知识**（不引入新进程/连接），MCP 是**外部能力连接器**（独立进程/远程服务）。
 - **渐进披露**（三级）：渲染层显式下发 `skillDisclosure: 'summary'` → 引擎只注入 name + description 索引 → 正文由 `load_skill` 按需加载并经 `guardUntrusted` 过审。避免「预载全量技能目录」吃掉上下文预算。
+- **触发器两级（2026-10-29 落地）**：技能被「想起」有两条路径，语义**不同**，别混为一谈。
+  ① **slash 强制**：`desktop/shared/skillTrigger.mjs` 的 `parseSlashSkill` 解析 `/技能名`；
+     `agent-core` 据 `forcedSkillName` 置 `slashForced`，该技能**跳过摘要裁剪**，正文**强制注入**本轮上下文。
+  ② **关键词标注**：`matchSkillsByQuery` 做关键词匹配（默认最多 5 条），
+     命中**只加一句提示语**（「本次消息提到，建议优先加载」），**不改变披露级别**、不强制加载。
+  一句话记法：**slash 是命令，关键词是建议。**
 
 ### 6.2 生态中心
 
@@ -682,16 +722,24 @@ flowchart TB
 - 来源合并：`mcp-connectors.json`（精选目录，有「条目数 ≤ 90」的防膨胀不变式）+ `mcp-connectors-workbuddy.json`（从 WorkBuddy 目录导入，id 前缀 `wb-`）。去重规则为**精选优先**（先按安装地址，其次按 name）。
 - 数字员工卡片**无需下载按钮**：所有内容均为本地存储，仅保留「详情」与「招募」两个操作按钮。
 
-**生态资产计数（第八轮工作区实测）**：数字员工 **51**；MCP 连接器合并后 **291**（精选目录 **77** + workbuddy **214**，合并去重后 291）；技能目录条目 `skills.json` **219**；磁盘真实 `SKILL.md` **154**。
+**生态资产计数（2026-10-29 复核，取法命令 `node desktop/scripts/gen-ecosystem-counts.mjs`）**：数字员工 **51**；MCP 连接器 **292**（精选目录 **78** + workbuddy **214**，两套命名空间 id 零重叠、**运行时不合并去重**）；技能目录条目 `skills.json` **219**；磁盘真实 `SKILL.md` **154**。
 
 > **口径警示（诚实标注）**：这四组数字与既有文档中的表述**全部对不上**（第七轮 `F-021` 的延续），第八轮**未裁定谁对**（报告 §7.2 L-2），只给取法命令。处置见报告 §4 `D-812`：建立单一的事实源条目，各文档改为引用它。在裁定之前，本文档的这四组数字**不得作为对外承诺**。
+>
+> **2026-10-29 复核**：四组数字由单一事实源 `desktop/scripts/gen-ecosystem-counts.mjs` 现算确认（员工 51 / 连接器 292 / 技能目录条目 219 / 工作区已安装 154），仅连接器一组由 291 变为 **292**（精选目录 77 → **78**），两处已同值。
 
 ### 6.3 数字员工（Digital Employees）
 
 `main/ecosystem.js` 的 `loadDigitalEmployees` 加载 `digital-employees.json`，并对每项做**归一化与 fail-closed 保护**：
 
 - 非法策略值降级为最保守默认，避免生态数据绕过审批矩阵。
-- 员工角色映射为运行时 **`rolePreset`**：工具子集（`tools`）、审批档（`approval_policy`）、沙箱档（`sandbox_policy`）、起步技能（`starter_skills`）、模型档（`default_model_tier`）。
+- 员工角色映射为运行时 **`rolePreset`**：工具子集（`tools`）、审批档（`approval_policy`）、沙箱档（`sandbox_policy`）、
+  **技能集合（`skillNames` = `core_skill_ids` ∪ `starter_skills`）**、模型档（`default_model_tier`）。
+  三个命名空间**不得混用**：`core_skill_ids` / `starter_skills` 是技能 id（kebab-case，用于按名装载 SKILL.md）；
+  `core_skills` 是中文**能力词表**，只用于目录展示与选人匹配，**永不进加载键**——中文不可能是技能目录名，
+  实测 51 名员工的 246 个唯一 `core_skills` 值在「已安装目录 + `ecosystem/skills.json`」里可解析数曾为 **0**（并进去＝每次多 246 次无效查找）。
+  2026-10-29 P1-2 初版曾把 `core_skills` 并入 `skillNames`，属语义错误，已由「新增 `core_skill_ids` 字段」回正
+  （见 `main/ecosystem.js` 的 `skillNames` 装配处与 `docs/harness-r9/02-design/core_skill_ids-映射口径-2026-10-29.md`）。
 - 由 `buildEmployeeRuntimePreset` 产出运行时预设，审批与沙箱取「**更严格者**」；模型字段经 `canonicalizeModelRef` 归一。
 
 ---
@@ -800,6 +848,15 @@ flowchart TB
 
 > 处置建议见报告 §4 `D-806`：Worker 路径改用一次分层召回（同时覆盖项目层与团队层）；
 > 团队记忆链从 `memory.autoCapture` 总闸下解耦，或明确声明「默认关闭 = 该能力默认不生效」。
+>
+> **处置（2026-10-29 复核：两条均已收口）**：
+> ① **已收口**（第八轮 B-11，见 13.6 CL-3）——Worker 路径改用一次分层召回：`main.js` 的 `buildTaskPrompt`
+>    按 `group.thread_id` 传 `scopes`（有会话 `session/project/global`，无会话 `project/global`）与 `conversationId`，
+>    不再走「`space_id = ?` 全 scope 混排」的旧路径；`LAYER_QUOTA` 的「注入 10 条上限」在 Worker 链路上**现已生效**。
+> ② **已收口**（第八轮 D-806，见 13.1 M5）——写入侧的闸已从 `memory.autoCapture` **解耦**为独立开关
+>    `memory.teamAutoCapture`（**默认开**，只有显式 false 才关），判据落在 `main/teamMemoryGate.js` 的纯函数
+>    `teamCaptureEnabled`；团队记忆链**不再默认什么都不写**。
+> 上表**保留为发现原文**（编号与严重度不改），以便后人知道「它曾经是什么样、后来靠什么收口」。
 
 ---
 
@@ -912,6 +969,20 @@ flowchart TB
 | `SYSTEM_PROMPT_MAX` | 12000 | 成员人格串长度闸 |
 | `BUDGET_DEFAULTS` | `{ max_rounds: 8, max_tokens: 200000, max_wall_ms: 1800000 }` | 三键预算（**运行期零强制点**） |
 
+**成员状态 FSM（2026-10-29 落地）**：成员在编制里有一个显式状态，值域 `busy` / `waiting` / `idle` / `offline`。
+写入口唯一：`main/teamStore.js` 的 `setMemberState`。
+驱动点全在 `main/workerPool.js`：**任务开始 → `busy`**、**进入等待 → `waiting`**（槽位已释放，成员不再 busy）、
+**到达终态 → `idle`**；`waiting` 分支与「探活撤员后重派」分支都提前 `return`，
+故**不会**把正在等待或被重派的成员误标为 `idle`。**无归属成员的任务（`ownerMemberId` 为空）不驱动成员状态。**
+`main/ipc/teamControl.js` 的 `resetMemberSession` 把成员置 `offline`（会话已被重置、私有记忆已降权）；
+`main/ipc/teams.js` 的 `teams:dispatch` **过滤 `offline` 成员**（其会话已重置，不宜再派活）；
+过滤后为空时由 `planWaves` 兜底，与「名册为空」极端情况同口径（**fail-open 方向不变**）。
+界面侧 `renderer/src/components/TeamsPage.tsx` 显示成员状态徽标。
+
+**统筹不变式（2026-10-29 落地）**：「成为统筹」的唯一写入口是 `main/teamStore.js` 的 `_setLeadInternal`，
+它拒绝把**已下架成员（`enabled` 为假）**设为统筹。此前该判据缺失时出现过**状态自洽但事实错误**的假绿——
+「已下架成员仍当统筹，而 `leadMissing` 报 false」。这类假绿比报错更危险：它让界面显示的团队结构与真实编制不一致。
+
 **三条缺口（如实记录，均为已确认事实）**：
 
 | # | 缺口 | 事实 | 严重度 |
@@ -920,14 +991,22 @@ flowchart TB
 | ② | **G2 三键预算运行期零强制点** | `budget` 的三个消费者全是「非强制」：`buildTeamContext` 拼进 LLM 拆解提示词文本、派活消息的 `payload.budget`、`audit('team_dispatch', ...)` 字符串。`taskStore` / `workerPool` 全库无 `budget` 消费、无组级墙钟。当前实际只有 per-task `timeoutMs` 一闸 + 引擎固定 `maxRounds=20` / `tokenBudget=200000`（后两者是固定值，不是团队预算；与 `max_tokens` 名义 200000 属**数值巧合而非贯通**） | **P0**（`B-02`） |
 | ③ | **团队层零端到端 eval** | 相对 HEAD 新增 **11 个**测试（`member-model` / `memory-team` / `team-dag-wait` / `team-interrupt` / `team-lead-dispatch` / `team-message-bus` / `team-store` / `team-stream` / `team-tools` / `team-waves` / `worker-session`），**100% 是单模块确定性单测**；触及 `runGroup` / `finalizeGroup` 的 0 个。三条**顺序敏感**不变量无覆盖：探活撤员 vs 失败分支（源码注释自己写明「必须早于失败分支，否则撤员被当成超时失败，备用成员永远等不到重派」）、`team_wait` defer vs 失败分支、组收尾 | **P1**（`B-03`） |
 
+> **缺口 ① 的处置**：该条已于第八轮 D-808 收口——成员运行期配置经 `main/rolePresetApply.js` 在 `runOpts` 装配末尾生效
+> （人格走 `guardUntrusted`，工具集走交集裁剪、空交集 fail-closed，治理档只取更严），守护测试见 13.2 TL-6。
+> 本行**保留为发现原文**（编号与严重度不改），以便后人知道「它曾经是什么样、后来靠什么收口」。
+>
+> **缺口 ③ 的处置**：该条已于第八轮 D-807① 收口——新增 `team-e2e-invariants.test.js`（14 条）走真实 `runGroup` → `finalizeGroup`，
+> 覆盖三条顺序敏感不变量（详见 12.5 与 13.2 TL-8）。本行**同样保留为发现原文**。
+
 **另一条需在文档层面明确的事实**：成员之间的**实质信息流**不是「互发消息」，而是
 「同组已完成任务结论摘要（`buildTaskPrompt` 的 `doneSiblings`，每条 `slice(0, 300)`）+ 团队记忆（`topK:3`，每条 `slice(0,200)`）」。
 `team_send_message` 是模型侧的写通道，但**当前无人读取**——`TEAM_TOOLS` 只有 list / board / send / wait 四个，没有读消息工具；
 消息只流向 `teams:listMessages`（IPC → 渲染层）与 `shared/teamStream.mjs`（UI 投影），**不进任何 `runOpts.messages` / `systemPrompt` / `buildTaskPrompt`**。
 因此 `MESSAGE_KINDS` 里的 `question` / `handoff` 两种 kind 是**死语义**（占 6 分之 2）（`B-04`）。
 
-> **行数预警**：`main/ipc/teams.js` 为 **799 行（raw）**，**不在** `BASELINE_800` 白名单（该白名单只有 `main/computerUse.js`、`main/main.js`、`agent-core/index.js` 三条）内，门禁判据是 `split('\n').length > 800`，**余量 2 行**。
-> 处置方向是**拆模块**而不是加白名单（报告 §4 `D-811`）。
+> **行数预警（2026-10-29 实测）**：`main/ipc/teams.js` 为 **800 行（raw，`split('\n').length`）**，**不在** `BASELINE_800` 白名单（该白名单只有 `main/computerUse.js`、`main/main.js`、`agent-core/index.js` 三条）内，门禁判据是 `split('\n').length > 800` ⇒ **余量 0 行**，任何新增行都会触发 800 行软档门禁（`max-lines` 棘轮守护）。
+> 同档的还有 `main/teamStore.js` / `main/workerPool.js` / `main/approval.js`（同为 **800 行**，均不在白名单内）；取法命令见 12.4。
+> 处置方向是**拆模块**而不是加白名单（报告 §4 `D-811`；白名单纪律是「只减不增」）。
 
 ---
 
@@ -968,6 +1047,14 @@ flowchart TB
   - `shell` / `git` / `mcp` / `browser` / `chrome` / `code_exec` / `computer_use` 等工具的级别在此明确。
   - `toolLevel(tool, args)` 决定级别；`needsApproval(...)` 依据 approvalMode、规则豁免、**L1 不可豁免**、auto-safe 放行等逻辑决定是否弹卡。
 - **规则记忆**：`conversation`（本对话同类，进程内存）与 `always`（「始终允许」，持久化到 `userData/approval-rules.json`，走 `writeFileDurable` 防写坏）。
+- **不可记忆工具集（2026-10-29 P0-1 落地）**：`main/approval.js` 的 `NON_REMEMBERABLE` 列出
+  **恒为 L3 且决策不落规则库**的工具——`unconfined_exec` / `scheduled_create` / `computer_use` / `cua_action` /
+  `install_plugin` / `pr_review` / `pr_comment`；`isRememberable(tool)` 是唯一判据。
+  `main/main.js` 的 `applyApprovalDecision` 在写规则库前并入 `&& !approval.NON_REMEMBERABLE.has(tool)`：
+  命中时**「始终允许 / 本对话允许」两个分支都不执行**（等价于「收到了也直接忽略」）。
+  本轮新增 `install_plugin` / `pr_review` / `pr_comment` 三项：此前三者可被「始终允许」沉淀成规则，
+  之后又被 `needsApproval` 的规则豁免分支**静默放行**——与「L3 不可被同类规则静默放行」的纪律直接矛盾。
+  入集后审批卡不再渲染「记住」按钮 ⇒ 规则无从沉淀 ⇒ 每次仍逐次弹卡。
 - **可撤销**：「始终允许」规则必须可见可撤销——提供 `approval:listRules` / `approval:deleteRule` IPC。
 - `main/approvalChannel.js`：并发审批**按 `approvalId` 精确分发**，防串扰与张冠李戴；非法决策 fail-closed 收敛为 `deny`；等待带超时 deny。
 - 无可用窗口时 fail-closed 按 deny 收尾（不对 `mainWindow.webContents` 裸解引用）。
@@ -1002,6 +1089,12 @@ flowchart TB
   为什么选 L3 而不是 L1：L3 = **需审批、且可被「始终允许 / 本对话同类」规则豁免**，与 `code_exec` 的普通代码、`mcp__` 工具同档；
   L1 是「逐次审批、规则不可豁免」，用在未知工具上过严（会把合法新工具直接卡死），而且 L1 的语义是「危险命令级」，不该被兜底滥用。
 - 守护：`tool-registration-matrix.test.mjs` 的 **⑤-d** 是一条**反向断言** —— `toolLevel(未登记名)` 必须等于 `'L3'`；改回 `'L2'` 立刻红。
+- **两级硬地板（2026-10-29 澄清，避免误读上一条）**：
+  ① **L1 不可豁免**：逐次审批，规则库也容不下；
+  ② **不可记忆**（`NON_REMEMBERABLE` 名单内工具）：L3 仍可走「规则豁免」判据，
+     但决策**不落规则库**，因而实际仍是**逐次弹卡**——见 9.1 的「不可记忆工具集」。
+  本轮**未**在 `needsApproval` 里另加「L3 一律短路」的第二判据：两套判据并行会互相覆盖，
+  以 `NON_REMEMBERABLE` 为**唯一判据**即可——路径最短、可测、且不与 `toolLevel()` 的兜底方向冲突。
 
 ### 9.4 沙箱体系
 
@@ -1079,13 +1172,18 @@ flowchart TB
 > **未验证声明**：「原生写」与「MCP 写」是否在 `verify_ledger` 的写入台账里同源計数，**第八轮未验证**（与 `A-04` 相关）。
 > 详见角度 A §5 遗留项。
 
+- **运行时白名单与工具面同源（正面结论）**：`agent-core/index.js` 的 `advertisedToolNames` 由**最终工具集**派生，
+  模型请求的工具名不在其中即被拒——因此任何工具面收窄（例如 2026-10-29 成员级 MCP 授权在 ②b 段收窄 `toolCandidatePool`）
+  会**同时**收紧运行时白名单，不存在「界面收窄了、运行时仍能调」的缝。
+  这也是「收窄发生在 ②b 段而不是末端」的意义：收窄点选在派生之前，白名单自动跟随。
+
 ---
 
 ## 十一、i18n 与界面结构
 
 > **大白话**：界面文案全部走双语包（中文 / 英文），代码里不允许出现写死的中文句子。
 > 这一层本身很简单，但有一个坑：**检查工具存在，却没有任何东西会自动去跑它**——
-> 于是「写了硬编码文案」不会让任何门禁变红。这是第八轮点名的「存在即假绿」问题。
+> 于是「写了硬编码文案」不会让任何门禁变红。这是第八轮点名的「存在即假绿」问题（**该形态已于第八轮 D-807② 收口**，见 11.1）。
 
 ### 11.1 国际化
 
@@ -1093,12 +1191,16 @@ flowchart TB
 - 缺失 key 处理：en-US 缺失回落 zh-CN，再缺返回 key 并 warn；`LanguageProvider` 支持热切换。
 - **动态引用 key 必须在所有语言包存在**，否则 UI 渲染原始 key；由 i18n 单元测试的「动态引用 key 存在性断言」作为回归门禁。
 - 工具轨迹文案映射（`ToolTrace.tsx` 的 `toolNameCN`）通过 `toolTrace.*` key 并调用 `tGlobal()`，保证语言切换生效。
-- **已知断裂（`C-03`，P2）**：`scripts/i18n-scan.mjs` 与 `scripts/i18n-modcheck.mjs` 两个扫描脚本存在，但：① **不在 `test/run-all.mjs` 的 `GATES` 里**（GATES 只有 `eval:check` / `doc-fact-check` / `harness-r7:check` 三项）；② `test/` 下**无独立 i18n 套件**。结果是 i18n key 缺失 / 硬编码文案**没有任何自动触发方**。这与第七轮「eval 存在却无人触发」是同一个失败形态——eval 那次已被收进 GATES，i18n 这次还没有。处置见报告 §4 `D-807`。
+- **i18n 扫描进入门禁（已收口，第八轮 D-807②）**：`scripts/i18n-scan.mjs`（扫 `renderer/src` 的裸中文）与
+  `scripts/i18n-modcheck.mjs`（查语言包中英键集与 `{var}` 插值一致性）**均已并入 `test/run-all.mjs` 的 `GATES`**
+  （`GATES` 现为 **5** 项：另有 `eval:check` / `doc-fact-check` / `harness-r7:check`），
+  且两条都做过变异式反向验证（无参退出码 2、有残留或缺键退出码 1）。此前「脚本存在却无人触发」的形态已消除，见 13.5 GL-2 / GL-3。
 
 ### 11.2 界面结构
 
 - 入口 `App.jsx`：维护线程/项目状态，`showDashboard` / `showScheduled` / `showEcosystem` 视图切换，快捷键（`Cmd+K` 命令面板、`Cmd+N` 新会话、`Cmd+O` 项目选择、`Cmd+,` 设置）。
-- 主要组件：`ChatArea`（主对话，接收 `approvalSettings` / `agentsMd` / `mcpTools` / `enabledSkills` 等安全与能力配置）、`MessageStream`（消息流）、`ToolTrace`（工具轨迹，含中文标签映射）、`SubtaskTree`（子任务树）、`Dashboard`（仪表盘）、`MermaidDiagram`（对话内 Mermaid 可视化）、`settings/*`、`ui/*`（Button / Input / Switch / Modal 等原语）。团队层对应 `TeamBoard` / `TeamDispatchPanel` / `TeamRunStream`（本轮新增，主进程侧对应 `ipc/teams.js`）。
+- 主要组件：`ChatArea`（主对话，接收 `approvalSettings` / `agentsMd` / `mcpTools` / `enabledSkills` 等安全与能力配置）、`MessageStream`（消息流）、`ToolTrace`（工具轨迹，含中文标签映射）、`SubtaskTree`（子任务树）、`Dashboard`（仪表盘）、`MermaidDiagram`（对话内 Mermaid 可视化）、`settings/*`、`ui/*`（Button / Input / Switch / Modal 等原语）。团队层对应 `TeamBoard` / `TeamDispatchPanel` / `TeamRunStream` / `TeamsPage`（编制管理，含成员状态徽标：`busy` / `waiting` / `idle` / `offline`，主进程侧对应 `ipc/teams.js` 与 `ipc/teamControl.js`）；
+  MCP 侧对应 `McpProgressStrip`（请求级浮动进度条，主进程侧对应 `main/mcpProgress.js`）。
 - **界面规范**：默认主题图标为白底黑字（除 logo 与名称）、无蓝色图标、色彩风格性冷淡；不使用 emoji；固定头部行须 `shrink-0` 防止 flex 压缩导致遮挡。
 
 ### 11.3 前后端接线完整性（唯一口径）
@@ -1131,20 +1233,22 @@ flowchart TB
 | 命令 | 说明 | 基线 |
 |---|---|---|
 | `npm run typecheck` | 渲染层 TypeScript 类型检查 | 零错误 |
-| `npm run lint` | ESLint（含棘轮阈值守护） | 0 error / 161 warnings（棘轮，不得反弹） |
-| `npm test` | **发现式全量测试**（`test/run-all.mjs`） | 见下方「三个数字」；第八轮实测 **EXIT=0 · 总计 246 · 通过 246 · 失败 0** |
+| `npm run lint` | ESLint（含棘轮阈值守护） | 0 error / 157 warnings（棘轮，不得反弹） |
+| `npm test` | **发现式全量测试**（`test/run-all.mjs`） | 见下方「三个数字」；2026-10-29 实测 **EXIT=0 · 总计 316 · 通过 313 · 失败 0 · 跳过 3** |
 | `npm run eval:check` | 离线评估自检（任务集/schema 完整性） | 作为 `npm test` 前置门禁之一 |
 
-> **口径（三个数字不可互换，混用是本类文档的典型错误）**，均为第八轮工作区实测：
-> **241** = 测试**文件数** = `test/*.test.js` **88** 个 + `test/*.test.mjs` **153** 个；
-> **243** = 241 + **2 个 smoke**（`smoke-load.mjs` / `render-smoke.mjs`）= `run-all.mjs` 的 **suite 数**；
-> **246** = 243 + `run-all.mjs` 的 `GATES` 里 **3 项**（`eval:check` / `doc-fact-check` / `harness-r7:check`）= 汇总行「总计 N」的**检查项数**。
+> **口径（三个数字不可互换，混用是本类文档的典型错误）**，均为 2026-10-29 工作区实测：
+> **309** = 测试**文件数**（`ls test/*.test.js test/*.test.mjs | wc -l`）；
+> **311** = 309 + **2 个 smoke**（`smoke-load.mjs` / `render-smoke.mjs`）= `run-all.mjs` 的 **suite 数**；
+> **316** = 311 + `run-all.mjs` 的 `GATES` 里 **5 项**（`eval:check` / `doc-fact-check` / `harness-r7:check` /
+> `i18n-scan` / `i18n-modcheck`）= 汇总行「总计 N」的**检查项数**。
 >
 > **这组数字是快照不是常量**——每增删一个测试文件它都会变。需要当期值时在 `desktop/` 下现算：
 > `ls test/*.test.js test/*.test.mjs | wc -l`（文件数）、`ls test/smoke-load.mjs test/render-smoke.mjs | wc -l`（smoke 数，2）、
-> `grep -n "GATES" test/run-all.mjs`（GATES 项数，3）；三者相加即「总计 N」。或直接 `npm test` 读汇总行。
+> `grep -n "const GATES" -A 7 test/run-all.mjs`（GATES 项数，5）；三者相加即「总计 N」。或直接 `npm test` 读汇总行。
 >
-> **第八轮实测结果（2026-10-21，工作区口径）**：`node test/run-all.mjs` → **EXIT=0 · 总计 246 · 通过 246 · 失败 0**。
+> **2026-10-29 实测结果（工作区口径）**：`node test/run-all.mjs` → **EXIT=0 · 总计 316 · 通过 313 · 失败 0 · 跳过 3**。
+> （口径对齐：§1.2 目录树的「合计 316 个检查项」、§13.5 GL-1 的「316 检查项」与本节同源，取法命令同上。）
 >
 > **绿里有保留项（必须点名）**：汇总公式为 `通过 = 总数 − 失败`，**没有减掉 skipped**。
 > darwin 本机 `sandbox-crossplatform` / `sandbox-linux-status` / `sandbox` **三个套件未真正执行**却被计入「通过」：
@@ -1161,12 +1265,12 @@ flowchart TB
 - **全量跑完**：单套件崩溃只记录、不阻断后续；最后按失败清单以非零退出码报错。
 - **末尾汇总**：FAIL / CRASH / SKIP 列表集中在末尾，不再被截断。
 - **前置门禁**：把外部命令级门禁纳入基线，非零退出同套件一样计失败——避免「存在却无人触发」的假绿。
-- **尚未纳入的部分**：i18n 扫描脚本（`i18n-scan.mjs` / `i18n-modcheck.mjs`）既不在 `GATES`、也 `test/` 下无独立套件，见 11.1 节（`C-03`）。
+- **已纳入的部分（2026-10-29 复核）**：i18n 扫描脚本（`i18n-scan.mjs` / `i18n-modcheck.mjs`）**已在 `GATES` 里**（`GATES` 现为 **5** 项），`test/` 下仍无独立 i18n 套件，但已有自动触发方——见 11.1 与 13.5 GL-2 / GL-3。
 
 ### 12.3 CI 语法门禁
 
 - 采用**全量扫描**而非白名单文件列表：通过 `find` 遍历所有 JS/TS 文件执行 `node --check`，杜绝新增文件假绿。
-- lint 警告棘轮阈值收紧至 161 并配套棘轮守护单元测试，确保警告数不反弹。
+- lint 警告棘轮阈值收紧至 157 并配套棘轮守护单元测试，确保警告数不反弹。（取法命令：`grep -n '"lint"' desktop/package.json` → `--max-warnings=157`；棘轮守护测试常量 `LINT_WARNINGS_BASELINE` 同为 `157`，二者同值。）
 - CI 平台为 `ubuntu-latest`，跑 lint / `npm test` / typecheck / build / 全量语法门禁，与本地 `npm test` **同一门禁**。
 
 ### 12.4 行数软档（两把尺子，勿混用）
@@ -1176,25 +1280,39 @@ flowchart TB
 
 | 文件 | raw 行 | code 行 | 在 `BASELINE_800`？ | 在 ESLint `max-lines` 豁免？ |
 |---|---:|---:|---|---|
-| `main/main.js` | 1981 | 1342 | 是 | 否（code < 1500，本就不需要） |
+| `main/main.js` | 2257 | 1500 | 是 | 否（code ≤ 1500，本就不需要） |
 | `main/computerUse.js` | 1336 | 994 | 是 | 否（同上） |
-| `agent-core/index.js` | 3669 | 2613 | 是 | 是（唯一一条，因 code > 1500） |
-| **`main/ipc/teams.js`** | **799** | 580 | **否** | 否 |
-| `main/teamStore.js` | 723 | — | 否 | 否 |
-| `main/workerPool.js` | 788 | — | 否 | 否 |
+| `agent-core/index.js` | 4185 | 2958 | 是 | 是（唯一一条，因 code > 1500） |
+| **`main/ipc/teams.js`** | **800** | 570 | **否** | 否 |
+| `main/teamStore.js` | 800 | 558 | 否 | 否 |
+| `main/workerPool.js` | 800 | 549 | 否 | 否 |
+| `main/approval.js` | 800 | 496 | 否 | 否 |
 
 > **两把尺子的口径**（项目既有纪律，非本轮新创）：800 行软档按 **raw**（`split('\n').length`，判据 `> 800`）；
-> ESLint `max-lines: 1500` 按 **code**（`skipBlankLines` + `skipComments`）。
+> ESLint `max-lines: 1500` 按 **code**（`skipBlankLines` + `skipComments`，见 `desktop/eslint.config.mjs`）。
 > 因此「`main.js` 在软档白名单却不在 ESLint 豁免清单」不是登记不一致——两把尺子量的是不同事实，完全自洽（报告 §7.1 第 2 条）。
 >
-> **`ipc/teams.js` 的余量**：当前 **799 行（raw）**，**不在** `BASELINE_800` 白名单内 ⇒ **再增 2 行即触发失败**。
-> 处置方向是**拆模块**而不是加白名单（白名单纪律是「只减不增」），见报告 §4 `D-811`。
+> **取法命令（2026-10-29 实测）**：raw 列 =
+> `node -e "const fs=require('fs');for(const f of ['main/main.js','main/ipc/teams.js','main/teamStore.js','main/workerPool.js','main/approval.js','agent-core/index.js','main/computerUse.js'])console.log(f,fs.readFileSync(f,'utf8').split('\n').length)"`；
+> code 列 = ESLint `max-lines` 同口径（`skipBlankLines` + `skipComments`）现算。
+>
+> **余量警示（2026-10-29 实测）**：`main/ipc/teams.js` / `main/teamStore.js` / `main/workerPool.js` / `main/approval.js`
+> 四个文件的 raw 行数（`split('\n').length`）**已顶到 800 整**，而 `BASELINE_800` 白名单**仍是 3 条**（不含它们）
+> ⇒ 这四个文件**余量为 0**，任何新增行都会触发 800 行软档门禁（`max-lines` 棘轮守护）。
+> 本轮 `9bcfc21`（P0）曾把 `main/approval.js` / `main/ipc/teams.js` / `main/workerPool.js` 推过 800 软档，
+> 随后由 `fd8b1c0` 做**行为无关的回压**（压缩 P0 注释、合并相邻注释、单语句 `if` 收为一行）压回 800 整。
+> 处置方向仍是**拆模块**，不是加白名单（白名单纪律是「只减不增」）。
+>
+> **口径提醒**：本表 raw 行按 `split('\n').length` 计（与门禁判据一致）；`wc -l` 口径比它**少 1**
+> （末行换行）。设计文档记的 `main.js` raw 2257 是 `wc -l` 口径，两处不是漂移，是口径不同——引用时必须带口径。
 
 ### 12.5 离线评估
 
 - `eval/run-eval.mjs`：任务集（`tasks.json` / `tasks-hard.json`）离线评估，`--check` 做完整性自检；已作为 `npm test` 前置门禁之一并真跑进 CI。
 - `eval/run-compare.mjs`：对照脚本（profiles 配置）。
-- **团队层零端到端 eval**：见 8.5 节缺口③（`B-03`，P1）。
+- **团队层端到端 eval**：**已完成**（第八轮 D-807① 收口）——`team-e2e-invariants.test.js`（14 条）走真实 `runGroup` → `finalizeGroup`，
+  覆盖三条顺序敏感不变量：`team_wait` 的 defer 分支先于失败分支、等待超时清扫先于派发、全部终态才收尾。
+  在此之前 `runGroup` / `finalizeGroup` 在全部团队测试中命中 0 次。历史缺口见 8.5 节缺口③（`B-03`）。
 
 ---
 
@@ -1233,6 +1351,14 @@ flowchart TB
 | TL-8 | 团队层端到端 eval | **已完成**（第八轮 D-807① 收口） | 新增 `team-e2e-invariants.test.js`（14 条），走真实 `runGroup` → 真实 `finalizeGroup`，覆盖三条**顺序敏感**不变量：① team_wait 的 defer 分支必须先于失败分支（挂起不判 failed）；② 等待超时清扫先于派发（到点判 failed 并级联唤醒）；③ 全部终态才收尾（等待中不得收尾；关键失败 → 下游 skipped + 组 failed）。此前 `runGroup`/`finalizeGroup` 在全部团队测试中命中 0 次 |
 | TL-9 | 持久化层进入版本 | **已完成（第八轮 D-803 收口）** | `MIGRATIONS` 长度 = **12**（v8–v12 已入库，提交 `9de20ca`）。落地形态与计划有偏差：原计划拆「团队层 / 平台治理」两条提交，实测三种切法都被门禁否掉（审批表、工具注册、文档数字三者互锁），最终以**一条集成提交**落库；偏差与证据见报告 §8.3 |
 | TL-10 | `ipc/teams.js` 行数余量 | **已缓解（D-811）** | 抽出 `teamRoster.js` 后 **783 行**（`split('\n')` 口径；`wc -l` 782），距 800 软档余量 **17 行**；`BASELINE_800` 仍为 **3** 条，未加白名单 |
+| TL-11 | 成员状态 FSM 与 `offline` 过滤 | **已完成**（2026-10-29 P0-2 收口） | 唯一写入口 `main/teamStore.js` 的 `setMemberState`；`main/workerPool.js` 三处驱动（`busy` / `waiting` / `idle`，`ownerMemberId` 为空的任务不驱动）；`main/ipc/teamControl.js` 的 `resetMemberSession` 写 `offline`；`main/ipc/teams.js` 的 `teams:dispatch` 过滤 `offline`（过滤后为空由 `planWaves` 兜底）；`renderer/src/components/TeamsPage.tsx` 状态徽标 |
+| TL-12 | 成员级 MCP 授权粒度（按服务 / 工具） | **已完成**（2026-10-29 P1-4 收口） | `desktop/shared/mcpAllow.mjs` 的 `normalizeMcpAllow` / `mcpAllowMatches` / `narrowToolsByMcpAllow`（服务端名须 `decodeToolName` 反解后比较）；db 迁移 v17 `team-mcp-allow`（`team_members.mcp_allow_json`）；`main/teamStore.js` / `main/teamRoster.js` / `main/rolePresetApply.js` 搬字段；`agent-core/index.js` ②b 段 `toolCandidatePool` 收窄；UI 三档 |
+| TL-13 | 统筹不变式钉在唯一写入口 | **已完成**（2026-10-29 P2-2 收口） | `main/teamStore.js` 的 `_setLeadInternal` 判 `!m.enabled`；修掉「已下架成员可当统筹、而 `leadMissing` 报 false」的**假绿**（状态自洽但事实错误） |
+| TL-14 | 技能触发器与常驻技能装载 | **已完成**（2026-10-29 P1-1 / P1-2 收口） | `desktop/shared/skillTrigger.mjs` 的 `parseSlashSkill` / `matchSkillsByQuery`；`agent-core/index.js` 的 `forcedSkillName` / `slashForced`（**slash 强制注入正文，关键词仅标注**）；`main/ecosystem.js` 的 `skillNames` = `core_skill_ids` ∪ `starter_skills`（只吃技能 id；`core_skills` 是中文能力词表，永不进加载键） |
+
+> **TL-10 的后续行数（2026-10-29 实测）**：上表的 **783 行**是 D-811 拆模块后的**当时中间态**，本行保留原文不改。
+> 后续 `9bcfc21`（P0）曾把 `ipc/teams.js` / `workerPool.js` / `approval.js` 推过 800 软档，由 `fd8b1c0` 做行为无关回压，
+> 现已**回到 800 整（余量 0）**；`BASELINE_800` 仍是 **3** 条，未加白名单。取法命令见 12.4。
 
 > 关于 TL-6 的一句话提醒（报告 §4 `D-808`）：现状是**最危险的一种形态**——用户在界面上配了限制，系统也把限制存了下来，
 > 但执行的时候根本不看它。这比「不做」更糟，因为它**制造了一个虚假的安全保证**。
@@ -1241,12 +1367,13 @@ flowchart TB
 
 | 项 | 主题 | 状态 | 判定依据 |
 |---|---|---|---|
-| ML-1 | 三层 tier 治理 + 意图预热 | **已完成** | `mcpPrewarm.js` / `intentMcpPrewarm.js`；`mcp-lazy-prewarm.test.mjs` / `mcp-governance.test.mjs` 在 246 项全绿内 |
+| ML-1 | 三层 tier 治理 + 意图预热 | **已完成** | `mcpPrewarm.js` / `intentMcpPrewarm.js`；`mcp-lazy-prewarm.test.mjs` / `mcp-governance.test.mjs` 在 316 项全绿内 |
 | ML-2 | `MCP-Protocol-Version` 请求头 | **已完成** | `mcpHttpTransport.js` 的 `send()` 中 initialize 后每个 POST 带协商值（报告 §0.1 R-1 已更正为对齐） |
-| ML-3 | tools profile 能力面与显式缺口声明 | **已完成** | 见 5.5 节（`sampling` / `elicitation` 显式拒绝并回 `-32601`） |
+| ML-3 | tools profile 能力面与显式缺口声明 | **已完成** | 见 5.6 节（`sampling` / `elicitation` 显式拒绝并回 `-32601`） |
 | ML-4 | 协议代际对齐到 `2026-07-28` | **已完成**（第八轮 D-804 S2–S5 收口，双栈） | 支持集已含 `2026-07-28`；`nextStatus` 改 `implemented`。**无状态栈**：`mcpHttpTransport.setStateless()` 不发/不收 `Mcp-Session-Id`、首请求即带版本头、按新规范带 `Mcp-Method`；**协商**：`tryStatelessDiscovery()` 先发 `server/discover`，失败复位后走原握手（`discover` 在老服务端必失败，是可靠判别器）。守护：真起两个本地服务端跑通两条栈，断言新栈「一次 initialize 都没发」、老栈「会话头与 2025-11-25 版本头正确」 |
 | ML-5 | 能力声明去弃用项（`roots` / `logging`） | **已完成**（第八轮 S4 收口） | 能力声明按版本分叉：`clientCapabilitiesFor(version)` —— 无状态栈只声明 `completion`，握手栈三项全留（老服务端要靠 `roots` 协商文件系统）。门禁用**集合等式**守：`无状态能力 = 握手能力 − deprecatedInNext` |
 | ML-6 | `filesystem` MCP 与原生工具同框 | **已完成**（A-04 收口） | `filesystem` 已移出 `PREWARM_NAMES`，回落 `whitelist` 懒启动；默认 run 内不再与原生文件工具同框。守护：`mcp-governance.test.mjs` / `mcp-lazy-prewarm.test.mjs` 断言 auto-start = `time/fetch` |
+| ML-7 | MCP 请求级进度全链路 | **已完成**（2026-10-29 P3-1 收口） | `main/mcpProgress.js` 的 `newProgressToken` / `makeProgressBridge` / `settleProgress`；`main/ipc/mcp.js` 的 `callMcpTool` 写 `params._meta.progressToken` 并登记监听器；`main/mcpClient.js` 以 `server.progressListeners`（Map）按令牌路由 `notifications/progress`；`main/preload.js` 的 `onMcpProgress`；`renderer/src/components/McpProgressStrip.tsx`；`end` 相由客户端补发（协议无「结束」概念） |
 
 ### 13.4 审批、沙箱与安全收口
 
@@ -1258,18 +1385,20 @@ flowchart TB
 | SL-4 | `toolLevel()` 兜底方向 | **已完成**（第八轮 D-801 收口） | 兜底为 `\|\| 'L3'`：未知工具**需审批、可被规则豁免**（与 `code_exec` 普通代码、`mcp__` 同档），不再是「回落 L2 → auto-safe 档静默放行」。反向断言见 `tool-registration-matrix.test.mjs` ⑤-d |
 | SL-5 | SSRF 判定强度 | **已完成**（第八轮 D-802 收口） | `main/ssrfGuard.js` 是唯一判据：字面量层做 IPv4 宽松归一（十/十六/八进制、1~3 段）+ IPv6 去括号展开（回环/ULA/链路本地/IPv4-mapped），解析层由 `guardedLookup` 做 resolve-then-validate。**实测更正**：十进制/十六进制/八进制三种写法在当前调用链上本就被 URL 归一拦住；真正漏掉的是**整个带括号的 IPv6 地址族**，已闭合。守护测试 `ssrf-guard.test.js`（41 条） |
 | SL-6 | 取消信号穿透到 Worker 与定时任务 | **已完成**（第八轮 D-805 收口） | 交互式 `chatStreamOnce(payload, sender, signal, runId)` 一直是对的；本轮把非流式通道补齐：`scheduledAgentChat(payload, { signal })` 用 `AbortSignal.any` 合并「外部取消」与「内部超时」，`main.js` 的 Worker 工具工厂改为 `chat: (payload) => scheduledAgentChat(payload, { signal })`，引擎侧 `resolveChannel` 恢复透传第二参 ctx、`chatWithRetry` 传 `{ signal }`。**取消返回 `{aborted:true}` 而不抛错**——与交互式同款，任务终态是「已取消」而非「失败」。守护测试 20 条（含「排队期间取消则一次请求都不发」与「超时不得被误判成取消」） |
+| SL-7 | 不可记忆工具集（审批决策不落规则库） | **已完成**（2026-10-29 P0-1 收口） | `main/approval.js` 的 `NON_REMEMBERABLE`（新增 `install_plugin` / `pr_review` / `pr_comment`）与 `isRememberable`；`main/main.js` 的 `applyApprovalDecision` 并入 `&& !approval.NON_REMEMBERABLE.has(tool)`；`needsApproval` 的「L3 短路」**未采用**（以 `NON_REMEMBERABLE` 为唯一判据，避免两套判据互相覆盖） |
 
 ### 13.5 门禁、CI 与评估
 
 | 项 | 主题 | 状态 | 判定依据 |
 |---|---|---|---|
-| GL-1 | 发现式全量测试 | **已完成（实测通过）** | 254 个测试文件 + 2 smoke = 256 suite + 5 GATES = **261** 检查项；实测 **EXIT=0 · 通过 258 · 失败 0 · 跳过 3**（跳过项见 GL-4，不再计入通过） |
+| GL-1 | 发现式全量测试 | **已完成（实测通过）** | 309 个测试文件 + 2 smoke = 311 suite + 5 GATES = **316** 检查项；实测 **EXIT=0 · 通过 313 · 失败 0 · 跳过 3**（跳过项见 GL-4，不再计入通过）。取法命令见 12.1 |
 | GL-2 | 前置外部门禁 `GATES` | **已完成** | **5 项**：`eval:check` / `doc-fact-check` / `harness-r7:check` / `i18n-scan` / `i18n-modcheck` |
 | GL-3 | i18n 扫描进入门禁 | **已完成**（第八轮 D-807② 收口） | 两条同时接入：`i18n-scan` 扫 `renderer/src`（注释剥离后的裸中文，当前 0 残留）、`i18n-modcheck` 查 42 个语言包模块的中英键集与 `{var}` 插值一致性。两条都**自证会红**（无参 exit 2、有残留或缺键 exit 1），并有变异验证：裸中文必红、**只出现在注释里的中文必绿**、不存在的模块必红 |
 | GL-4 | 汇总口径把「跳过」计入「通过」 | **已完成**（第八轮 C-04 收口） | 汇总改为三数齐全：`通过 = 总计 − 失败 − 仅跳过`，口径落在 `test/helpers/summary.mjs` 纯函数。跳过**不影响退出码**（平台限制不是缺陷），但已从「通过」里扣出；一项目既失败又跳过只计失败（否则等式会破）。守护 18 条，含「旧公式已删除」反向断言 |
-| GL-5 | lint 警告棘轮 | **已完成** | 阈值 161，配套棘轮守护单元测试，不得反弹 |
+| GL-5 | lint 警告棘轮 | **已完成** | 阈值 157，配套棘轮守护单元测试，不得反弹（取法命令见 12.3） |
 | GL-6 | 行数软档白名单「只减不增」 | **已完成（张力已缓解）** | `BASELINE_800` 保持 3 条不变；`ipc/teams.js` 由 799 → **790 行**（余量 10），靠拆模块而非加白名单解决（D-811 抽 `teamRoster.js`，第八轮三次收尾抽 `teamDispatchPlan.js`） |
 | GL-7 | 冷检出可复现性（新） | **本机已完成 / CI 无证据** | 已修「`CHANGELOG.md` 被 `*.md` 排除导致冷检出必红」（提交 `bf423fa`），并用干净 worktree 复核（两个 `node_modules` 软链 + `NODE_OPTIONS=--preserve-symlinks`，报告 §8.4）。**CI 运行历史已查：0 次运行**（`gh run list` 空 / 工作流 state=active / 运行记录 total_count=0）⇒ 「以 CI 为准」这句话当前**没有证据**，只能是待办检查项（`L-1`） |
+| GL-8 | 技术文档一致性门禁（`docs-consistency`） | **已完成（实测 23/23）** | `node desktop/test/docs-consistency.test.mjs`：① 10 项数值常量 + 7 项结构常量与源码同源；② `TOOL_CHANNELS` / `NOTIFY_CBS` / `REQUEST_CBS` 条数与源码一致；③ 半衰期与迁移 v7 一致；④ 文档引用的测试文件**精确等于基线 51 个**且**逐个真实存在**（严格相等棘轮，禁止用 `>=` 放宽） |
 
 ### 13.6 上下文工程
 
@@ -1283,17 +1412,17 @@ flowchart TB
 
 ### 13.7 本轮明确不做或未覆盖（防止被误读为待办）
 
-- `sampling` / `elicitation`：**显式拒绝**（回 JSON-RPC `-32601` 而非静默），理由是缺少面向 MCP 的 HITL 交互界面——见 5.5 节。
-- `resources/*` / `prompts/*` / `tasks/*` / `outputSchema` 校验：**未接入**，理由见 5.5 节。
+- `sampling` / `elicitation`：**显式拒绝**（回 JSON-RPC `-32601` 而非静默），理由是缺少面向 MCP 的 HITL 交互界面——见 5.6 节。
+- `resources/*` / `prompts/*` / `tasks/*` / `outputSchema` 校验：**未接入**，理由见 5.6 节。
 - `attestation`：暂不实现；云与在线模式相关能力整体排除。
 - 生态四组数字：**已裁定**（第八轮 D-812）。所谓「对不上」是假冲突——四个数字量的是四件事，**不可互相校验**：
   | 数字 | 口径 | 出处 |
   |---|---|---|
   | 员工 **51** | 数字员工模板 | `ecosystem/digital-employees.json` 顶层数组 |
-  | 连接器 **291** | 精选 **77** + WorkBuddy 导入 **214**（实测 id 零重叠） | 两个 `mcp-connectors*.json` 的 `.connectors` |
+  | 连接器 **292** | 精选 **78** + WorkBuddy 导入 **214**（实测 id 零重叠、运行时不合并去重） | 两个 `mcp-connectors*.json` 的 `.connectors` |
   | 技能目录条目 **219** | 可安装条目（含索引/分类等非目录项） | `ecosystem/skills.json` |
   | 内置技能实体 **100** | **随包发布**的 `SKILL.md` | `ecosystem/skills/**/SKILL.md` |
-  | 工作区已安装 **154** | **本机装了多少**（2026-10-21 实测） | `~/.mjcode/skills/**/SKILL.md` |
+  | 工作区已安装 **154** | **本机装了多少**（2026-10-29 复核） | `~/.mjcode/skills/**/SKILL.md` |
   单一事实源 = `desktop/scripts/gen-ecosystem-counts.mjs`（**没有第二份脚本**），守护套件会拿它的输出与技术设计文档「生态资产」行逐值对账，并做变异自证（喂错数字必须红）。
 - 幂等键：**已核，明确不做**（全仓确认不存在；理由见 13.9 表末三行）。
 - 工具定义钉定 / 审计不可改写：**已核并加固**——清单指纹 + 定义漂移审计；审计哈希链 + `verifyAuditChain()`（见 13.9）。
@@ -1308,6 +1437,9 @@ flowchart TB
 >
 > **销账轨迹**：11 行 → 8 行（D-805 / D-807② / D-812）→ 5 行（D-804 / D-806 / B-04）→
 > 3 行（C-04 汇总口径 + 探活撤员端到端）→ **0 行待处置**（本轮：七条 P2/P3 小账全闭；三项未核已核清，两项落地加固、一项明确不做）。
+>
+> **2026-10-29 收口轮**：P0 ~ P3 全部处置完毕——**落地 7 项**（见 13.2 TL-11 ~ TL-14、13.3 ML-7、13.4 SL-7），
+> **撤销 5 项**（经复核确认不需要改代码，理由随项写明，见 13.10）。本次修订**不新增欠账**。
 >
 > ⚠ **仍有一条卡在外部条件**：本地提交 `4bdf52b` 的推送因网络故障失败（HTTP2 framing / CONNECT 502 /
 > 直连 443 不通）。代码已在本地仓库，**网络恢复后一条 `git push` 即可**；在此之前打包仍按旧 HEAD。
@@ -1339,6 +1471,30 @@ flowchart TB
 | `L-3` ③幂等键 | 全仓确实**没有**幂等键 | **明确不做**：幂等该落在工具级/任务级/请求级是产品决策；本产品实际的重复风险路径是模型重试循环，那条已被「同签名连续失败 4 次强制收尾」+ 写工具审批覆盖。留一条「确认不存在」的断言，防止将来有人**以为**它有 | 同上 |
 | `L-1` CI | 文档说「Linux 隔离以 CI 的 ubuntu 为准」，可 CI **从来没跑过**（`gh run list` 返回空、运行记录 0） | 不伪造结论：改成「无任何验证证据，待 CI 首次运行」，并把复算命令写进文档。**下一轮把它当发布前检查项** | 无法用测试钉（环境事实） |
 
+### 13.10 2026-10-29 收口轮：P0 ~ P3 落地与复核撤销
+
+> **大白话**：这一节回答「这一轮到底改了什么、哪些没改」。
+> **撤销不等于没做**——它是「看完代码后确认：现状已经是对的，改了反而更错」。把撤销也写下来，
+> 是为了下一个人不用重新怀疑一遍。
+
+| 编号 | 事项 | 处置 | 落点（文件 + 函数名 / 常量名） |
+|---|---|---|---|
+| P0-1 | 审批不可记忆 | **落地** | commit `9bcfc21`：`main/approval.js` 的 `NON_REMEMBERABLE` 加入 `install_plugin` / `pr_review` / `pr_comment`，配 `isRememberable`；`main/main.js` 的 `applyApprovalDecision` 并入 `&& !approval.NON_REMEMBERABLE.has(tool)`；`needsApproval` 的「L3 短路」**未采用**（唯一判据） |
+| P0-2 | 成员状态 FSM | **落地** | commit `9bcfc21`：`main/teamStore.js` 的 `setMemberState`；`main/workerPool.js` 三处驱动（`busy` / `waiting` / `idle`）；`main/ipc/teamControl.js` 的 `resetMemberSession` 写 `offline`；`main/ipc/teams.js` 的 `teams:dispatch` 过滤 `offline`；`renderer/src/components/TeamsPage.tsx` 状态徽标 |
+| P1-1 | 技能触发器 | **落地** | commit `dedbf16`：`desktop/shared/skillTrigger.mjs` 的 `parseSlashSkill` / `matchSkillsByQuery`；`agent-core/index.js` 的 `forcedSkillName` / `slashForced`（slash 强制注入正文，关键词仅标注） |
+| P1-2 | 常驻技能装载 | **落地** | commit `f7f1ccd`：`main/ecosystem.js` 的 `skillNames` = `core_skill_ids` ∪ `starter_skills`（P1-2 初版误把中文 `core_skills` 并进去，2026-10-29 已回正；同批清掉 61 个不可解析 starter id） |
+| P1-3 | 成员 MCP 默认值 | **撤销** | `allowMcp` 默认「反向」是**刻意留的接缝**（默认值本身有争议，接缝让改动可控），保持现状即正确，代码零改动 |
+| P1-4 | 成员级 MCP 授权粒度 | **落地** | commit `04d6a04`：`desktop/shared/mcpAllow.mjs` 的 `normalizeMcpAllow` / `mcpAllowMatches` / `narrowToolsByMcpAllow`（服务端名须 `decodeToolName` 反解后比较）；db 迁移 v17 `team-mcp-allow`（`team_members.mcp_allow_json`）；`main/teamStore.js` / `main/teamRoster.js` / `main/rolePresetApply.js` 搬字段；`agent-core/index.js` ②b 段 `toolCandidatePool` 收窄；UI 三档 |
+| P1-5 | 安全删除闸门 | **撤销** | 「>50 条硬闸」在本仓**本就不存在**（该结论来自对别处的误读）；现方案（L3 + 键入数量确认 + 5s 撤销快照）**更严**，代码零改动 |
+| P2-2 | 统筹不变式 | **落地** | commit `733eded`：`main/teamStore.js` 的唯一写入口 `_setLeadInternal` 判 `!m.enabled`，修掉「已下架成员可当统筹、而 `leadMissing` 报 false」的假绿 |
+| P3-1 | MCP 请求级进度 | **落地** | commit `4a97b57`：`main/mcpProgress.js` 的 `newProgressToken` / `makeProgressBridge` / `settleProgress`；`main/mcpClient.js` 以 `server.progressListeners`（Map）按令牌路由；`main/ipc/mcp.js` 的 `callMcpTool` 写 `params._meta.progressToken`；`main/preload.js` 的 `onMcpProgress`；`renderer/src/components/McpProgressStrip.tsx`；`end` 相由客户端补发 |
+| P3-2 | 工具面运行时白名单 | **撤销** | `agent-core/index.js` 已有 `advertisedToolNames` 守卫（由最终工具集派生），无需改动 |
+| P3-3 | 偏好键消费点 | **撤销** | 6 个偏好键**均有主进程消费点**，问题不成立，代码零改动 |
+| P3-4 | 目录技能安装接线 | **撤销** | `main/ipc/ecosystem.js` 已调用 `installCatalogSkill`，接线本就完整，代码零改动 |
+
+> **编号说明**：`P0-x` ~ `P3-x` 是**修复项编号**（收口轮），与第八轮的**发现编号** `A-x` / `B-x` / `C-x` **不是同一体系**，不可互相引用为证据（见头部「读法约定」）。
+> 「落地 7 项」= P0-1 / P0-2 / P1-1 / P1-2 / P1-4 / P2-2 / P3-1；「撤销 5 项」= P1-3 / P1-5 / P3-2 / P3-3 / P3-4。
+
 
 ## 附：关键设计原则速查
 
@@ -1350,4 +1506,6 @@ flowchart TB
 6. **门禁即契约**：新增能力必须在引擎 / 通道 / 主进程 / 审批 / 超时 / UI 等环节全量接线，并由登记矩阵测试守护。**条件注册不再是盲区**：作用域登记表 + 按调用形态求值（第八轮 `A-03`）。
 7. **登记 ≠ 生效**：任何登记表、配置表、承诺性的注释，都要有一处机器可读的检查去验证「运行时真的是这样」。没有检查的地方，就是下一次事故的入口。
 8. **宁可承认空转，不要假装生效**：`B-01`（成员配置不生效）、`B-12`（团队记忆链默认空转）、`C-03`（i18n 扫描从未触发）都是同一族问题——它们不报错、不失败，只是悄悄什么都不做。写文档时把这种状态显式标出来。
+   （这三个例子分别已在 D-808 / D-806 / D-807② 收口；此处保留它们作为**这一族问题的定义**，不是当前未修项。）
 9. **快照 vs 事实源**：一切「当前是 N」的表述在活跃开发轮次里都会失真。写进文档的数字必须能指出它的取法命令；拿不出命令的数字不许写。
+   **同一口径在文中出现两次时，两处必须同值**——本轮更正了三处同口径不同值（工具数：§1.5 vs §4.2；测试数：§12.1 vs §13.5；检查项数：§1.2 vs §12.1）。

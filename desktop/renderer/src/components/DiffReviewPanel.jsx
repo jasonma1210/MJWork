@@ -262,11 +262,29 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
   const totalDel = visible.reduce((s, f) => s + f.removed, 0);
 
   // 还原单个代码块（最小粒度）
+  // B4：reject 方向是 `git apply --reverse`，把这一块从**工作区**抹掉——未暂存块的原文此后没有副本
+  // 可回退（「git 可恢复」只对索引方向成立）。故与上面的 reject(file) 同一安全口径：
+  // 先落快照 → 二次确认（文案里就告诉用户已备份、可撤销）→ 成功后提示条给「撤销」。
+  // 不接审批卡：这是用户在面板上的主动动作，再套审批等于同一动作两次打扰（设计裁决见 exec-governance）。
   async function rejectHunk(file, hunk) {
+    if (busy) return;
     setBusy(true);
+    const snapshotId = await snapshot([file.path]);
+    const ok = await confirm({
+      title: t('diff.hunkDiscardTitle'),
+      message: t('diff.hunkDiscardMessage', { path: file.path }) + (snapshotId ? `\n\n${t('diff.undoAvailable')}` : ''),
+      danger: true,
+      confirmLabel: t('diff.hunkDiscardConfirm'),
+    });
+    if (!ok) { setBusy(false); return; }
     try {
       const r = await window.mjcode.gitApplyHunk({ cwd: projectPath, patch: hunkPatch(file, hunk) });
-      setNotice(r.error ? t('diff.revertFailed', { error: r.error }) : t('diff.hunkDiscarded'));
+      if (r.error) {
+        setNotice(t('diff.revertFailed', { error: r.error }));
+      } else {
+        setNotice(t('diff.hunkDiscarded'));
+        if (snapshotId) offerUndo(snapshotId, [file.path]);
+      }
     } catch (err) { setNotice(t('diff.revertFailed', { error: err.message })); }
     setBusy(false);
     await load();

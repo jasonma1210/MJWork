@@ -310,9 +310,18 @@ class LocalStore {
     const next = arr.map((m, i) => ({
       id: this.nextId(), threadId: Number(threadId),
       role: m.role || 'assistant', content: m.content || '',
-      toolCalls: null, toolCallId: null,
-      tokensInput: m.tokensInput || 0, tokensOutput: m.tokensOutput || 0,
-      modelName: m.modelName || '', createdAt: now + i,
+      // 压缩是「换一种表示」，不是「重写历史」。以下三项此前被硬置空/改写，各自造成过真实失真：
+      //   · toolCalls/toolCallId 置 null ⇒ 重进会话工具链全丢，模型看不到自己刚才做了什么；
+      //   · createdAt 改成 now+i ⇒ 全部历史消息的时间戳变成「压缩那一刻」，
+      //     工作台「按日消耗」把几年历史一次性算到压缩当天（今天实测：两个会话的账全落到压缩时点）；
+      //   · 记账字段只认驼峰 ⇒ 渲染层传来的蛇形（tokens_input/model_name）被静默读成 0，
+      //     压缩一次 = 该会话用量清零（工作台模型/会话两表全空的直接原因）。
+      toolCalls: m.toolCalls || m.tool_calls || null,
+      toolCallId: m.toolCallId || m.tool_call_id || null,
+      tokensInput: Number(m.tokensInput ?? m.tokens_input) || 0,
+      tokensOutput: Number(m.tokensOutput ?? m.tokens_output) || 0,
+      modelName: String(m.modelName ?? m.model_name ?? '').trim(),
+      createdAt: Number(m.createdAt ?? m.created_at) || (now + i),
     }));
     this.data.messages = this.data.messages.filter((m) => m.threadId !== Number(threadId)).concat(next);
     t.updatedAt = now;

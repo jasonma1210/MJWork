@@ -1,14 +1,12 @@
 // P0-4：主进程 Agent 运行器——交互式会话的工具循环从渲染进程迁至主进程。
 // 背景：此前整个 runAgent 循环跑在渲染进程（renderer/src/lib/agent.js），与 UI 生命周期
-// 强耦合：刷新/关闭窗口直接杀死进行中的任务与全部工具副作用；渲染层同时是调度器又是 UI。
-// 架构：
+// 强耦合：刷新/关闭窗口直接杀死进行中的任务与全部工具副作用；渲染层同时是调度器又是 UI。架构：
 //   渲染层 → ipc 'agent:run'（runId + 参数）→ 本模块在主进程跑 agent-core runAgent 循环
 //         ← ipc 'agent:event'（{runId, type, data}）事件流回渲染层（message/delta/tool_call/done/error）
 //   流式 token 继续走既有 'model:delta' / 'model:reasoning' 通道直达窗口，渲染层流式 UI 零改动。
 //   中止：渲染层 AbortSignal → ipc 'agent:abort' → run controller.abort()（引擎优雅收尾）。
 
-// 依赖经 init 注入（避免与 main.js 循环 require）：
-//   loadAgentCore: () => Promise<agentCore>          —— ESM 动态 import（main.js 已有）
+// 依赖经 init 注入（避免与 main.js 循环 require）：loadAgentCore: () => Promise<agentCore> —— ESM 动态 import（main.js 已有）；
 //   createToolHandlers: ({ sender, signal }) => obj  —— 每次运行的工具处理器（含流式 chat）
 const runTrace = require('./runTrace');
 // T3-1：大工具结果卸载——tool_call 事件超限字段落临时文件，IPC 只传句柄
@@ -47,10 +45,8 @@ let deps = null;
 // Phase 3-4：最近一次运行的 token 用量状态（渲染层 AgentDock 仪表盘经 IPC 轮询）
 let lastBudgetState = null;
 
-// T4-3：角色模板钳制——审批档与沙箱一律取「角色声明与用户设置中更严格者」，
-// 角色只能收紧、绝不能放宽（未知值按默认档 on-request / workspace-write 参与比较，不放大权限）。
-// 2026-10-16：原为下方两个模块私有函数，Worker 路径拿不到而硬编码 'auto-safe'，
-// 导致用户选「全部询问」时子任务仍自动放行（产品对用户设置撒谎）。
+// T4-3：角色模板钳制——审批档与沙箱一律取「角色声明与用户设置中更严格者」，角色只能收紧、绝不能放宽（未知值按默认档 on-request / workspace-write 参与比较，不放大权限）。
+// 2026-10-16：原为下方两个模块私有函数，Worker 路径拿不到而硬编码 'auto-safe'，导致用户选「全部询问」时子任务仍自动放行（产品对用户设置撒谎）。
 // 现抽到 approvalPolicy.js 作为唯一事实源，本文件与 workerPool.js 共用，杜绝再次分叉。
 const { stricterApproval, stricterSandbox } = require('./approvalPolicy');
 // 第八轮 B-01 / D-808：rolePreset 的宿主侧应用统一走 rolePresetApply —— 与 Worker 通道
@@ -61,8 +57,7 @@ const { applyRolePreset } = require('./rolePresetApply');
 // G-CUA：无人值守/交互路径的「界面自动化 opt-in」来源——与审批档/沙箱同源（用户设置）。
 const approvalSettings = require('./approvalSettings');
 
-// 用户最近一次选择的审批档。Worker 子任务经 deps.getApprovalMode() 读它来继承用户设置。
-// 不做持久化：这是「本会话的当前选择」，重启后回到默认档是正确行为。
+// 用户最近一次选择的审批档。Worker 子任务经 deps.getApprovalMode() 读它来继承用户设置。不做持久化：这是「本会话的当前选择」，重启后回到默认档是正确行为。
 let currentUserApprovalMode = 'on-request';
 // 2026-10-17（P1-1）：按 runId 存本次运行的审批档。
 // 为什么需要它：审批档可**按会话覆盖**（渲染层 thread.approval_mode），所以「最后一次 run 的档」
@@ -88,10 +83,9 @@ function lastUserText(messages) {
 }
 
 // ── P0-1（2026-10-22）：运行历史的**唯一真源**是会话库，不是渲染层内存 ──
-// 事故形态：渲染层 `messagesRef` 只含「用户消息 + 最终总结」（中间 assistant(tool_calls)/tool
-// 结果由本文件落库但 `message` 事件不再转发），于是同一会话「不刷新」时模型看不到自己上一轮
-// 读过什么、跑过什么，「刷新一次」（从库全量拉回）历史又完整了 —— 刷新前后是两种行为，
-// 且问题不可复现。现改为：只要宿主提供了 listMessages，历史一律从库拼。
+// 事故形态：渲染层 `messagesRef` 只含「用户消息 + 最终总结」（中间 assistant(tool_calls)/tool 结果由本文件落库但 `message` 事件不再转发），
+// 于是同一会话「不刷新」时模型看不到自己上一轮读过什么、跑过什么，「刷新一次」（从库全量拉回）历史又完整了 —— 刷新前后两种行为且不可复现。
+// 现改为：只要宿主提供了 listMessages，历史一律从库拼。
 const HISTORY_FALLBACK_LOG = '[agentRun] 库历史装配失败，回落到渲染层载荷：';
 
 /** 存储形状（localStore：camelCase）→ 模型入参形状（OpenAI 兼容：snake_case） */
@@ -146,15 +140,13 @@ function resolveRunHistory(payload) {
 
 // runId -> { controller, sender }
 const runs = new Map();
-// P0-5（2026-10-22）：runId -> 发起它的会话 id。
-// main.js 的 requestApproval 只能拿到 runId（由 runScope 注入），而审批卡必须告诉用户
-// 「这条审批来自哪个会话」——否则后台会话的审批与当前会话的审批长得一模一样，
-// 用户会顺手批掉另一个任务的命令。run 结束即删，避免 Map 无界增长。
+// P0-5（2026-10-22）：runId -> 发起它的会话 id。main.js 的 requestApproval 只能拿到 runId（由 runScope 注入），
+// 而审批卡必须告诉用户「这条审批来自哪个会话」——否则后台会话的审批与当前会话长得一模一样，用户会顺手批掉另一个任务的命令。
+// run 结束即删，避免 Map 无界增长。
 const runConversations = new Map();
 let runSeq = 0;
 
-// v1（2026-10-19）：意图驱动 MCP 预热的单服务连接上限。用户诉求通常在句首/键位附近，
-// 这里取本轮**最后一条 user 消息**前 2000 字符做离线判定（比记忆摘要的 300 字符宽，足以覆盖格式词）。
+// v1（2026-10-19）：意图驱动 MCP 预热的单服务连接上限——取本轮**最后一条 user 消息**前 2000 字符做离线判定（比记忆摘要的 300 字符宽，足以覆盖格式词）。
 const INTENT_TEXT_LIMIT = 2000;
 // 单个连接器的连接等待上限（冷启动要拉包/起进程，但绝不能让本轮启动被 MCP 拖住）。
 const PREWARM_CONNECT_TIMEOUT_MS = 6000;
@@ -179,15 +171,14 @@ function withTimeout(promise, ms) {
   ]);
 }
 
-// v1：意图驱动的 MCP 动态加载（原生优先）。返回「本轮需要额外并入 mcpTools 的工具定义」。
-// 设计要点：
+// v1：意图驱动的 MCP 动态加载（原生优先）。返回「本轮需要额外并入 mcpTools 的工具定义」。设计要点：
 //   · 原生优先——意图命中的能力若已被原生工具覆盖，直接跳过 MCP（同 run 两种实现永不同框，防冲突）；
 //   · 只连用户**已保存**的连接器（本模块不新建任何 MCP 服务）；已在本轮 mcpTools 中的服务不重复连；
 //   · fail-open——任一连接失败/超时都只告警，绝不影响本轮运行（工具缺失可经 connect-on-demand 后续补上）；
 //   · 有界并发 + 单服务超时，保证本轮启动不被 MCP 冷启动拖住。
 
-// F-005（第八轮）：工具名 ↔ 服务名的反解与拼名共用 shared/mcpNameCodec.mjs（主进程 CJS 经动态
-// import 加载，与 intentMcpPrewarm.loadMcpToolDefs 同一写法：纯函数、零 electron 依赖，首调后缓存）。
+// F-005（第八轮）：工具名 ↔ 服务名的反解与拼名共用 shared/mcpNameCodec.mjs（主进程 CJS 经动态 import 加载，
+// 与 intentMcpPrewarm.loadMcpToolDefs 同一写法：纯函数、零 electron 依赖，首调后缓存）。
 let _mcpNameCodecMod = null;
 function loadMcpNameCodec() {
   if (!_mcpNameCodecMod) _mcpNameCodecMod = import('../shared/mcpNameCodec.mjs');
@@ -426,7 +417,8 @@ function startAgentRun(payload, sender) {
       }
     };
     // P0-1 收纳判据：本轮是否真有工具执行（纯闲聊不写记忆）。onToolCall 逐条累加。
-    let toolCallCount = 0;
+    // budgetRounds − persistedRounds = 尚未记账的轮数（兜底收尾据此决定取真值还是 0，见 !doneSent 分支）
+    let toolCallCount = 0; let budgetRounds = 0; let persistedRounds = 0;
     // v1（2026-10-19）：意图驱动的 MCP 动态加载——在组装 engineParams **之前**、有界等待完成。
     // 位置有意选在此处：此处已能拿到本轮会话文本（payload.messages）与主进程 mcp 能力，
     // 且尚未把 mcpTools 交给引擎；失败 fail-open 返回空数组，绝不阻塞本轮启动。
@@ -562,11 +554,14 @@ function startAgentRun(payload, sender) {
           });
         }
         // 最终 assistant 消息主进程落库（唯一落库点；渲染层凭 mainPersisted 标记去重）
+        // 记账口径：这条是**收尾轮**的消息，只能记该轮用量。用 usage.prompt_tokens（run 累计）会把
+        // 中间轮已落过的用量再记一次（实测会话 138：451577=217280+12114+222183，工作台总量翻倍）。
+        // 累计值仍随 done 事件给渲染层显示「本次运行花了多少」，两者语义不同，别互相顶替。
         const accepted = persistChatMessage({
           ...toStoreShape({ role: 'assistant', content: outText || '' }),
           modelName: payload?.model?.model?.model_id || '',
-          tokensInput: usage?.prompt_tokens || 0,
-          tokensOutput: usage?.completion_tokens || 0,
+          tokensInput: Number(usage?.lastPromptTokens) || 0,
+          tokensOutput: Number(usage?.lastCompletionTokens) || 0,
         });
         // V08：只有 durable 刷盘成功才宣称 mainPersisted:true；
         // 失败/未落库时如实上报（渲染层据此本地补显 + 提示保存状态），绝不假成功
@@ -582,6 +577,7 @@ function startAgentRun(payload, sender) {
         onMessage: (m) => {
           // 2026-10-28：中间轮也要记 `modelName`，否则工作台「模型消耗」把它们全归到「未记录」
           persistChatMessage({ ...toStoreShape(m), modelName: payload?.model?.model?.model_id || '' });
+          if (Array.isArray(m?.tool_calls) && m.tool_calls.length) persistedRounds += 1;
           emit('message', m);
         },
         onStream: (s) => emit('stream', s),
@@ -619,7 +615,7 @@ function startAgentRun(payload, sender) {
         },
         // Phase 3-4：逐轮用量上报 → 缓存最新状态（仪表盘轮询数据源）
         onBudget: (s) => {
-          lastBudgetState = { ...s, runId, model: payload?.model?.model?.model_id || '', ts: Date.now() };
+          lastBudgetState = { ...s, runId, model: payload?.model?.model?.model_id || '', ts: Date.now() }; budgetRounds = Number(s?.round) || budgetRounds;
         },
         // T0-5：结构化运行 trace 落本机 JSONL（userData/traces/<runId>.jsonl）。
         // 写失败由 runTrace 内部告警兜底，绝不影响运行；run_end 后顺带做文件级 LRU 淘汰。
@@ -690,12 +686,14 @@ function startAgentRun(payload, sender) {
           ...cb,
         });
       }
-      // 兜底：引擎部分退出路径若未触发 onDone（防御性），保证渲染层一定能收到终止事件
+      // 兜底：引擎部分退出路径若未触发 onDone（防御性），保证渲染层一定能收到终止事件。
+      // 记账：上报轮数 > 已落库轮数 ⇒ 只有最后一轮没记过账，取该轮真值；否则记 0——绝不写 run 累计（会重记前面每轮）。
       if (typeof finalText === 'string' && !doneSent) {
         console.warn(`[agentRun] 兜底收尾 runId=${runId}（引擎未触发 onDone）：textLen=${(finalText || '').length} aborted=${controller.signal.aborted}`);
+        const fb = lastBudgetState?.runId === runId && Number(lastBudgetState?.round) > persistedRounds ? lastBudgetState : null;
         const accepted = persistChatMessage({
           ...toStoreShape({ role: 'assistant', content: finalText || '' }),
-          modelName: payload?.model?.model?.model_id || '',
+          modelName: payload?.model?.model?.model_id || '', tokensInput: Number(fb?.lastPromptTokens) || 0, tokensOutput: Number(fb?.lastCompletionTokens) || 0,
         });
         const dur = confirmDurable(accepted);
         emit('done', { finalText, usage: null, aborted: controller.signal.aborted, mainPersisted: dur.persisted, persistState: dur.state });
@@ -721,6 +719,10 @@ function startAgentRun(payload, sender) {
         emit('error', '引擎进程已退出，本次运行中断（主进程与界面不受影响）；可发送「继续」从断点续跑。');
       } else {
         emit('error', String(err?.message || err));
+        // 闭合本轮：失败也落 assistant 占位，避免残留 user 指令被下次发送当未完成任务重跑（超时后输入 hi 却重跑上一任务）
+        // 占位消息**刻意记 0**：凡产生过用量的一轮，引擎都已各自落过消息（含该轮 tokens_input）；快照里的 promptTokens/completionTokens 是 run 累计，写进来等于把前面每轮再记一遍（总账翻倍）。
+        // 但**用量账本要记 run 累计**——那是「这次运行真实花掉多少」的计费口径，与按消息归属是两件事；失败/超时的运行此前一条账都不入，用户看到的仍是「取消有量、失败无量」。
+        try { persistChatMessage({ ...toStoreShape({ role: 'assistant', content: '（本次请求失败，未产生回复）' }), modelName: payload?.model?.model?.model_id || '', tokensInput: 0, tokensOutput: 0 }); recordChatUsage(deps, { runId, usage: lastBudgetState?.runId === runId ? lastBudgetState : null, conversationId: payload.conversationId, projectPath: payload.projectPath, modelId: payload?.model?.model?.model_id || '' }); } catch (e) { console.warn('[agentRunner] 占位落库失败:', e.message); }
       }
     } finally {
       runs.delete(runId);

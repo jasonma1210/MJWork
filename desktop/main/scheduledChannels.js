@@ -53,7 +53,8 @@ function createScheduledChannels({ resolveSecret, quota } = {}) {
     try {
       const res = await fetch(`${root}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret.api_key}` },
+        // P0-5：禁用 keep-alive 连接复用（同 main.js chatStreamOnce）——避免复用被网关关闭的空闲连接导致假死。
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret.api_key}`, 'Connection': 'close' },
         body: JSON.stringify({ model: model.model, messages, stream: false }),
         signal: controller.signal,
       });
@@ -109,7 +110,8 @@ function createScheduledChannels({ resolveSecret, quota } = {}) {
       : controller.signal;
     const post = (b) => fetch(`${root}/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret.api_key}` },
+      // P0-5：禁用 keep-alive 连接复用（同 main.js）——避免复用半关闭连接导致非流式通道假死。
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret.api_key}`, 'Connection': 'close' },
       body: JSON.stringify(b),
       signal,
     });

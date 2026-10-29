@@ -6,10 +6,14 @@ import remarkGfm from 'remark-gfm';
 import { MermaidDiagram } from './MermaidDiagram';
 import { toast } from './feedback';
 import { useI18n } from '../i18n'; // T3-2：i18n
-import { IconChevronDown, IconCopy, IconCpu, IconExternalLink, IconFile, IconGitBranch, IconPlus, IconSpinner } from './icons';
+import { IconChevronDown, IconCopy, IconCpu, IconDownload, IconExternalLink, IconFile, IconFolder, IconGitBranch, IconPlus, IconSpinner } from './icons';
 import { ToolTraceGroup } from './tools/ToolTrace';
 import Button from './ui/Button';
 import Dot from './ui/Dot';
+// 产出卡片/文件 chip 的右键操作菜单（通用组件，定位与关闭语义见 ContextMenu.jsx）
+import ContextMenu from './ContextMenu';
+// 产出文件的展示档位（设置页可切换：正文内联 / 右侧预览栏）
+import { getOutputDisplay } from '../lib/outputDisplay';
 // M5 / T5-6：对话内团队协同事件流（默认折叠卡片；不新增独立群聊页）
 import TeamRunStream from './TeamRunStream';
 
@@ -65,6 +69,8 @@ export default function MessageStream({
   runSummary, runUsage, runStartedAt, contextUsage, model,
   runFiles = [],
   onOpenFile,
+  // 项目根目录：产出卡片的右键动作（定位/另存为）需要把工具参数里的相对路径解析成绝对路径
+  cwd = '',
   // M5 / T5-6：当前会话 id —— 团队事件流按 thread_id 归属过滤（不跨会话串卡）
   threadId = null,
 }) {
@@ -110,8 +116,8 @@ export default function MessageStream({
         {/* M5 / T5-6：团队协同事件流——按 thread_id 投影为折叠卡片（派活/接手/汇报轨迹），
             排在正文之后、本轮收尾卡之前：它是「这一轮协同」的补充事实，不打断对话正文。 */}
         <TeamRunStream threadId={threadId} onOpenFile={onOpenFile} />
-        {/* 本轮产出文件：运行结束后列出本轮被写入/修改的文件（点击在右侧预览栏打开） */}
-        <RunOutputFiles files={runFiles} onOpenFile={onOpenFile} />
+        {/* 本轮产出文件：运行结束后列出本轮被写入/修改的文件（左键预览，右键定位/另存为/添加到对话框） */}
+        <RunOutputFiles files={runFiles} onOpenFile={onOpenFile} cwd={cwd} />
         {/* T1-5：本轮概览卡——运行中实时（耗时/消耗/上下文/模型），结束态转固定收尾条 */}
         <RunFooter
           summary={runSummary}
@@ -379,11 +385,72 @@ function FileRefMenu({ text, onClose }: { text: string; onClose: () => void }) {
   );
 }
 
-/** 本轮产出文件：任务结束后列出本轮被写入/修改的文件（点击在右侧预览栏打开） */
-function RunOutputFiles({ files = [], onOpenFile }: { files?: Array<string | { path: string }>; onOpenFile?: (p: string) => void }) {
+/** 本轮产出文件：任务结束后列出本轮被写入/修改的文件（左键在右侧预览栏打开；右键出操作菜单） */
+function RunOutputFiles({ files = [], onOpenFile, cwd }: { files?: Array<string | { path: string }>; onOpenFile?: (p: string) => void; cwd?: string }) {
   const { t } = useI18n();
   const list = (files || []).map((f) => (typeof f === 'string' ? f : f?.path)).filter(Boolean);
+  const first = list[0];
+  // 右键菜单锚点：三张卡片共用同一个 ContextMenu，只换锚点与目标路径
+  const [menu, setMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  // 展示档位在渲染时现读：设置页改完回到对话区即生效（无需重启）
+  const display = getOutputDisplay();
+  // panel 档：首个产出自动开在右侧预览栏。按路径判重，避免每次重渲染都把预览栏拽回去。
+  const autoOpenedRef = useRef('');
+  useEffect(() => {
+    if (display !== 'panel' || !first) return;
+    if (autoOpenedRef.current === first) return;
+    autoOpenedRef.current = first;
+    onOpenFile?.(first);
+  }, [display, first, onOpenFile]);
   if (!list.length) return null;
+
+  // 三个动作都只传「卡片路径 + 项目根」：相对路径的解析统一在主进程做（与工具层同一语义）
+  function itemsFor(target: string) {
+    return [
+      {
+        id: 'reveal', label: t('message.revealInFolder'), icon: IconFolder,
+        onClick: async () => {
+          try {
+            const r = await window.mjcode?.revealPath?.({ path: target, cwd });
+            if (r && r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
+          } catch (err) {
+            console.warn('[message] reveal in folder failed:', err);
+            toast({ message: t('filePreview.openFailed') });
+          }
+        },
+      },
+      {
+        id: 'saveAs', label: t('message.saveAs'), icon: IconDownload,
+        onClick: async () => {
+          try {
+            const r = await window.mjcode?.saveFileAs?.({ path: target, cwd });
+            // 用户在保存对话框点取消不算失败，不弹错误
+            if (r && r.ok === false && !r.canceled) toast({ message: String(r.error || t('filePreview.openFailed')) });
+          } catch (err) {
+            console.warn('[message] save as failed:', err);
+            toast({ message: t('filePreview.openFailed') });
+          }
+        },
+      },
+      {
+        id: 'addToChat', label: t('message.addToChat'), icon: IconPlus,
+        onClick: () => window.dispatchEvent(new CustomEvent('mjcode:add-attachment', { detail: { path: target } })),
+      },
+    ];
+  }
+
+  // 右侧面板档：正文只留一个计数 chip（文件已在预览栏可见，不再重复铺一列卡片）
+  if (display === 'panel') {
+    return (
+      <div className="mb-4 max-w-3xl">
+        <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs text-text2">
+          <IconFile size={13} className="text-accent shrink-0" />
+          <span>{t('message.outputFilesCompact', { n: list.length })}</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mb-4 max-w-3xl">
       <div className="text-xs text-text2 mb-2">{t('message.outputFiles', { n: list.length })}</div>
@@ -396,6 +463,7 @@ function RunOutputFiles({ files = [], onOpenFile }: { files?: Array<string | { p
               key={path}
               type="button"
               onClick={() => onOpenFile?.(path)}
+              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, path }); }}
               title={path}
               className="group flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2 text-left hover:bg-hover hover:border-accent/40 transition-colors min-w-[190px] max-w-[280px]"
             >
@@ -408,6 +476,13 @@ function RunOutputFiles({ files = [], onOpenFile }: { files?: Array<string | { p
           );
         })}
       </div>
+      <ContextMenu
+        open={!!menu}
+        x={menu?.x || 0}
+        y={menu?.y || 0}
+        items={menu ? itemsFor(menu.path) : []}
+        onClose={() => setMenu(null)}
+      />
     </div>
   );
 }
@@ -596,7 +671,9 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
                 {!suppressMeta && (modelName || tokensIn + tokensOut > 0 || m.created_at || m.createdAt) && (
                   <div className="mt-2 flex items-center gap-2 text-xs text-text2" title={t('message.tokensTitle', { in: tokensIn.toLocaleString(), out: tokensOut.toLocaleString() })}>
                     <IconCpu size={11} className="shrink-0" />
-                    <span>{t('message.totalTokens', { n: (tokensIn + tokensOut).toLocaleString() })}</span>
+                    {tokensIn + tokensOut > 0 && (
+                      <span>{t('message.totalTokens', { n: (tokensIn + tokensOut).toLocaleString() })}</span>
+                    )}
                     {modelName && <span className="truncate">· {modelName}</span>}
                     {(m.created_at || m.createdAt) && (
                       <span>· {new Date(m.created_at || m.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>

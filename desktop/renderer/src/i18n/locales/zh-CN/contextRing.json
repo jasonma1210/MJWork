@@ -1,5 +1,6 @@
 {
   "title": "上下文用量 {pct}%（{used} / {total} tokens），点击压缩",
   "ariaLabel": "上下文用量 {pct}%",
+  "tooltip": "已用 {used} / {total} tokens · {pct}%",
   "compacting": "压缩中"
 }

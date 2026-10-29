@@ -26,6 +26,13 @@ async function awaitApproval(requestApproval, tool, args) {
   return { decision: await waitP, reason: approvalReasonOf(waitP) };
 }
 
+// C5：上一条逃生口写的是「开发态」豁免，实现却无条件接受——打包版里一个环境变量即可关掉沙箱闸，
+// 让「沙箱不可用」退化成静默裸跑（本函数上方语义第 1 条明确要求默认阻断）。故仅在未打包时接受；
+// 打包版仍保留第 2 条逃生口（单次 unconfined_exec 审批），不会把人堵死。取不到 electron 视为未打包。
+function isPackaged() {
+  try { return require('electron').app?.isPackaged === true; } catch { return false; }
+}
+
 /**
  * 统一的非沙箱执行落点。
  * @param {object} ctx
@@ -45,7 +52,10 @@ async function runUnconfinedShell({
   resolve, deps, policy, command, argvList, cwd, cwdMeta, timeout, fallbackReason, neededApproval, ruleMatched,
 }) {
   if (policy !== 'full-access') {
-    const envFallback = process.env.MJCODE_ALLOW_UNCONFINED_FALLBACK === '1';
+    const envRequested = process.env.MJCODE_ALLOW_UNCONFINED_FALLBACK === '1';
+    const envFallback = envRequested && !isPackaged();
+    // 打包版忽略该变量时不静默：留一行 console（审计走下面的审批/阻断分支，不会漏记）
+    if (envRequested && !envFallback) console.warn('[sandbox] 打包版忽略 MJCODE_ALLOW_UNCONFINED_FALLBACK（该豁免仅限开发态）');
     if (!envFallback) {
       if (!deps || typeof deps.requestApproval !== 'function') {
         audit('shell', command, `沙箱不可用且无审批通道，fail-closed 阻断（${fallbackReason}）`, 'blocked');

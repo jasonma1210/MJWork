@@ -41,7 +41,9 @@ import('../agent-core/index.js').then(async (m) => {
     assert.ok(t, 'todo_write 未在 BASE_TOOLS 中声明');
     assert.deepStrictEqual(t.function.parameters.required, ['todos']);
     const item = t.function.parameters.properties.todos.items;
-    assert.deepStrictEqual(item.properties.status.enum, ['pending', 'in_progress', 'completed']);
+    // error 是界面红标所需的第四态（TodoPanel STATUS_COLOR.error）——schema 若只留三态，
+    // 模型永远发不出 error，界面那颗红色图标就是死代码。
+    assert.deepStrictEqual(item.properties.status.enum, ['pending', 'in_progress', 'completed', 'error']);
   });
 
   await check('工具总数随能力演进：16 → 21 → 26 → 32 → 39 → 40 → 41 → 46 → 47 → 51 → 52（G-doc）', () => {

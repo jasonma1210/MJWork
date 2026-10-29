@@ -12,6 +12,7 @@
 //   conversationRules, userDataDir, relay }（relay=chromeRelay server 模块，测试可注入假中继）
 const path = require('path');
 const fs = require('fs');
+const { isPrivateHost } = require('./ssrfGuard');
 const approval = require('./approval');
 const { audit } = require('./audit/auditLog');
 
@@ -107,6 +108,12 @@ async function toolChromeTabs(args = {}) {
 }
 
 async function toolChromeNavigate(args = {}) {
+  // C6：chrome_navigate 必须过私网守卫——否则可让真实 Chrome 打开 http://127.0.0.1:<port>
+  // 再用 chrome_extract 读回内存态（browser_navigate 已有守卫，此路径此前缺失）。
+  try {
+    const u = new URL(String(args.url || ''));
+    if (isPrivateHost(u.hostname)) return { ok: false, error: `拒绝访问内网/本机地址：${u.hostname}` };
+  } catch { return { ok: false, error: `URL 非法：${String(args.url || '')}` }; }
   return runChromeTool('chrome_navigate', args, {
     perCall: false, method: 'navigate',
     methodArgs: { url: args.url, tabId: args.tab_id, waitUntil: args.wait_until || 'complete' },

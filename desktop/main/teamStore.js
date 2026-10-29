@@ -481,7 +481,7 @@ class TeamStore {
       name: 'name', avatar: 'avatar', roleKind: 'role_kind', source: 'source', templateRef: 'template_ref',
       systemPrompt: 'system_prompt', toolNames: 'tool_names_json', allowMcp: 'allow_mcp', model: 'model',
       mcpAllow: 'mcp_allow_json',
-      approvalMode: 'approval_mode', sandboxPolicy: 'sandbox_policy', skillNames: 'skill_names_json', state: 'state',
+      approvalMode: 'approval_mode', sandboxPolicy: 'sandbox_policy', skillNames: 'skill_names_json',
     };
     for (const [key, colName] of Object.entries(col)) {
       if (!(key in m)) continue;

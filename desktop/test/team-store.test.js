@@ -159,6 +159,18 @@ function check(name, ok, detail = '') {
   check('取消归档后重新可见', store.listTeams({}).some((t) => t.id === team.id));
   store.setTeamArchived(team.id, true); // 复位为归档，供下方「重启后归档状态保持」断言
 
+  // ── D4-05：成员运行期状态机（P0-2 的 setMemberState 此前零测试覆盖）──
+  // 三层判据：合法值「返回值与落库一致」、非法值 fail-closed 回落 idle、四个合法态都不漏。
+  const stateOf = (mid) => store.listMembers(team.id, { includeDisabled: true }).find((m) => m.id === mid)?.state;
+  check('D4-05 setMemberState 合法值直更并读回（busy）',
+    store.setMemberState(custom.id, 'busy') === 'busy' && stateOf(custom.id) === 'busy',
+    `state=${stateOf(custom.id)}`);
+  check('D4-05 setMemberState 非法值回落 idle（fail-closed，不把未知状态写进库）',
+    store.setMemberState(custom.id, 'exploded') === 'idle' && stateOf(custom.id) === 'idle',
+    `state=${stateOf(custom.id)}`);
+  check('D4-05 setMemberState 四个合法态各自落库（不漏 waiting/offline）',
+    ['waiting', 'offline', 'busy', 'idle'].every((s) => store.setMemberState(custom.id, s) === s && stateOf(custom.id) === s));
+
   // ── 重启恢复：flush 落盘 → 同目录重新打开 ──
   db.flush();
   const db2 = await openDbAsync(dir, { driver: 'sqljs' });
@@ -173,6 +185,11 @@ function check(name, ok, detail = '') {
   const tplTeam = store2.getTeam(capTeam.id);
   check('重启后成员数保持', tplTeam.members.length === MAX_MEMBERS_PER_TEAM);
   check('重启后归档状态保持', reloaded.archivedAt !== null && reloaded.archivedAt !== undefined);
+  // D4-05：state 是运行期字段但存在 team_members 表里 —— 重启后必须原样读回（此前该列从不被引擎写，
+  // 所以「持久化」从未被测过；现在引擎会写，读不回就等于 FSM 每次重启归零）。
+  check('D4-05 重启后成员 state 保持（最后一次写入的 idle）',
+    reloadedMembers.find((m) => m.id === custom.id)?.state === 'idle',
+    `state=${reloadedMembers.find((m) => m.id === custom.id)?.state}`);
 
   // 显式关闭两个连接再退出（与 taskStore.test.js 同纪律）：
   // sqljsDb 在 process 'exit' 里挂了一次兜底 flush，而 Linux CI runner 上

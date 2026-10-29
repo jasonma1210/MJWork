@@ -104,7 +104,8 @@ check('应用根容器已设置 min-h-0（外层不溢出）', () => {
   // 需要父容器提供定位上下文；min-h-0 的护栏目标不变。
   assert.match(app, /className="flex flex-1 min-h-0( relative)?"/,
     '根容器下的主区缺 min-h-0');
-  assert.match(app, /className="flex-1 min-w-0 flex flex-col"/,
+  // 允许内容列追加 relative（Toast 顶部居中锚点需要定位上下文）；min-w-0 护栏目标不变。
+  assert.match(app, /className="flex-1 min-w-0 flex flex-col( relative)?"/,
     '内容列缺 min-w-0，长内容会横向撑破布局');
 });
 

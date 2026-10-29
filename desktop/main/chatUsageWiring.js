@@ -15,11 +15,13 @@
 //  · 异常一律吞掉只打 warn：这段跑在收尾链路里，抛错会让 done 事件发不出去、客户端卡 loading。
 function makeChatUsageDeps(getQuotaLedger, getProjectStore) {
   return {
-    recordUsage: ({ projectId, runId, tokens } = {}) => {
+    recordUsage: ({ projectId, runId, tokens, modelName } = {}) => {
       try {
         const ledger = getQuotaLedger();
         if (!ledger || !projectId || !(tokens > 0)) return 0;
-        return ledger.recordChat({ projectId, runId, memberId: null, tokens });
+        // modelName 必须透传：此前这里只解构三个字段，账本行的 model 恒为空 ⇒
+        // 「哪个模型烧掉多少」在流水页永远显示「未记录」（只能靠扫消息表反推）。
+        return ledger.recordChat({ projectId, runId, memberId: null, tokens, model: String(modelName || '').trim() });
       } catch (e) {
         console.warn('[usage] 写入用量账本失败（不影响运行）:', e?.message || e);
         return 0;

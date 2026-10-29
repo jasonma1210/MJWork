@@ -15,7 +15,7 @@ import MessageStream, { MSG_WINDOW, RunFooter, renderMessages } from './MessageS
 export { RunFooter, renderMessages };
 import AgentDock from './AgentDock';
 import TodoPanel from './TodoPanel';
-import ContextRing, { contextUsageOf } from './ContextRing';
+import ContextRing, { contextUsageOf, useLiveContextUsage } from './ContextRing';
 import { effectiveContextWindow } from '../lib/modelConfig';
 import { projectDisplayName } from '../lib/projectName';
 import PlusMenu from './PlusMenu';
@@ -92,10 +92,14 @@ export default function ChatArea({
   // T1-5：运行中实时消耗（onMessage 每条中间消息累计；结束态以 runSummary 为准）
   const [runUsage, setRunUsage] = useState({ tokensIn: 0, tokensOut: 0 });
   // 上下文窗口：模型自带字段优先，其次用户在模型配置 popover 里设置的值，最后 128K 兜底
-  const contextUsage = contextUsageOf(
+  const fallbackContextUsage = contextUsageOf(
     messages,
     effectiveContextWindow(selectedModel?.provider, selectedModel?.model) || 128000,
+    // 已知真实上下文体积（上一轮 prompt）优先：覆盖本地估算系统性低估（中间工具轮不进 React state）
+    runSummary?.contextTokens ?? null,
   );
+  // 运行中也显示真实占用：每 10s 读一次引擎逐轮快照的 lastPromptTokens；停止后交回 runSummary 终值
+  const contextUsage = useLiveContextUsage(fallbackContextUsage, loading);
   const agentFilesRef = useRef(new Set()); // 本轮 Agent 改动的文件（供 Diff 面板「上一轮」筛选）
   // messagesRef：send 是 async 且常被 setTimeout/旧闭包调用（queue 接力、steer 补发），
   // 闭包里的 messages 是「调用方那次渲染」的值——queue 的下一轮会缺上一轮 assistant 回复，
@@ -742,6 +746,7 @@ export default function ChatArea({
         model={selectedModel?.model?.model_id}
         runFiles={runFiles}
         onOpenFile={onOpenFile}
+        cwd={cwd}
         threadId={thread?.id != null ? String(thread.id) : null}
       />
       {/* Composer 容器必须 shrink-0：否则会被上方消息区挤压，输入框被推出可视区*/}

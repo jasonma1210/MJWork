@@ -493,7 +493,8 @@ export default function ScheduledTasks() {
               </p>
             )}
 
-            {/* 触发方式：时钟（cron）或外部事件（由 scheduled:ingestEvent / 本地事件入口驱动） */}
+            {/* 触发方式：时钟（cron）或外部事件（外部事件走本地 HTTP 入口 scheduledEventServer；
+                IPC 版 scheduled:ingestEvent 未在 preload 暴露，渲染层调不到 —— 见 main/scheduler.js 的 E2 注释） */}
             <div className="flex items-center justify-between gap-3 mb-3 p-3 bg-input rounded-xl">
               <div className="min-w-0">
                 <div className="text-xs font-medium">{t('scheduled.triggerEventLabel')}</div>

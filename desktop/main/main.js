@@ -51,7 +51,7 @@ const conversationRules = []; // 「本对话同类」：进程内存
 
 try {
   alwaysRules = JSON.parse(fs.readFileSync(APPROVAL_RULES_FILE(), 'utf8'));
-  if (!Array.isArray(alwaysRules)) alwaysRules = [];
+  if (!Array.isArray(alwaysRules)) alwaysRules = []; else alwaysRules = alwaysRules.filter((r) => (r && (typeof approval.isRememberable !== 'function' || approval.isRememberable(r.tool))));
 } catch (e) {
   alwaysRules = []; // 首次启动
 }
@@ -720,7 +720,11 @@ async function chatStreamOnce({ providerId, isGlobal = false, baseUrl, messages,
   try {
     const res = await fetch(`${root}/chat/completions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret.api_key}` },
+      // P0-5：禁用 keep-alive 连接复用——undici 默认连接池会在请求间复用 TCP 连接；
+      // 当供应商/网关（如 ollama 前置的 flint 类网关）关闭空闲 keep-alive 连接或不对复用连接流式转发时，
+      // 首请求走新连接正常、次请求复用半关闭连接会出现「响应头已到但响应体 90s 不来」的假死。
+      // 加 Connection: close 让 undici 不把连接放回池，每次强制新连接，消除整类故障。
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret.api_key}`, 'Connection': 'close' },
       body: JSON.stringify(body),
       // 超时必须「真中断」（上层 withTimeout 只放弃等待，连接挂着则 finally 的 slot.release 不执行 → fg 槽位泄漏）。
       // 超时判定已交给 streamGuard（空闲语义），这里只负责把 abort 级联到 fetch。
@@ -897,7 +901,7 @@ const prTools = {
 
 // 定时任务专用 toolHandlers：与渲染层会话同源（复用主进程工具实现）
 // 定时任务 / Worker 共用的工具集：清单已在 main/scheduledTools.js（按能力边界拆，与行数无关）
-const { scheduledToolHandlers: buildScheduledToolHandlers, scheduledCreate: scheduledCreateTool } = require('./scheduledTools');
+const { scheduledToolHandlers: buildScheduledToolHandlers, scheduledCreate: scheduledCreateTool, engineMcpHandlers } = require('./scheduledTools');
 // M5 / T5-8：军团协同工具（成员任务专用）+ 消息总线写入通道。
 // 提前 require（而非在 initTeamsIpc 处）是为了让下方 Worker 工具工厂的闭包在模块解析阶段就有绑定；
 // ipc/teams 模块本身的 deps 在 initTeamsIpc 之后才生效，此处只取函数引用，不触发任何 IO。
@@ -1103,7 +1107,8 @@ agentRunner.initAgentRunner({
   // V01：createToolHandlers 接收本 run 的宿主治理值（agentRunner 已按角色钳制），
   // 工具处理器内一律使用宿主值，不读模型参数里的治理字段。
   createToolHandlers: ({ sender, signal, runId, emitSubagent, approvalMode: runApprovalMode, conversationId, model, projectPath }) => ({
-    ...scheduledToolHandlers(),
+    // O-1：引擎通道补 MCP 进度桥（实现外置在 scheduledTools.engineMcpHandlers，此处仅接线；无窗口自动降级）
+    ...scheduledToolHandlers(), ...engineMcpHandlers(sender, callMcpTool),
     // runId 作为 streamTag：Agent 运行的流式输出带标签，渲染层按活跃会话过滤（切会话/后台运行不串显）
     chat: (chatPayload) => chatStreamOnce(chatPayload, sender, signal, runId),
     orchestrateTask: (args) => toolOrchestrateTask(args, { signal, emitSubagent, conversationId: conversationId || '', projectPath: projectPath || '' }),

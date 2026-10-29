@@ -1,5 +1,6 @@
 {
   "title": "Context usage {pct}% ({used} / {total} tokens), click to compact",
   "ariaLabel": "Context usage {pct}%",
+  "tooltip": "Used {used} / {total} tokens · {pct}%",
   "compacting": "Compacting"
 }

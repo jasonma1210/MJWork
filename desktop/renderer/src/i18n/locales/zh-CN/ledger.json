@@ -38,6 +38,7 @@
   "colTask": "任务",
   "colRun": "运行",
   "colSource": "来源",
+  "colModel": "模型",
   "colMember": "成员标识",
   "colTokens": "Token",
   "notRecorded": "未记录",

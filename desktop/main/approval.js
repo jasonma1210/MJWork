@@ -49,7 +49,7 @@ const REVERSIBILITY = {
   git_restore_staged: { reversible: true, note: '工作区改动仍在，可重新暂存' },
   git_commit: { reversible: true, note: '未推送时可用 git reset 回退；已推送则需改写远端历史' },
   // Diff 面板的 hunk 级操作（toolKey 见 ipc/gitHunks.js）：都只动工作区/索引，git 可回退
-  git_apply_hunk: { reversible: true, note: 'hunk 已写入工作区，可用 git checkout/反向补丁回退' },
+  git_apply_hunk: { reversible: false, note: '拒绝=从工作区抹掉该块；未暂存内容的原文此后无副本可取回（该块曾暂存/提交过才可从索引或历史恢复）' },
   git_apply_hunk_cached: { reversible: true, note: 'hunk 已暂存，可用 git restore --staged 撤销' },
   git_apply_hunk_unstage: { reversible: true, note: '仅取消暂存，工作区改动仍在' },
   scheduled_create: { reversible: true, note: '可删除该定时任务停止后续执行' },
@@ -215,7 +215,7 @@ function notifyExecuted({
 //   · G-CUA cua_action：逐次界面动作——CUA 的敏感动作设计上恒逐次确认（决策不落规则库），
 //     若 UI 仍给「本会话/始终允许」按钮，用户点了却对后续动作无效 → 即为产品撒谎，
 //     故与顶层调用一并标记为不可记忆（ApprovalCard 只显示「允许一次 / 拒绝」）。
-const NON_REMEMBERABLE = new Set(['unconfined_exec', 'scheduled_create', 'computer_use', 'cua_action', 'install_plugin', 'pr_review', 'pr_comment']); // P0-1: 三者恒 L3 不可记忆
+const NON_REMEMBERABLE = new Set(['unconfined_exec', 'scheduled_create', 'computer_use', 'cua_action', 'install_plugin', 'pr_review', 'pr_comment']); // A4/P0-1: 7 项恒 L3 不可记忆（尾注原写「三者」，与集合实际条目数不符）
 const isRememberable = (tool) => !NON_REMEMBERABLE.has(tool);
 
 // 工具 → 默认分级
@@ -236,7 +236,6 @@ const isRememberable = (tool) => !NON_REMEMBERABLE.has(tool);
 const TOOL_LEVEL = {
   git_commit: 'L2', git_add: 'L2', apply_patch: 'L2',
   write_file: 'L2', edit_file: 'L2',
-  mcp__: 'L3',
   // 对话内插件安装 = 给模型「装软件」的能力（网络下载 + 落盘 + 注册服务），
   // 恒为 L3：任何审批档位都弹卡确认，且不可经「本对话同类」规则静默放行
   install_plugin: 'L3',
@@ -434,12 +433,13 @@ function needsApproval({ tool, args = {}, approvalMode = 'on-request', conversat
   const level = toolLevel(tool, args);
   // P0-6：L1 是硬地板，任何档位都弹卡（含 never）—— 此前 never 短路在首行，导致「全不询问」下 rm -rf 零确认执行，比 Worker 的 auto-safe 还松。
   if (level === 'L1') return { need: true, level };
-  if (!level || approvalMode === 'never') return { need: false };
+  // O1：never 只关「打扰」不关「不可逆」，但地板只兜 L3：L1 已在上方；L2 的 cua_action 外层 computer_use 本就是 L1 闸，逐次再问＝每步一问
+  if (!level || (approvalMode === 'never' && !(NON_REMEMBERABLE.has(tool) && level === 'L3'))) return { need: false };
 
   // 规则豁免（始终允许 / 本对话同类）
   // P1-C：L1 危险命令不接受任何规则豁免——「始终允许」也不可覆盖危险命令，fail-closed。
   // 原实现下 pattern='*' 或宽松正则可让 rm -rf / 之类永久放行，是审批中心最大的缺口。
-  if (level !== 'L1') {
+  if (level !== 'L1' && isRememberable(tool)) {
     const target = approvalTarget(tool, args);
     if (alwaysRules.some((r) => r.tool === tool && matchPattern(r.pattern, target))) {
       return { need: false, matched: 'always' };
@@ -783,7 +783,7 @@ function approvalSummary(tool, args = {}) {
       if (tool.startsWith('mcp__')) {
         return { level: 'L3', title: `MCP 工具 ${tool}`, detail: JSON.stringify(args).slice(0, 500) };
       }
-      return { level: 'L2', title: tool, detail: JSON.stringify(args).slice(0, 500) };
+      return { level: toolLevel(tool, args), title: tool, detail: JSON.stringify(args).slice(0, 500) };
   }
 }
 

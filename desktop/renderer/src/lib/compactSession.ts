@@ -8,19 +8,24 @@
 //     随后 replaceMessages **整体覆盖数据库**（不可逆）。独立后它可以被单测直接驱动
 //     （见 test/compact-safety.test.mjs 的行为段）。
 //
-// 三条纪律：
+// 四条纪律：
 //  1. 窗口必须用「运行时那份」model —— context_window 由 effectiveContextWindow 现算注入；
 //  2. 运行中禁止压缩 —— replaceMessages 按 threadId 全删再插，会与主进程正在追加的消息互相覆盖；
 //  3. 压缩前留撤销带（localStorage），落库成功后给「撤销」出口。这是本产品唯一不可逆的数据动作。
+//  4. **记账守恒** —— 压缩只换表示，不得改变「用了多少 token、用的哪个模型」。
+//     引擎产出的消息只有 role/content/tool_calls，直接覆盖会让该会话的用量与模型名清零
+//     （2026-10-29 真机：两次 /compact 抹掉 11,878,938 tokens，工作台三张表当天全空）。
+//     守恒实现见 lib/ledgerCarry.ts。
 import { compactHistory } from '../../../agent-core/index.js';
 import { buildRunModel } from './modelConfig';
+import { carryLedger } from './ledgerCarry';
 
 const UNDO_PREFIX = 'mj_compact_undo_';
 /** 撤销带只留最近 400 条：它是安全网，不是第二份全量存储 */
 const UNDO_MAX_MESSAGES = 400;
 
 export interface CompactSessionDeps {
-  /** 当前可见消息（会话历史） */
+  /** 当前可见消息（会话历史）。形状同时存在驼峰（本地库）与蛇形（流式新建），故放宽为 any */
   messages: Array<{ role: string; content: unknown }>;
   /** 当前选中模型（selectedModel：**不含** context_window，那要现算） */
   model: any;
@@ -64,16 +69,20 @@ export async function compactSession(d: CompactSessionDeps): Promise<void> {
   }
   if (!Array.isArray(compacted) || compacted.length >= convo.length) return;
 
-  // ③ 撤销带：压缩前的原始历史（落库成功后用户可一键恢复）
+  // ② 记账守恒：压缩只换表示，不得改变「用了多少、用的什么模型」
+  const fallbackModel = String(model?.model?.model_id ?? model?.model?.modelId ?? model?.model_id ?? model?.modelId ?? '');
+  const withLedger = carryLedger(messages, compacted, fallbackModel);
+
+  // ③ 撤销带：压缩前的原始历史（**带记账字段**——只存 role/content 会让「撤销」第二次抹账）
   const undoKey = `${UNDO_PREFIX}${threadId ?? 'local'}`;
   let hasUndo = false;
   try {
-    localStorage.setItem(undoKey, JSON.stringify(convo.slice(-UNDO_MAX_MESSAGES)));
+    localStorage.setItem(undoKey, JSON.stringify(messages.slice(-UNDO_MAX_MESSAGES)));
     hasUndo = true;
   } catch (e: any) {
     console.warn('[chat] compaction undo snapshot failed:', e?.message);
   }
-  setMessages(compacted);
+  setMessages(withLedger);
   setWindowStart(0);
 
   const undo = async () => {
@@ -100,7 +109,7 @@ export async function compactSession(d: CompactSessionDeps): Promise<void> {
   if (!threadId) { offerUndo(); return; }
   if (!replaceMessages) { offerUndo(); return; }
   try {
-    const r = await replaceMessages(threadId, compacted);
+    const r = await replaceMessages(threadId, withLedger);
     if (r?.ok) offerUndo();
     else if (r?.error) toast({ message: t('runtime.compactNotPersisted', { error: r.error }) });
   } catch (err: any) {

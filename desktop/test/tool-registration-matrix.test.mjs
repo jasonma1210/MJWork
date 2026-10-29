@@ -147,8 +147,10 @@ const SP = approval.SPECIAL_CASED_TOOLS;              // toolLevel 在兜底前�
 //   · chrome_connect：扩展侧连接授权（IPC，非模型工具）
 //   · unconfined_exec：沙箱不可用时 exec.js 的**内部**审批通道名，非模型工具
 //   · git_checkout / git_restore_staged：diff 面板的 hunk/文件级操作（UI 驱动）
-//   · mcp__：前缀通配哨兵（toolLevel 用 startsWith 判），不是工具名
-const NON_MODEL_LEVEL_ENTRIES = ['mcp__', 'chrome_connect', 'unconfined_exec', 'git_checkout', 'git_restore_staged'];
+// A5：原先这里还豁免了 'mcp__'（前缀通配哨兵）。该条目实为幻影——toolLevel() 的 startsWith 分支
+// 在末行兜底前就 return，表里的值读不到；现已从 TOOL_LEVEL 删除，豁免随之移除，
+// 改由下方「⑤反 前缀通配不得登记」断言重罚（白名单不再为它开后门）。
+const NON_MODEL_LEVEL_ENTRIES = ['chrome_connect', 'unconfined_exec', 'git_checkout', 'git_restore_staged'];
 
 // 覆盖判据（**纯函数**，便于自检证明它不是恒真）：一个工具要么显式登记在 TOOL_LEVEL，
 // 要么被 toolLevel 特判（SPECIAL_CASED_TOOLS），要么在 READONLY_TOOLS 里。
@@ -482,6 +484,16 @@ console.log('');
     shadowedEntries.length
       ? `不可达条目：${shadowedEntries.map((k) => `${k}(${TL[k]})`).join(', ')} —— 请从 TOOL_LEVEL 删除，判据写进注释块`
       : `TOOL_LEVEL=${Object.keys(TL).length} 条 / SPECIAL=${SP.size} 条，交集为空`);
+
+  // A5：toolLevel() 里 `startsWith('mcp__')` 是**前缀分支**，它同样先于末行兜底 return。
+  // 因此任何以 mcp__ 开头的 TOOL_LEVEL 键都恒不可达（与 SPECIAL_CASED 遮蔽同类，只是机制不同：
+  // 上一版把它当「哨兵」塞进 NON_MODEL_LEVEL_ENTRIES 豁免掉了，等于给同类缺陷开了后门）。
+  // 判据：不得存在 mcp__ 前缀键；并自检该断言非恒真（构造一个假表确认能检出）。
+  const mcpPrefixed = Object.keys(TL).filter((k) => k.startsWith('mcp__'));
+  const mcpProbe = Object.keys({ mcp__fake__: 'L3' }).filter((k) => k.startsWith('mcp__'));
+  check('⑤反 TOOL_LEVEL 不得登记 mcp__ 前缀键（前缀分支先 return，条目永不生效）',
+    mcpPrefixed.length === 0 && mcpProbe.length === 1,
+    mcpPrefixed.length ? `不可达条目：${mcpPrefixed.join(', ')}` : '无前缀键；自检 1/1 检出');
 }
 
 // ── 5. 自检（防「恒绿」假闸）──

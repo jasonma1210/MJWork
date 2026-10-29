@@ -28,7 +28,7 @@
 //   走的完全是同一条路。UI 把「协作模式」做成用户可选项，等于让用户以为能改行为。
 //   修法（成本最低且能让名字名实相符）：`select` 模式**不产出预置指派表**——
 //   `dag.assignments` 为空 ⇒ `waveEngine.preferredOwnerOf` 返回 null ⇒
-//   `workerPool` 走 `pickOwnerMember` 按能力被动认领。`lead` 模式保持原有的
+//   `workerPool` 走 `pickOwnerMember` 按 seq 轮转被动认领。`lead` 模式保持原有的
 //   「主管预置指派」（批内轮转，把任务落到具体人头上）。
 //   两条分支都是确定性的：模式再也不是一句提示词，而是「有没有指派表」这个可断言的事实。
 //
@@ -204,7 +204,7 @@ function buildDispatchPlan({ tasks, roster, budget = null, mode = 'lead', chatOn
   });
   const activeMemberIds = Array.isArray(plan.activeMemberIds) ? plan.activeMemberIds : [];
   const deferredMembers = Array.isArray(plan.deferredMembers) ? plan.deferredMembers : [];
-  // B-08：select ⇒ 不预置指派（成员按能力被动认领）；lead ⇒ 保留批内轮转指派。
+  // B-08：select ⇒ 不预置指派（成员按 seq 轮转被动认领）；lead ⇒ 保留批内轮转指派。
   // 对话型目标恒用预置指派：任务标题/输出文本是按名册序写的「某人：序号」，
   // 必须落到同名成员头上，不能被被动认领打乱。
   const assignments = (mode === SELECT_MODE && !chatOnly) ? {} : (plan.assignments || {});

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { IconAlert, IconX } from './icons';
 import { useI18n, tGlobal } from '../i18n';
 import Modal from './ui/Modal';
@@ -40,6 +41,33 @@ export function toast({ message, actionLabel = null, onAction = null, duration =
   toastListener({ id: ++confirmSeq, message, actionLabel, onAction, duration });
 }
 
+// 单条 Toast：挂载后 200ms 淡入 + 轻微下滑（浅→深），用 transition 而非 keyframe，无需改全局 CSS。
+function ToastCard({ t, tr, onDismiss }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setShow(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  return (
+    <div
+      className={`pointer-events-auto flex items-center gap-3 bg-raise border border-border rounded-xl shadow-[var(--shadow-pop)] px-4 py-2 text-xs transition-all duration-200 ${show ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1'}`}
+    >
+      <span className="text-text">{t.message}</span>
+      {t.actionLabel && (
+        <button
+          onClick={() => { t.onAction?.(); onDismiss(t.id); }}
+          className="text-accent font-medium hover:opacity-80 shrink-0"
+        >
+          {t.actionLabel}
+        </button>
+      )}
+      <button onClick={() => onDismiss(t.id)} className="text-text2 hover:text-text shrink-0" aria-label={tr('feedback.closeToast')}>
+        <IconX size={12} />
+      </button>
+    </div>
+  );
+}
+
 export default function FeedbackHost() {
   // 本文件 toast 回调参数名为 t（提示项），解构改名 tr 避免遮蔽
   const { t: tr } = useI18n();
@@ -53,7 +81,7 @@ export default function FeedbackHost() {
       setDialog(req);
     };
     toastListener = (t) => {
-      setToasts((prev) => [...prev.slice(-3), t]); // 最多同屏 4 条
+      setToasts((prev) => [t, ...prev].slice(0, 4)); // 顶部堆叠：新条在最上，最多 4 条
       setTimeout(() => {
         setToasts((prev) => prev.filter((x) => x.id !== t.id));
       }, t.duration || 5000);
@@ -130,6 +158,22 @@ export default function FeedbackHost() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }
 
+  // portal 目标：对话列顶部锚点。无 DOM（SSR/冒烟测试）时回退为原地渲染，避免
+  // createPortal 拿到非 DOM 元素抛「Target container is not a DOM element」。
+  const toastRoot = typeof document !== 'undefined' && document.getElementById
+    ? document.getElementById('mj-toast-root')
+    : null;
+  // createPortal 必须拿到真实 DOM 节点（nodeType===1）；测试桩返回普通对象会抛
+  // 「Target container is not a DOM element」，故校验后回退为原地渲染。
+  const canPortal = !!toastRoot && toastRoot.nodeType === 1;
+  const toastBody = (
+    <div className="flex flex-col gap-2 items-center pointer-events-none">
+      {toasts.map((t) => (
+        <ToastCard key={t.id} t={t} tr={tr} onDismiss={dismissToast} />
+      ))}
+    </div>
+  );
+
   return (
     <>
       {dialog && (
@@ -185,25 +229,8 @@ export default function FeedbackHost() {
           </div>
         </Modal>
       )}
-      {/* Toast 右下角（审批卡左上方错开，z-toast 位于 approval 之下） */}
-      <div className="fixed bottom-14 left-1/2 -translate-x-1/2 z-toast flex flex-col gap-2 items-center pointer-events-none">
-        {toasts.map((t) => (
-          <div key={t.id} className="pointer-events-auto flex items-center gap-3 bg-raise border border-border rounded-xl shadow-[var(--shadow-pop)] px-4 py-2 text-xs">
-            <span className="text-text">{t.message}</span>
-            {t.actionLabel && (
-              <button
-                onClick={() => { t.onAction?.(); dismissToast(t.id); }}
-                className="text-accent font-medium hover:opacity-80 shrink-0"
-              >
-                {t.actionLabel}
-              </button>
-            )}
-            <button onClick={() => dismissToast(t.id)} className="text-text2 hover:text-text shrink-0" aria-label={tr('feedback.closeToast')}>
-              <IconX size={12} />
-            </button>
-          </div>
-        ))}
-      </div>
+      {/* Toast 顶部居中：portal 到对话列锚点 #mj-toast-root；无 DOM 锚点时原地渲染 */}
+      {canPortal ? createPortal(toastBody, toastRoot) : toastBody}
     </>
   );
 }

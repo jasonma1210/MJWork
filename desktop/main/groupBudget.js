@@ -179,7 +179,9 @@ function tripIfExhausted(deps, group) {
     const full = deps.store.getGroup(groupId) || group;
     let skipped = 0;
     for (const t of (full.tasks || [])) {
-      if (t.status !== 'queued' && t.status !== 'pending') continue;
+      // D4-04：墙钟耗尽时，`quota_suspend`（配额暂停）也算「未开始」——否则 isGroupSettled 把它计为
+      // 未收尾，组永不 finalize（界面一直转圈）。与 abortGroup 的处置集合对齐。
+      if (t.status !== 'queued' && t.status !== 'pending' && t.status !== 'quota_suspend') continue;
       deps.store.setTaskStatus(groupId, t.taskId, 'skipped', { error: verdict.message, force: true });
       deps.emit?.({ type: 'task_update', groupId, taskId: t.taskId, status: 'skipped' });
       deps.emit?.({ type: 'board_task_settled', groupId, taskId: t.taskId, status: 'skipped' });

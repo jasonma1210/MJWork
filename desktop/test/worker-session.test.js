@@ -65,6 +65,11 @@ function makeCheckpointStore(seed = {}) {
       && ws.resolveOwnerMember({ dag: {} }, { taskId: 'x', seq: 1 }, roster0, null) === 'm2');
     check('B-19 无可用名册返回 null（不发明成员）',
       ws.resolveOwnerMember({ dag: {} }, { taskId: 'x', seq: 1 }, [], null) === null);
+    // D4-01 回归：撤员后 dag.assignments 仍留着旧 id，不得把任务回派给已撤员成员（不在可用名册）
+    check('D4-01 撤员成员（不在可用名册）不被回派，回落到名册内 seq 取模',
+      ws.resolveOwnerMember({ dag: { assignments: { n9: 'mbr-retired' } } }, { taskId: 'n9', seq: 1 }, roster0, null) === 'm2');
+    check('D4-01 planned 指向已撤员成员时同样不被采信（回落地名册）',
+      ws.resolveOwnerMember({ dag: {} }, { taskId: 'n9', seq: 1 }, roster0, 'mbr-retired') === 'm2');
   }
 
   // ── P1（2026-10-21）：等待即打轻量断点（释放槽位后仍能接续）──

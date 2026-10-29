@@ -106,6 +106,24 @@ check('⑤b 同一执行时刻才用 token 降序 tie-break', () => {
     'lastAt 相同时应由 token 大的排前（否则 tie-break 形同不存在）');
 });
 
+check('⑤c 会话模型列以消息真值为准（thread.modelName 过期不覆盖）', () => {
+  // 事故形态：建会话时写一次 thread.modelName，之后全仓没有更新入口（无 updateThread），
+  // 用户中途换模型 → 这一行的 token 是新模型烧的，模型列却报旧模型，同一行自相矛盾。
+  const stale = aggregateMessages(
+    [{ role: 'assistant', threadId: 'x', modelName: 'flint', tokensInput: 50, tokensOutput: 0, createdAt: at(0) }],
+    [{ id: 'x', title: 'X', modelName: 'deepseek-v4-flash' }],
+    NOW, 9,
+  ).byThread[0];
+  assert.equal(stale.model, 'flint', `过期 thread.modelName 覆盖了消息真值：${stale.model}`);
+  // 反向对照：消息全无模型名时才允许用 thread.modelName 兜底（否则新口径会把旧数据抹成空）
+  const fallback = aggregateMessages(
+    [{ role: 'assistant', threadId: 'y', tokensInput: 50, tokensOutput: 0, createdAt: at(0) }],
+    [{ id: 'y', title: 'Y', modelName: 'mimo-v2.6-flash' }],
+    NOW, 9,
+  ).byThread[0];
+  assert.equal(fallback.model, 'mimo-v2.6-flash', `真空兜底失效：${fallback.model}`);
+});
+
 check('⑥ 空输入不炸、不编数字', () => {
   const empty = aggregateMessages([], [], NOW);
   assert.deepEqual(empty.totals, { input: 0, output: 0, total: 0, requests: 0, todayTotal: 0, last7Total: 0 });

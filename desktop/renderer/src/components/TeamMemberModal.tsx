@@ -56,11 +56,14 @@ interface MemberDraft {
 }
 
 // 审批档 / 沙箱档 → i18n key（顶层常量只存 key，渲染时经 t() 求值，切语言即时生效）
+// O-6：键必须与主进程 APPROVAL_MODES（never / auto-safe / on-request / always）逐一对齐。
+// 此前这里是 trusted（引擎无此档：needsApproval 落到末行按「需审批」处置，显示与行为相反），
+// 且缺 never（最宽松档被 fallback 显示成「按需申请」）。
 const APPROVAL_LABEL: Record<string, string> = {
   'on-request': 'teams.approvalOnRequest',
   'auto-safe': 'teams.approvalAutoSafe',
+  never: 'teams.approvalNever',
   always: 'teams.approvalAlways',
-  trusted: 'teams.approvalTrusted',
 };
 const SANDBOX_LABEL: Record<string, string> = {
   'read-only': 'teams.sandboxReadOnly',

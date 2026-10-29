@@ -33,7 +33,7 @@ async function buildDb() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT, run_id TEXT, task_id TEXT,
     member_id TEXT, tokens INTEGER DEFAULT 0,
-    source TEXT, created_at INTEGER
+    source TEXT, model TEXT, created_at INTEGER
   )`);
   // 插入 12 条：created_at 单调，但最后一条 is 故意「时间更早、id 更大」（补记历史）
   const rows = [
@@ -190,9 +190,15 @@ async function buildDb() {
 
   // CSV 公式注入：单元格以 = + - @ tab 开头时前缀单引号
   const { buildLedgerCsv, ledgerRowToCsv } = await import('../shared/ledgerCsv.mjs');
-  check('T13 CSV 表头存在，且字段与明细列一一对应', () => {
+  check('T13 CSV 表头与数据行列数严格一一对应（含 2026-10-29 新增 model 列）', () => {
     const header = buildLedgerCsv([]).trim();
     assert.ok(/^".*","id".*$/.test(header) || header.startsWith('id,'), `表头异常: ${header}`);
+    // 只断言「表头长什么样」抓不到「加了列却忘了加单元格」——那种 CSV 每行都会少一格，
+    // 但表头看着完全正常，导入表格后整列错位。必须数格子。
+    const headCols = header.split(',').length;
+    const rowCols = ledgerRowToCsv({ id: 1, projectId: 'p', runId: 'r', taskId: 't', memberId: 'm', tokens: 1, source: 'chat', model: 'flint', createdAt: 1000 }).split(',');
+    assert.equal(rowCols.length, headCols, `表头 ${headCols} 列，数据行 ${rowCols.length} 列`);
+    assert.equal(rowCols[8], 'flint', `model 列位置不对：${JSON.stringify(rowCols)}`);
   });
   check('T14 公式注入防护：source/notes 以 =+-@ 开头被前缀单引号', () => {
     const malicious = { id: 99, projectId: 'p', runId: 'r', taskId: 't', memberId: 'm', tokens: 1, source: '=cmd|/C calc', createdAt: 1000 };
@@ -207,6 +213,27 @@ async function buildDb() {
     const ok = { id: 1, projectId: 'p-a', runId: 'r-1', taskId: 't-1', memberId: 'm-1', tokens: 10, source: 'round', createdAt: 1000 };
     const line = ledgerRowToCsv(ok);
     assert.ok(!line.startsWith("'round"), '正常值不应加前缀');
+  });
+
+  check('T16 模型维度可汇总（2026-10-29 新增列，team 行 null → 「未记录」不消失）', () => {
+    // 账本此前没有模型维度，「哪个模型烧掉多少」只能扫 messages 表反推。这里**改库**造出
+    // 带 model 的 chat 行再走 summarize，确保列确实进了 SQL，而不是只停留在对象字段上。
+    db.prepare("UPDATE quota_consumptions SET model='flint' WHERE id IN (1,2)").run();
+    const p = ledger.queryPage(db, { filters: {}, limit: 100, dimensions: ['model'] });
+    const rows = p.summary.byDimension.model || [];
+    const flint = rows.find((r) => r.key === 'flint');
+    assert.ok(flint, `按 model 汇总缺少 flint 行：${JSON.stringify(rows)}`);
+    assert.equal(flint.tokens, 30, `flint 合计应为 10+20=30，实际 ${flint.tokens}`);
+    assert.equal(flint.count, 2);
+    assert.ok(rows.some((r) => r.key === null), '未记模型的行必须汇总为 null 键（UI 显示「未记录」），不能消失');
+  });
+
+  check('T17 明细行透出 model（未记模型时是 null，不是字段缺失）', () => {
+    const p = ledger.queryPage(db, { filters: {}, limit: 100 });
+    assert.equal(p.items.find((x) => x.id === 1).model, 'flint');
+    const miss = p.items.find((x) => x.id === 7);
+    assert.ok('model' in miss, 'model 字段整个缺失 → JSON 里会消失，前端无法区分「未记录」与「旧版本」');
+    assert.equal(miss.model, null);
   });
 
   console.log(`\nledger-query: ${pass} 通过 / ${fail} 失败`);

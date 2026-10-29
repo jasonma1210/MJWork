@@ -28,11 +28,11 @@ import { applyAccent } from '../lib/color';
 // 权限档位统一常量源（A10）：Composer 与设置页共用，禁止各自维护值域
 import { APPROVAL_MODES, SANDBOX_MODES, migrateApprovalMode } from '../constants/approval';
 import { getLinkOpenMode, setLinkOpenMode } from '../lib/linkOpen';
+import { getOutputDisplay, setOutputDisplay } from '../lib/outputDisplay';
 import { useI18n } from '../i18n';
 
-// 导航分组对齐 WorkBuddy：设置（外观与模型）/ 功能（能力开关与集成）/ 账户与安全（数据与更新）
-// 顺序纪律：每个 id 必须在正文里有对应实现——曾经 browser / git 只登记在导航里、
-// 正文没有分支，点进去只有标题和空白（「假可用」比不显示入口更伤信任）。
+// 导航分组对齐 WorkBuddy：设置 / 功能 / 账户与安全。顺序纪律：每个 id 必须在正文里有对应实现
+// ——曾经 browser / git 只登记在导航里、正文没有分支，点进去只有空白（「假可用」比不显示更伤信任）。
 const NAV = [
   { groupKey: 'settings.navGroupSettings', items: [
     { id: 'general', icon: <IconSettings size={16} />, labelKey: 'settings.tabGeneral' },
@@ -61,6 +61,12 @@ export const LINK_OPEN_OPTIONS = [
   { id: 'copy', nameKey: 'settings.linkCopy', descKey: 'settings.linkCopyDesc' },
 ];
 
+// 产出文件展示方式：与链接策略同理——设置项必须真正改变 MessageStream 的渲染形态，
+// 只在设置页存个值而无人读取就是假开关（读取方见 lib/outputDisplay.ts）。
+export const OUTPUT_DISPLAY_OPTIONS = [
+  { id: 'inline', nameKey: 'settings.outputInline', descKey: 'settings.outputInlineDesc' }, { id: 'panel', nameKey: 'settings.outputPanel', descKey: 'settings.outputPanelDesc' },
+];
+
 // AI 描述粒度（2026-10-19）：任务收尾文案的详略档，纯提示词驱动。
 // 落点与审批档同存 mj_approval_settings 对象（随现有设置链路一并持久化 + 同步主进程偏好），
 // 渲染期经 t 解析；缺省 default 档（与 agent-core DEFAULT_RESPONSE_STYLE 对齐）。
@@ -79,9 +85,8 @@ const CUA_GUIDE_KEYS = {
   linux: { title: 'settings.cuaGuideTitleLinux', body: 'settings.cuaGuideLinuxBody' },
 };
 
-// OS 级沙箱后端 → 标签。用于未就绪时如实告诉用户「本平台本该有哪种隔离」，
-// 而不是笼统地说「你的系统不支持」（三平台后端清单见 main/sandbox.js 的 detectBackend）
-// T3-2：渲染期经 t 解析，避免顶层常量冻结翻译
+// OS 级沙箱后端 → 标签。未就绪时如实告诉用户「本平台本该有哪种隔离」，而不是笼统说「不支持」
+// （三平台后端清单见 main/sandbox.js 的 detectBackend）；T3-2：渲染期经 t 解析，避免常量冻结翻译
 function sandboxBackendLabel(backend, t) {
   switch (backend) {
     case 'seatbelt': return t('settings.backendSeatbelt');
@@ -216,12 +221,8 @@ export default function SettingsModal({
     }
   }
 
-  // 平台相关关闭按钮（用户要求按系统环境定义）：macOS 沿用交通灯语义（左上红点），
-  // Windows/Linux 沿用窗口按钮语义（右上 X）。主窗口仍为 hiddenInset，浮窗化后
-  // 系统交通灯回到背景窗口左上角，不再与设置页内容重叠，原拖拽安全区随之移除。
-  // 关闭入口统一为右上角 X：此前 macOS 分支自绘了一枚 12px 红点模拟系统交通灯，
-  // 既与窗口真实的交通灯（左上角、属于主窗口）语义重复，也和后端平台分支行为不一致。
-  // 现在两个平台同一处、同一交互（Esc 亦可关闭）。
+  // 关闭入口：两平台同一处、同一交互（右上角 X，Esc 亦可关闭）。此前 macOS 分支自绘 12px 红点
+  // 模拟系统交通灯，与主窗口真实的交通灯语义重复；浮窗化后系统交通灯回背景窗口左上角，不再重叠。
 
   // P0-1（2026-10-26）：关闭设置弹层前，若网络设置存在未保存草稿则二次确认。
   // 确认（危险态，红色）= 丢弃并关闭；取消（默认「取消」）= 留下去保存。
@@ -241,9 +242,8 @@ export default function SettingsModal({
   return (
     <Modal open onClose={handleClose} frameless
       ariaLabel={t('settings.navGroupSettings')}
-      // 外壳类名刻意在本文件里写全（不在调用方「调参」）：settings-coverage.test.js
-      // 对本文件有源码字符串断言（浮窗形态 + shadow-modal），且本文件保留自己的表头关闭按钮，
-      // 因此这里是「只换外壳、内容与视觉零改动」——面板块仍是下面这层自带类。
+      // 外壳类名刻意写全（不在调用方「调参」）：settings-coverage.test.js 对本文件有源码字符串断言
+      // （浮窗形态 + shadow-modal），且本文件保留自己的表头关闭按钮——只换外壳，内容与视觉零改动
       overlayClassName="fixed inset-0 z-settings flex items-center justify-center bg-overlay p-6">
       <div className="w-[min(920px,calc(100vw-3rem))] h-[min(680px,calc(100vh-3rem))] bg-bg border border-border rounded-2xl shadow-[var(--shadow-modal)] flex overflow-hidden relative">
         <button onClick={handleClose}
@@ -507,6 +507,7 @@ export default function SettingsModal({
 function BrowserTab({ flags, approvalSettings, onApprovalSettingsChange }) {
   const { t } = useI18n();
   const [linkMode, setLinkMode] = useState(getLinkOpenMode);
+  const [outputMode, setOutputMode] = useState(getOutputDisplay);
   const [cua, setCua] = useState(null);
   // 授权/能力引导弹窗（2026-10-19）：按平台给「去哪里授权 / 为什么当前不可用」的分步说明
   const [guideOpen, setGuideOpen] = useState(false);
@@ -534,6 +535,11 @@ function BrowserTab({ flags, approvalSettings, onApprovalSettingsChange }) {
         <p className="text-text2 text-xs mt-2">
           {t('settings.linkOpenNote')}
         </p>
+      </Section>
+
+      <Section title={t('settings.outputDisplayTitle')}>
+        {OUTPUT_DISPLAY_OPTIONS.map((o) => <OptionRow key={o.id} name={t(o.nameKey)} desc={t(o.descKey)}
+          selected={outputMode === o.id} onSelect={() => { setOutputMode(o.id); setOutputDisplay(o.id); }} />)}
       </Section>
 
       <Section title={t('settings.inAppBrowsingTitle')}>

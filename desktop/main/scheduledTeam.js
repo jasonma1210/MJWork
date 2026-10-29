@@ -51,7 +51,7 @@ function resolveScheduledTeam({ teamId, getTeamStore } = {}) {
     team,
     mode,
     budget,
-    memberIds: members.map((m) => m.id),
+    memberIds: members.filter((m) => m.state !== 'offline').map((m) => m.id),
     roster: snapshotRoster(members),
   };
 }

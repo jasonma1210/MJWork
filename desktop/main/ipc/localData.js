@@ -407,6 +407,11 @@ function register() {
     // 但读端永远读不回来；value 的形状由各偏好项自己约定，边界不校验
     try {
       guard.assertStrings({ key }, { key: 200 });
+      // D4：value 的**形状**仍不校验（各偏好项自行约定），但必须限长——本通道渲染层可直调，
+      // 而 setPreference 每次都会把整份 preferences JSON 重写落盘：一个超大值会让此后每次 flush 都变慢。
+      // 现存偏好都是设置/会话类小对象，256KB 已远超实际需要；超限**拒绝**而不是静默截断（截断会写坏形状）。
+      const size = JSON.stringify(value ?? null).length;
+      if (size > 256 * 1024) return { ok: false, error: `偏好值过大（${size} 字节，上限 262144）` };
     } catch (e) {
       return { ok: false, error: e.message };
     }

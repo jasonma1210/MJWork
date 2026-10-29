@@ -91,6 +91,8 @@ contextBridge.exposeInMainWorld('mjcode', {
   transcribeVoice: (payload) => ipcRenderer.invoke('voice:transcribe', payload),
   // A12：粘贴/无路径文件落盘
   saveUpload: (payload) => ipcRenderer.invoke('files:saveUpload', payload),
+  // 产出文件「另存为」（目标路径由主进程弹系统保存对话框选择，渲染层只给源路径）
+  saveFileAs: (payload) => ipcRenderer.invoke('files:saveAs', payload),
   // 本地项目工作区（~/Documents/.MJCoder）
   getWorkspaceInfo: () => ipcRenderer.invoke('project:workspaceInfo'),
   createProject: (payload) => ipcRenderer.invoke('project:create', payload),

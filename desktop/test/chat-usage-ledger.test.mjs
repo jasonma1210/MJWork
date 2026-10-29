@@ -85,7 +85,7 @@ check('⑦ makeChatUsageDeps：getter 延迟求值 —— 装配时为 null、�
   ledger = { recordChat: (u) => { calls.push(u); return u.tokens; } };
   assert.equal(deps.recordUsage({ projectId: 'p', runId: 'r', tokens: 7 }), 7,
     'ledger 就绪后应真正写入（证明 getter 是延迟求值，不是装配时抓快照）');
-  assert.deepEqual(calls, [{ projectId: 'p', runId: 'r', memberId: null, tokens: 7 }]);
+  assert.deepEqual(calls, [{ projectId: 'p', runId: 'r', memberId: null, tokens: 7, model: '' }]);
 });
 
 check('⑧ makeChatUsageDeps：memberId 恒为 null（单人对话不属于任何成员，否则会挤占成员额度）', () => {
@@ -95,8 +95,18 @@ check('⑧ makeChatUsageDeps：memberId 恒为 null（单人对话不属于任�
   assert.equal(calls[0].memberId, null, 'chat 记账不能挂成员，否则 memberUsed 窗口会被单人闲聊占掉');
 });
 
-check('⑨ makeChatUsageDeps：projectId 为空 / tokens 非正 → 不写', () => {
+check('⑧b makeChatUsageDeps：modelName 必须透传到记账行（否则流水页模型维度永远「未记录」）', () => {
+  // 事故形态（2026-10-29）：chatUsageLedger 一直在传 modelName，而这一层只解构 projectId/runId/tokens，
+  // 字段在中间被吃掉——台账 model 列恒空，用户问「flint 烧了多少」在流水页查不到任何记录。
   const calls = [];
+  const deps = makeChatUsageDeps(() => ({ recordChat: (u) => { calls.push(u); return u.tokens; } }), () => null);
+  deps.recordUsage({ projectId: 'p', runId: 'r', tokens: 5, modelName: '  flint  ' });
+  assert.equal(calls[0].model, 'flint', `model 未透传或未 trim：${JSON.stringify(calls[0].model)}`);
+  deps.recordUsage({ projectId: 'p', runId: 'r', tokens: 5 });
+  assert.equal(calls[1].model, '', '缺 modelName 时应为空串（落库转 NULL），不能编一个模型名');
+});
+
+check('⑨ makeChatUsageDeps：projectId 为空 / tokens 非正 → 不写', () => {  const calls = [];
   const deps = makeChatUsageDeps(() => ({ recordChat: (u) => { calls.push(u); return u.tokens; } }), () => null);
   deps.recordUsage({ projectId: '', runId: 'r', tokens: 9 });
   deps.recordUsage({ projectId: 'p', runId: 'r', tokens: 0 });

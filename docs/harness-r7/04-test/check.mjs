@@ -751,7 +751,12 @@ function httpHeaderSegments() {
   ok('A13b', '精选 connectors = 78', Array.isArray(c) ? c.length : c.connectors.length, 78);
   ok('A13c', 'workbuddy connectors = 214', Array.isArray(w) ? w.length : w.connectors.length, 214);
   ok('A13d', 'digital employees = 51', e.length, 51);
-  ok('A13e', 'skills 目录 = 100', sk.length, 100);
+  // 2026-10-29 两轮：100→124（为 11 个「零技能」数字员工新建 24 个技能包）→ 136（为 5 个仍无
+  // core_skill_ids 的角色补 12 个技能包：文档信息架构 / 增长模型 / 渠道投放 / 生命周期 / 循证检索 /
+  // 健康表述合规 / 信用风险建模 / 授信审查 / 资产质量 / 客户适当性 / 资产配置 / 金融产品分析）。
+  // 见 docs/harness-r9/02-design/role-skill-catalog-2026-10-29.md。属**有意新增**的随包资产，不是重复条目；
+  // 本条仍是「目录规模变更即红」的探测器，下一次增删照样要来这里改。
+  ok('A13e', 'skills 目录 = 136', sk.length, 136);
 }
 
 // ── A14  F-011 三处可证伪（证据 1 / 3 可自动化） ─────────────────────────
@@ -821,7 +826,11 @@ function httpHeaderSegments() {
   const readmeEn = read('README.md');
   const readmeZh = read('README.zh-CN.md');
   const declConds = [
-    ['技术文档 §5.5 声明', /###\s*5\.5[^\n]*tools profile/.test(techDoc)],
+    // 2026-10-29：原正则钉死 `5.5`。文档改版把「成员级 MCP 授权粒度」插为 5.5、tools profile 顺延为 5.6
+    //（文档内三处交叉引用同步改为「见 5.6 节」，自洽），本断言随即假红——编号是**结构代理**，不是口径。
+    // 改为 5.x 内任意编号 + 标题必须含 tools profile：语义（第 5 章有一节正式声明 tools profile）不变，
+    // 仍要求锚在 H3 标题上（防止正文里出现关键词就算过），删掉该节也照样红。
+    ['技术文档 §5.x 声明', /^###\s*5\.\d+[^\n]*tools profile/m.test(techDoc)],
     ['README.md 声明', /tools profile/.test(readmeEn)],
     ['README.zh-CN.md 声明', /tools profile/.test(readmeZh)],
     ['实现与声明一致（resources/prompts 原语零命中）', scan1.n === 0],

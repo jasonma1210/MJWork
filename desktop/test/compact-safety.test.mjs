@@ -13,7 +13,8 @@
 //      （形态断言只截函数体、并带片段长度自检——全文 indexOf 会命中无关位置而空过）
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { compactHistory } from '../agent-core/index.js';
 
 let pass = 0;
@@ -117,6 +118,69 @@ function compactContextBody() {
     const callLineActive = stripTsComments(body.slice(ci - 120, ci + 120));
     check('A10 守卫：传给 compactHistory 的仍是 runModel（去注释生效代码）',
       /compactHistory\(\s*convo\s*,\s*runModel/.test(callLineActive));
+  }
+
+  // ── C. 记账守恒（2026-10-29 事故）：压缩不得抹掉 token / 模型名 ──
+  // 事故：compactSession 把消息映射成 {role, content} 再交给引擎，引擎产出（同样只有
+  //   role/content/tool_calls）**整体覆盖**数据库 ⇒ 该会话 tokensInput/modelName 全清零。
+  //   真机结果：两次 /compact 抹掉 11,878,938 tokens，工作台三张表当天全空。
+  // 这里断言的是**行为**（真跑 carryLedger），不是「文件里有没有某个词」——
+  //   只做形态断言时，把 carryLedger 改成 `return next` 依然全绿，等于没测。
+  const LEDGER_TS = path.join(HERE, '../renderer/src/lib/ledgerCarry.ts');
+  check('C 记账守恒模块存在（ledgerCarry.ts）', fs.existsSync(LEDGER_TS));
+  {
+    const script = `
+      import { carryLedger } from ${JSON.stringify(pathToFileURL(LEDGER_TS).href)};
+      const prev = [
+        { role: 'user', content: 'q1' },
+        { role: 'assistant', content: 'a1', tokensInput: 1000, tokensOutput: 100, modelName: 'flint', createdAt: 111 },
+        { role: 'assistant', content: 'a2', tokensInput: 2000, tokensOutput: 200, modelName: 'flint', createdAt: 222 },
+        { role: 'user', content: 'q2' },
+      ];
+      const next = [
+        { role: 'assistant', content: '[早期对话摘要] 摘要' },
+        { role: 'assistant', content: 'a2' },
+      ];
+      const out = carryLedger(prev, next, 'fallback-model');
+      const sum = (a) => a.reduce((s, m) => s + (Number(m.tokensInput) || 0) + (Number(m.tokensOutput) || 0), 0);
+      console.log(JSON.stringify({
+        prevSum: sum(prev), outSum: sum(out),
+        headIn: Number(out[0].tokensInput) || 0, headOut: Number(out[0].tokensOutput) || 0,
+        headModel: String(out[0].modelName || ''),
+        tailIn: Number(out[1].tokensInput) || 0, tailOut: Number(out[1].tokensOutput) || 0,
+        tailModel: String(out[1].modelName || ''), tailAt: Number(out[1].createdAt) || 0,
+      }));
+    `;
+    let raw = '';
+    let spawnErr = '';
+    try {
+      raw = execFileSync(process.execPath,
+        ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e', script],
+        { encoding: 'utf8' });
+    } catch (e) {
+      spawnErr = String(e?.stderr || e?.message || e).slice(0, 300);
+    }
+    // 空过守卫：子进程失败时全部子断言必须红，不能因为「没输出」而静默跳过
+    check('C 记账守恒行为用例可执行（TS 模块被真正加载）', raw.trim().length > 0, spawnErr || 'ok');
+    let r = {};
+    try { r = JSON.parse(raw.trim().split('\n').pop() || '{}'); } catch { /* 解析失败 → 下面全红 */ }
+    check('C 压缩后 token 总量守恒（不因摘要而变小）',
+      r.prevSum > 0 && r.prevSum === r.outSum, `prev=${r.prevSum} out=${r.outSum}`);
+    check('C 保留的尾部消息原样带回 token（不是 0）',
+      r.tailIn === 2000 && r.tailOut === 200, `in=${r.tailIn} out=${r.tailOut}`);
+    check('C 保留的尾部消息带回原模型名', r.tailModel === 'flint', `got=${r.tailModel}`);
+    check('C 保留的尾部消息保留原时间戳（不许改写成压缩时刻）', r.tailAt === 222, `got=${r.tailAt}`);
+    check('C 被摘要吃掉的历史 token 归到摘要条（1000/100）',
+      r.headIn === 1000 && r.headOut === 100, `in=${r.headIn} out=${r.headOut}`);
+    check('C 摘要条无原模型时用 fallbackModel 兜底', r.headModel === 'fallback-model', `got=${r.headModel}`);
+  }
+  {
+    // 接线形态（去注释后）：落库必须用 carryLedger 的结果，撤销带必须存带字段的原始消息
+    const bodyActive = stripTsComments(body);
+    check('C 落库用的是 carryLedger 处理后的结果（不是引擎裸输出）',
+      /replaceMessages\(\s*threadId\s*,\s*withLedger\s*\)/.test(bodyActive));
+    check('C 撤销带存原始 messages（带记账字段），不是只有 role/content 的 convo',
+      /localStorage\.setItem\(\s*undoKey\s*,\s*JSON\.stringify\(\s*messages/.test(bodyActive));
   }
 
   console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "generatedAt": "2026-10-29T00:50:29.975Z",
+  "generatedAt": "2026-10-29T14:28:30.042Z",
   "note": "② ratchet 基线（位置级）：key = 文件#语句内容哈希；新增即红，消失请重跑 --write",
   "tiers": {
     "bareIife": 45,
@@ -199,7 +199,7 @@
       "line": 31,
       "text": "(async () => { // ── 1. 模型调用挂起 → 看门狗在超时点终止整个运行（错误如实冒泡）── { const t0 = Date.now(); let err = null; co"
     },
-    "test/agentRunner.test.js#9e97acbb467f": {
+    "test/agentRunner.test.js#ac9415d5715d": {
       "tier": "bareIife",
       "line": 28,
       "text": "(async () => { // 契约异步加载（动态 import ESM）——先就绪再跑，保证校验行为确定性 await agentRunnerReady(); // ── 正常运行：消息/工具/"
@@ -219,9 +219,9 @@
       "line": 27,
       "text": "(async () => { // ── 并发审批按 id 精确分发（原竞态场景：两个等待者，响应不得串扰）── const ch = new ApprovalChannel(); const idA"
     },
-    "test/compact-safety.test.mjs#328f7c57f376": {
+    "test/compact-safety.test.mjs#253d3072f022": {
       "tier": "bareIife",
-      "line": 61,
+      "line": 62,
       "text": "(async () => { // ── A. 行为：窗口取值决定裁不裁 ── const noWindow = await compactHistory(convo, { provider: { i"
     },
     "test/computerUse.test.js#b6b38c5f81c7": {
@@ -256,7 +256,7 @@
     },
     "test/localStore.test.js#123899962287": {
       "tier": "bareIife",
-      "line": 182,
+      "line": 202,
       "text": "(async () => { const dirTimer = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-timer-')); const"
     },
     "test/mcp-auth.test.mjs#28dece96c373": {
@@ -394,7 +394,7 @@
       "line": 45,
       "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-worker-mem-')); const db = awai"
     },
-    "test/worker-session.test.js#05390d48e827": {
+    "test/worker-session.test.js#7d1974a059e6": {
       "tier": "bareIife",
       "line": 49,
       "text": "(async () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-ws-')); const db = await op"
@@ -465,6 +465,38 @@
     },
     {
       "at": "2026-10-29T00:50:29.974Z",
+      "added": 1,
+      "removed": 1,
+      "net": 0,
+      "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-10-29T05:37:27.428Z",
+      "added": 1,
+      "removed": 1,
+      "net": 0,
+      "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-10-29T13:51:04.491Z",
+      "added": 1,
+      "removed": 1,
+      "net": 0,
+      "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-10-29T14:02:58.776Z",
+      "added": 1,
+      "removed": 1,
+      "net": 0,
+      "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-10-29T14:28:30.041Z",
       "added": 1,
       "removed": 1,
       "net": 0,

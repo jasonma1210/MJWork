@@ -28,6 +28,10 @@ export interface DeskModel {
   id?: string;
   name?: string;
   display_name?: string;
+  /** 主进程/本地库的规范形状是驼峰（localStore 与 modelsFile 一律存 modelId/displayName），
+   *  经 api.localProviders() 归一会转成蛇形。两种都认，否则一旦有调用点绕过归一会整列消失。 */
+  modelId?: string;
+  displayName?: string;
 }
 
 export interface DeskSelectedModel {
@@ -36,7 +40,8 @@ export interface DeskSelectedModel {
 }
 
 const pidOf = (p: DeskProvider | undefined | null): string => String(p?.id || p?.name || '');
-const midOf = (m: DeskModel | undefined | null): string => String(m?.model_id || m?.id || m?.name || '');
+const midOf = (m: DeskModel | undefined | null): string => String(m?.model_id || m?.modelId || m?.id || m?.name || '');
+const nameOf = (m: DeskModel): string => String(m.display_name || m.displayName || midOf(m));
 const keyOf = (pid: string, mid: string): string => `${pid}::${mid}`;
 
 /** 摊平成下拉项。provider 或 model 缺标识的直接跳过（不渲染一个选了没反应的选项） */
@@ -48,7 +53,7 @@ export function deskModelOptions(providers: readonly DeskProvider[] | undefined 
     for (const m of p.models || []) {
       const mid = midOf(m);
       if (!mid) continue;
-      out.push({ id: keyOf(pid, mid), label: `${String(p.name || pid)} · ${String(m.display_name || mid)}` });
+      out.push({ id: keyOf(pid, mid), label: `${String(p.name || pid)} · ${nameOf(m)}` });
     }
   }
   return out;

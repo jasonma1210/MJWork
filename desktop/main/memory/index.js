@@ -463,7 +463,7 @@ class MemoryManager {
   async compress({ spaceId, domain = 'session', batchSize = 10, chatOnce, model }) {
     return this._serialized(async () => {
       const rows = this.db.prepare(`SELECT * FROM memories
-        WHERE space_id = ? AND domain = ? AND tier = 1 AND compressed = 0 AND is_valid = 1
+        WHERE space_id = ? AND domain = ? AND tier = 1 AND compressed = 0 AND is_valid = 1 AND (scope IS NULL OR scope != 'team')
         ORDER BY updated_at ASC LIMIT ?`).all(spaceId || 'default', domain, batchSize);
       if (rows.length < 3) return { wrote: 0, skipped: rows.length, reason: '不足一批（<3 条）' };
 

@@ -51,6 +51,9 @@ function loadDigitalEmployees(ecosystemDir) {
       industry: Array.isArray(e.industry) ? e.industry : [e.industry || '通用'],
       tools: Array.isArray(e.tools) ? e.tools : [],
       core_skills: Array.isArray(e.core_skills) ? e.core_skills : [],
+      // 与 core_skills **不是一个东西**：core_skills 是中文能力词表（展示/匹配用），
+      // core_skill_ids 才是可加载的技能 id。缺省 [] 是合法值，不是错误。
+      core_skill_ids: Array.isArray(e.core_skill_ids) ? e.core_skill_ids : [],
       starter_skills: Array.isArray(e.starter_skills) ? e.starter_skills : [],
     }));
   } catch (err) {
@@ -118,17 +121,25 @@ function loadSkillCatalog(ecosystemDir) {
   try {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
     const list = Array.isArray(data) ? data : (data.skills || data.items || []);
-    return list.map((s) => ({
-      id: s.id || slug(s.name || ''),
-      name: s.name,
-      display_name: s.display_name || s.name,
-      category: s.category || '通用',
-      tags: Array.isArray(s.tags) ? s.tags : [],
-      description: s.description || '',
-      tools_required: Array.isArray(s.tools_required) ? s.tools_required : [],
-      permissions: Array.isArray(s.permissions) ? s.permissions : [],
-      approval_policy: normalizeApproval(s.approval_policy),
-    }));
+    const skillsRoot = path.join(ecosystemDir, 'skills');
+    return list.map((s) => {
+      const id = s.id || slug(s.name || '');
+      // T2 边界披露的数据基础：bundled = 随包根已带 SKILL.md 目录（T1）；
+      // 否则为目录级 T2，启用时须经 skills:installEcosystem 物化到 ~/.mjcode/skills 才可用。
+      const bundled = fs.existsSync(path.join(skillsRoot, id, 'SKILL.md'));
+      return {
+        id,
+        name: s.name,
+        display_name: s.display_name || s.name,
+        category: s.category || '通用',
+        tags: Array.isArray(s.tags) ? s.tags : [],
+        description: s.description || '',
+        tools_required: Array.isArray(s.tools_required) ? s.tools_required : [],
+        permissions: Array.isArray(s.permissions) ? s.permissions : [],
+        approval_policy: normalizeApproval(s.approval_policy),
+        bundled,
+      };
+    });
   } catch (err) {
     console.error('[ecosystem] Skill 目录加载失败:', err.message);
     return [];
@@ -159,8 +170,18 @@ const ROLE_APPROVAL_MAP = {
 };
 
 // 由归一化后的员工对象组装 rolePreset（进 agent:run 载荷；审批/沙箱的最终钳制在 agentRunner）
-// skillNames：员工 core_skills + starter_skills 合并透传——agentRunner 按名从 ~/.mjcode/skills 读 SKILL.md
-// 内容注入引擎（技能内容的安全处置在引擎侧统一走不可信内容管道，此处只传名不传内容）
+// skillNames **只吃技能 id**（core_skill_ids + starter_skills 合并去重）——agentRunner 按名从
+// ~/.mjcode/skills 读 SKILL.md（内容的安全处置在引擎侧统一走不可信内容管道，此处只传名不传内容）。
+//
+// P1-2 修正（2026-10-29）：上一版把 core_skills 也并进 skillNames 是**语义错误**——core_skills 是
+// 中文能力词表（"需求拆解"/"代码评审"），中文永远不可能是技能目录名。实测 51 名员工共 246 个
+// 唯一 core_skills 值，在「已安装目录 + ecosystem/skills.json」里可解析数为 **0**：并进去等于
+// 每次运行多 246 次无效查找（loadSkillContents fail-open，只会在 governanceStats 的 skills.missed
+// 上留痕、不会报错），是"看起来接上了、实际全空转"的典型。
+// 口径见 docs/harness-r9/02-design/core_skill_ids-映射口径-2026-10-29.md。
+// 能力词表的消费方是目录展示（main/employeeCatalog.js）与选人匹配（main/teamCapabilities.js 一侧），
+// 不回传到 rolePreset —— contract.mjs 的 rolePreset schema 无 passthrough，多传的键会被 zod 剥掉，
+// 加进来就是又一个死字段。
 function buildEmployeeRuntimePreset(emp) {
   const toolNames = [...new Set((emp.tools || []).flatMap((t) => ROLE_TOOL_ALIASES[t] || []))];
   return {
@@ -182,9 +203,8 @@ function buildEmployeeRuntimePreset(emp) {
     allowMcp: emp.allowMcp !== false,
     approvalMode: ROLE_APPROVAL_MAP[emp.approval_policy] || 'on-request',
     sandboxPolicy: emp.sandbox_policy || 'workspace-write',
-    // P1-2（2026-10-29）：core_skills（常驻技能）此前只展示不进 skillNames ⇒ 运行时不加载（死字段）。
-    // 现与 starter_skills 合并去重后交 agentRunner 按名装载。
-    skillNames: [...new Set([...(emp.core_skills || []), ...(emp.starter_skills || [])].map((s) => (s == null ? '' : String(s))).filter(Boolean))],
+    // P1-2（2026-10-29）：只并 core_skill_ids（id 命名空间），不并 core_skills（中文能力词表）。
+    skillNames: [...new Set([...(emp.core_skill_ids || []), ...(emp.starter_skills || [])].map((s) => (s == null ? '' : String(s))).filter(Boolean))],
   };
 }
 

@@ -30,6 +30,7 @@ const COLUMN_OF = {
   runId: 'run_id',
   source: 'source',
   memberId: 'member_id',
+  model: 'model',
 };
 
 const SORT_WHITELIST = new Set(['created_at', 'id', 'tokens']);
@@ -106,6 +107,8 @@ function rowToItem(r) {
     memberId: r.member_id == null ? null : r.member_id,
     tokens: safeInt(r.tokens),
     source: r.source == null ? null : r.source,
+    // 2026-10-29 新增维度：模型名（team 任务行为 NULL，chat 行为发起 run 的模型）
+    model: r.model == null ? null : r.model,
     createdAt: safeInt(r.created_at),
   };
 }
@@ -276,7 +279,7 @@ function fieldAvailability(db, nf, asOf) {
 function capabilities() {
   return {
     filterDimensions: FILTER_DIMS.slice(),
-    summaryDimensions: [...FILTER_DIMS, 'day'],
+    summaryDimensions: [...FILTER_DIMS, 'day', 'model'],
     sortFields: [...SORT_WHITELIST],
     maxPageSize: MAX_LIMIT,
     defaultPageSize: DEFAULT_LIMIT,

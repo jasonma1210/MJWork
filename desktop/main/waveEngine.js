@@ -152,6 +152,9 @@ function createWaveEngine(host) {
       memberId: backup || ownerId || null,
       sameMember: !backup,
       fromMember: owner?.name || ownerId || null,
+      // fromMemberId 与 fromMember **不能合并**：前者是主键（setMemberState 的 WHERE id=?），
+      // 后者是展示名（活动流文案）。混用会写出 `WHERE id='慢成员'` —— 匹配 0 行，静默空过。
+      fromMemberId: ownerId || null,
     });
     victim.entry.controller.abort(new Error('探活判定无进展：撤员重派'));
     return true;
@@ -280,6 +283,10 @@ function createWaveEngine(host) {
         textKey: stall.sameMember ? 'runtime.workerRequeued' : 'runtime.workerReassigned',
         textParams: { name: workerName, from: stall.fromMember || '—' },
       });
+      // D4-03：本函数返回 true 后 workerPool 在「终态→idle」回写之前就 return 了，被撤掉的成员
+      // 会永久停在 busy（名册里留着僵尸、派活还会再选中它）。撤员（非同人重跑）必须显式置 offline；
+      // 同人重跑不动状态（它马上还会被派同一任务）。fail-open：回写失败不阻断撤员。
+      if (!stall.sameMember && stall.fromMemberId) { try { getDeps()?.setMemberState?.(stall.fromMemberId, 'offline'); } catch { /* 状态回写失败不阻断撤员 */ } }
     } else {
       // 没有任何成员归属（理论上不会发生在团队组）→ 只能按失败收尾。
       store?.setTaskStatus?.(group.group_id, task.taskId, 'failed', {
@@ -289,6 +296,8 @@ function createWaveEngine(host) {
         type: 'task_update', groupId: group.group_id, taskId: task.taskId, status: 'failed',
         error: '探活判定无进展，且任务没有可重跑的认领成员',
       });
+      // D4-03 同源：任务按失败终态收尾，认领成员也必须从 busy 放回 idle（否则永久占位）。
+      if (task.ownerMemberId) { try { getDeps()?.setMemberState?.(task.ownerMemberId, 'idle'); } catch { /* 状态回写失败不阻断撤员 */ } }
     }
     // 无备用（任务已 failed 终态）时需级联唤醒等它的任务；重派（回 queued）时为无害空操作。
     try { broadcastWoken?.(group.group_id, store?.settleWaitingTasks?.(group.group_id, task.taskId) || []); }

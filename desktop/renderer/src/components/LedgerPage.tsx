@@ -23,6 +23,7 @@ interface LedgerItem {
   memberId: string | null;
   tokens: number;
   source: string | null;
+  model: string | null;
   createdAt: number;
 }
 interface Summary {
@@ -222,6 +223,8 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
                   <th scope="col" className="py-1">{t('ledger.colTask')}</th>
                   <th scope="col" className="py-1">{t('ledger.colRun')}</th>
                   <th scope="col" className="py-1">{t('ledger.colSource')}</th>
+                  {/* 2026-10-29：账本补模型维度（v18 迁移）。团队任务行没有模型，显示「未记录」*/}
+                  <th scope="col" className="py-1">{t('ledger.colModel')}</th>
                   <th scope="col" className="py-1">{t('ledger.colMember')}</th>
                   <th scope="col" className="py-1 text-right">{t('ledger.colTokens')}</th>
                 </tr>
@@ -234,6 +237,7 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
                     <td className="py-1 truncate">{it.taskId ?? t('ledger.notRecorded')}</td>
                     <td className="py-1 truncate">{it.runId ?? t('ledger.notRecorded')}</td>
                     <td className="py-1">{it.source ?? t('ledger.notRecorded')}</td>
+                    <td className="py-1 truncate">{it.model ?? t('ledger.notRecorded')}</td>
                     {/* M0 §1.4：member_id 语义未证实 ⇒ 中性标签，不做筛选、不改名 */}
                     <td className="py-1 truncate">{it.memberId ?? t('ledger.notRecorded')}</td>
                     <td className="py-1 text-right tabular-nums">{it.tokens}</td>

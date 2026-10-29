@@ -743,7 +743,8 @@ function registerIpc() {
     notify();
     return { ok: r.ok, code: r.code, error: r.error || '', stdout: r.stdout || '' };
   });
-  // 事件入口（IPC 版）：供渲染层/适配器投递事件；HTTP 版见 main/scheduledEventServer.js
+  // 事件入口（IPC 版；HTTP 版见 scheduledEventServer.js）。E2：本通道未在 preload 暴露 ⇒ 渲染层调不到
+  // （ScheduledTasks.jsx 里那句只是说明性注释），外部事件请走 HTTP 版；保留不删＝预留给本地适配器直连。
   ipcMain.handle('scheduled:ingestEvent', async (_, p = {}) => {
     try {
       guard.assertStrings(p, {

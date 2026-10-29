@@ -445,7 +445,7 @@ export const BASE_TOOLS = [
         type: 'array', description: '待办项列表（全量覆盖，不是增量追加）',
         items: { type: 'object', properties: {
           content: { type: 'string', description: '这一步要做什么（一句话说清，含关键路径或文件名）' },
-          status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: '当前状态' },
+          status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'error'], description: '当前状态；某一步失败且无法继续时用 error（界面上标红），不要默默跳过' },
         }, required: ['content', 'status'] },
       },
     }, required: ['todos'] },
@@ -2963,11 +2963,15 @@ export async function runAgent({
   //   「缺省 = 不放宽」是刻意的：新角色默认安全，要用 MCP 就在构造处显式声明。
   if (toolCallCapable && Array.isArray(rolePreset?.toolNames) && rolePreset.toolNames.length && !customTools) {
     const allowed = new Set(rolePreset.toolNames.map(String));
-    const picked = effectiveBaseTools.filter((t) => allowed.has(t.function?.name));
+    // O-3：窗口裁剪后，角色子集必须在**裁剪结果**上取交集——否则本段会用未裁剪的 effectiveBaseTools
+    // 重建 allTools，把窗口收敛整体覆盖（小窗口 + 角色预设 → 全量 52 工具，且 activate_tools 被丢弃
+    // 但 system 仍提示「可申请的能力」，模型照提示调用必被 advertisedToolNames 拒绝）。
+    const pickedBase = toolFace.trimmed ? toolFace.tools : effectiveBaseTools;
+    const picked = pickedBase.filter((t) => allowed.has(t.function?.name));
     const mcpAllowed = rolePreset.allowMcp === true
       ? usableMcpTools                                     // 角色构造层显式放开 MCP
       : usableMcpTools.filter((t) => allowed.has(t.function?.name)); // 缺省/false：MCP 也走白名单
-    allTools = [...picked, ...mcpAllowed];
+    allTools = toolFace.trimmed ? [...picked, ...mcpAllowed, ACTIVATE_TOOLS_TOOL] : [...picked, ...mcpAllowed];
     if (!picked.length) {
       // F-018：交集为空 = 角色白名单与内置工具名对不上（多半是拼错）。旧行为是
       // 「回落全量工具」——等于把最受限的角色变成权限最大的角色。现在收敛为空集：
@@ -2983,7 +2987,9 @@ export async function runAgent({
   //   「不限内置工具、只限 MCP 服务」这种最合理的配置（toolNames=[]）会完全失效。
   // ③ planMode 在本段之后继续收窄，两者都只减不增，故 ②b 与 ③ 的相对顺序无关。
   const mcpAllowList = Array.isArray(rolePreset?.mcpAllow) ? rolePreset.mcpAllow : [];
-  if (toolCallCapable && mcpAllowList.length && !customTools) {
+  // O-2：mcpAllow 收窄必须独立于 customTools——宿主传 tools（customTools）时 allTools 仍可能拼入
+  //   mcpTools，此前 `!customTools` 会让白名单整段跳过，留下「白名单只挡通告面、不挡 customTools 面」的缺口。
+  if (toolCallCapable && mcpAllowList.length) {
     const before = allTools.length;
     allTools = narrowToolsByMcpAllow(allTools, mcpAllowList);
     // 候选池同步收窄：池子是「窗口裁剪前的全量」，是 activate_tools 的取数来源。
@@ -3117,6 +3123,12 @@ export async function runAgent({
         round: roundsUsed, windowSpent: tokenWindowSpent, budget: tokenBudget,
         rescues: tokenRescues, rescueMax: TOKEN_RESCUE_MAX,
         promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens,
+        // 最近一轮真实 prompt 体积（= 当前上下文占用）。与 promptTokens（累计计费）语义不同：
+        // 圆环分子只能用它，用累计值会把「上下文 27%」显示成「168%」。
+        lastPromptTokens: usage.lastPromptTokens ?? null,
+        // 收尾快照同样带**最后一轮**的 completion：宿主兜底落库（引擎未触发 onDone）时
+        // 只能从这里取按轮用量，否则那条消息的记账号段只能是 0。
+        lastCompletionTokens: usage.lastCompletionTokens ?? null,
         // P1-3：收尾快照同样带重写记账（宿主可据此判断「本次运行把缓存打废了几次」）
         rewrites: rewriteLedger.count, rewriteTokens: rewriteLedger.recomputeTokens,
         // P2-2a：最近一轮首字节耗时
@@ -3473,6 +3485,13 @@ export async function runAgent({
         usage.prompt_tokens += roundUsage.prompt_tokens;
         usage.completion_tokens += roundUsage.completion_tokens;
         lastPromptTokens = roundUsage.prompt_tokens;
+        // 透传真实「上一轮 prompt 体积」给渲染层上下文圆环（替代本地对瘦消息数组的低估重估，
+        // 实测本地估算仅真实值的 1/3，见 estimateMessagesTokens 注释）。压缩阈值已用同口径。
+        usage.lastPromptTokens = lastPromptTokens;
+        // 最后一轮的 completion 同样要单独给：宿主把它**按轮**写进消息记录。
+        // 用 usage.completion_tokens（run 累计）会把前面每一轮的用量重复记一次
+        // —— 中间轮已经各自落过库，实测导致工作台总量翻倍（会话 138：451577 = 217280+12114+222183）。
+        usage.lastCompletionTokens = roundUsage.completion_tokens;
       }
       tokenWindowSpent += windowDelta;
     }
@@ -3486,6 +3505,8 @@ export async function runAgent({
         round: roundsUsed, windowSpent: tokenWindowSpent, budget: tokenBudget,
         rescues: tokenRescues, rescueMax: TOKEN_RESCUE_MAX,
         promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens,
+        // 逐轮真值：宿主据此让上下文圆环在运行中也能显示真实占用（轮询即最新，无需实时通道）
+        lastPromptTokens, lastCompletionTokens: usage.lastCompletionTokens ?? null,
         running: true,
         // P1-3：重写记账（每次真正改写历史都计一次；重写 = 前缀缓存全废，是成本指标）
         rewrites: rewriteLedger.count, rewriteTokens: rewriteLedger.recomputeTokens,
@@ -3897,7 +3918,7 @@ export async function runAgent({
             const valid = rawTodos
               .map((t) => ({
                 content: String(t?.content || '').trim().slice(0, 200),
-                status: ['pending', 'in_progress', 'completed'].includes(t?.status) ? t.status : 'pending',
+                status: ['pending', 'in_progress', 'completed', 'error'].includes(t?.status) ? t.status : 'pending',
               }))
               .filter((t) => t.content);
             if (!valid.length) {

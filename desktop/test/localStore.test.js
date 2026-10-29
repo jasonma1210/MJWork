@@ -119,6 +119,26 @@ check('线程不存在时报错', store.replaceMessages(999999, [{ role: 'user',
 // 其余会话消息不受影响（t.id 有 2 条早期消息）
 check('replaceMessages 不误伤其它会话', store.listMessages(t.id).length === 2);
 
+// 2026-10-29：压缩是「换一种表示」，不是「重写历史」。以下三类字段此前被硬置空/改写，
+// 直接导致工作台三张表当天全空（两次 /compact 抹掉 11,878,938 tokens），必须锁住。
+const tc2 = store.createThread({ title: '记账保留', cwd: '/tmp/c2' });
+store.replaceMessages(tc2.id, [
+  // 第一条用蛇形入参：渲染层流式新建的消息就是这个形状，只认驼峰会静默读 0
+  { role: 'assistant', content: '摘要', tokens_input: 900, tokens_output: 90, model_name: 'flint', created_at: 1700000000000 },
+  { role: 'assistant', content: '尾部', toolCalls: [{ id: 'c1' }], tokensInput: 100, tokensOutput: 10, modelName: 'flint', createdAt: 1700000001000 },
+]);
+const k1 = store.listMessages(tc2.id);
+check('replaceMessages 保留记账字段（蛇形入参也认）',
+  k1[0].tokensInput === 900 && k1[0].tokensOutput === 90 && k1[0].modelName === 'flint',
+  `got ${k1[0].tokensInput}/${k1[0].tokensOutput}/${JSON.stringify(k1[0].modelName)}`);
+check('replaceMessages 保留驼峰记账字段',
+  k1[1].tokensInput === 100 && k1[1].tokensOutput === 10 && k1[1].modelName === 'flint');
+check('replaceMessages 保留原始 createdAt（不改写成压缩时刻）',
+  k1[0].createdAt === 1700000000000 && k1[1].createdAt === 1700000001000,
+  `got ${k1[0].createdAt}/${k1[1].createdAt}`);
+check('replaceMessages 保留 toolCalls（重进会话仍可重放工具链）',
+  Array.isArray(k1[1].toolCalls) && k1[1].toolCalls[0].id === 'c1');
+
 // ── P1-6：会话分支（fork）——从某条历史消息点复制出独立新会话 ──
 const dirFork = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-fork-'));
 const sF = new LocalStore(dirFork);

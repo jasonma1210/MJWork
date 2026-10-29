@@ -119,9 +119,12 @@ export function aggregateMessages(
     for (const [mn, n] of bag) { if (n > bestN) { best = mn; bestN = n; } }
     if (best) resolvedModelOf.set(tid, best);
   }
-  // 会话的「对外可见模型」：thread.modelName 优先，否则用会话消息解析出的模型。
+  // 会话的「对外可见模型」：**消息解析结果优先**，thread.modelName 只作真空兜底。
+  // 顺序为什么反过来了（2026-10-29）：thread.modelName 只在建会话时写一次、全程没有更新入口
+  // （全仓无 updateThread），用户中途换模型后它就是一个**过期快照**；而这一行的 token 数是
+  // 消息算出来的，模型列却报旧模型 —— 同一行自相矛盾。消息里的 modelName 才是每次请求的真值。
   const threadModel = (tid: string): string =>
-    String(titleOf.get(tid)?.modelName || '').trim() || resolvedModelOf.get(tid) || '';
+    resolvedModelOf.get(tid) || String(titleOf.get(tid)?.modelName || '').trim();
 
   const todayStart = startOfLocalDay(now);
   const windowStart = todayStart - 6 * 86400000; // 含今天，共 7 天

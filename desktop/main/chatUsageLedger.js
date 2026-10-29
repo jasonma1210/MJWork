@@ -15,7 +15,11 @@
 function recordChatUsage(deps, ctx) {
   try {
     if (typeof deps?.recordUsage !== 'function' || !ctx?.usage) return;
-    const tokens = (ctx.usage.prompt_tokens || 0) + (ctx.usage.completion_tokens || 0);
+    // 两种形状都要吃：onDone 给的是 API 原生 usage（snake_case），agentRunner.lastBudgetState
+    // 是 onBudget 快照（camelCase promptTokens/completionTokens）。失败分支只有后者——只认
+    // snake_case 会让「超时/报错的运行」一条账都不入，用户看到的仍是「取消有量、失败无量」。
+    const tokens = (ctx.usage.prompt_tokens ?? ctx.usage.promptTokens ?? 0)
+      + (ctx.usage.completion_tokens ?? ctx.usage.completionTokens ?? 0);
     if (!(tokens > 0)) return;
     const projectId = typeof deps.resolveProjectOfConversation === 'function'
       ? deps.resolveProjectOfConversation(ctx.conversationId, ctx.projectPath)

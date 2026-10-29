@@ -9,7 +9,7 @@
 // 遵循项目既有 UI 规范：零 emoji、线性 SVG 图标、简体中文文案、主题变量取色。
 
 import { useEffect, useState } from 'react';
-import { IconCheck, IconSpinner } from './icons';
+import { IconAlert, IconCheck, IconDot, IconSpinner } from './icons';
 import { useI18n } from '../i18n';
 
 // 全部取色走项目既有 Design Token（theme.css），零硬编码色值 —— 满足 ui-conventions 门禁。
@@ -17,7 +17,8 @@ const T = (v) => `var(${v})`;
 const STATUS_COLOR = {
   pending: T('--theme-text-secondary'),
   in_progress: T('--sem-accent'),
-  completed: T('--theme-text-secondary'),
+  completed: T('--sem-success'),
+  error: T('--sem-danger'),
 };
 
 export default function TodoPanel({ runId, compact = false }) {
@@ -88,9 +89,13 @@ export default function TodoPanel({ runId, compact = false }) {
               }}
             >
               <span aria-hidden="true" style={{ display: 'inline-flex', marginTop: 2, color, flexShrink: 0 }}>
-                {done ? <IconCheck size={13} /> : active ? <IconSpinner size={13} /> : <span style={{
-                  width: 5, height: 5, borderRadius: '50%', background: color, display: 'inline-block',
-                }} />}
+                {active
+                  ? <IconSpinner size={13} className="animate-spin" />
+                  : done
+                    ? <IconCheck size={13} />
+                    : t.status === 'error'
+                      ? <IconAlert size={13} />
+                      : <IconDot size={11} />}
               </span>
               <span>{t.content}</span>
             </li>

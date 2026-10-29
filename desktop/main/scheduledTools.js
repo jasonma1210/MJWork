@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { denialText, approvalReasonOf } = require('./approvalChannel');
 const { audit } = require('./audit/auditLog');
+const { makeProgressBridge, settleProgress } = require('./mcpProgress');
 
 function scheduledToolHandlers(deps = {}) {
   const {
@@ -105,7 +106,24 @@ function scheduledToolHandlers(deps = {}) {
   };
 }
 
-module.exports = { scheduledToolHandlers, scheduledCreate };
+/**
+ * O-1（P3-1 补链）：引擎通道的 MCP 进度桥工厂。
+ * 背景：scheduledToolHandlers() 暴露的是裸 callMcpTool；引擎按 (args) 单参调用 ⇒ ctx.onProgress
+ * 恒缺席 ⇒ 从不发 progressToken ⇒ 主通道下 MCP 工具永不产生进度条（只有渲染层回退的
+ * mcp:callTool IPC 才建桥）。本工厂用调起该 run 的 webContents（sender）建桥，与 IPC 同构；
+ * 无窗口时 makeProgressBridge 自然降级为「不发令牌」，行为与改动前一致。
+ */
+function engineMcpHandlers(sender, callMcpTool) {
+  if (typeof callMcpTool !== 'function') return {};
+  return {
+    mcpCallTool: (args) => {
+      const bridge = makeProgressBridge(sender, args && args.server, args && args.tool);
+      return settleProgress(callMcpTool(args, { onProgress: bridge.onProgress }), bridge);
+    },
+  };
+}
+
+module.exports = { scheduledToolHandlers, scheduledCreate, engineMcpHandlers };
 
 // 模型侧「创建定时任务」工具的实现（agent-core 的 scheduled_create → 本函数）。
 //

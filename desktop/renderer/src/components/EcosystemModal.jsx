@@ -28,11 +28,13 @@ import Button from './ui/Button';
 import { useI18n } from '../i18n';
 
 // 数字员工默认审批策略（与主进程 approval_policy 对齐）→ i18n key（渲染时经 t() 求值，切语言即时生效）
+// O-6：键必须与主进程 APPROVAL_MODES 对齐；trusted 是引擎不存在的档（原样保留会让「完全信任」
+// 实际走「需审批」分支），改为补上引擎真实存在的 never。
 const APPROVAL_LABELS = {
   'on-request': 'ecosystem.approvalOnRequest',
   'auto-safe': 'ecosystem.approvalAutoSafe',
   'safe-auto': 'ecosystem.approvalAutoSafe',
-  trusted: 'ecosystem.approvalTrusted',
+  never: 'ecosystem.approvalNever',
   always: 'ecosystem.approvalAlways',
 };
 
@@ -536,9 +538,20 @@ export default function EcosystemModal({ onClose, embedded = false, enabledSkill
                   // 2026-10-16：归一化匹配——目录 id 与磁盘 dir/内置 id 混存的启用集，形态不再互斥
                   const on = skillKeyIn(String(s.id || s.name || ''), enabledSkills)
                     || skillKeyIn(String(s.name || ''), enabledSkills);
+                  // T2 边界披露：未安装到本机技能根（~/.mjcode/skills）即「需安装」；
+                  // 随包根无 SKILL.md 目录（bundled=false）为目录级 T2，启用时需物化后才可用。
+                  const installed = installedSkillIds.has(s.id) || installedSkillIds.has(s.name);
                   return (
                     <div key={s.id} className="p-5 rounded-xl bg-surface border border-border flex flex-col">
-                      <div className="text-sm font-medium truncate">{s.display_name || s.name}</div>
+                      <div className="text-sm font-medium truncate flex items-center gap-2">
+                        {s.display_name || s.name}
+                        {!installed && (
+                          <span className="text-caption px-2 py-[2px] leading-none rounded bg-[var(--sem-warn-bg)] text-warn shrink-0">{t('ecosystem.skillNeedsInstall')}</span>
+                        )}
+                        {!s.bundled && (
+                          <span className="text-caption px-2 py-[2px] leading-none rounded bg-hover text-text2 shrink-0">{t('ecosystem.skillCatalogOnly')}</span>
+                        )}
+                      </div>
                       <div className="text-xs text-text2 mt-2">{s.category}</div>
                       <div className="text-xs text-text2 mt-3 leading-relaxed line-clamp-2">{s.description}</div>
                       <div className="flex flex-wrap gap-2 mt-3">

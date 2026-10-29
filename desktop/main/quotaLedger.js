@@ -252,19 +252,20 @@ class QuotaLedger {
    * ⚠ 口径：'chat' 源**不计入**项目配额窗口（usedInWindow/memberUsed 均按 source 过滤），
    * 否则单人闲聊会无端挤占团队任务的派发额度；它只服务于用量展示，不改变配额判定。
    */
-  recordChat({ projectId, runId, memberId, tokens, at }) {
-    return this._insert({ projectId, runId, taskId: null, memberId, tokens, source: 'chat', at });
+  recordChat({ projectId, runId, memberId, tokens, model, at }) {
+    return this._insert({ projectId, runId, taskId: null, memberId, tokens, model, source: 'chat', at });
   }
 
-  _insert({ projectId, runId, taskId, memberId, tokens, source, at }) {
+  _insert({ projectId, runId, taskId, memberId, tokens, source, model, at }) {
     const pid = String(projectId || '').trim();
     const n = Math.max(0, Math.trunc(safeNum(tokens)));
     if (!pid || n <= 0) return 0;
     this.db.prepare(`INSERT INTO quota_consumptions
-      (project_id, run_id, task_id, member_id, tokens, source, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      (project_id, run_id, task_id, member_id, tokens, source, model, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(pid, String(runId || '') || null, String(taskId || '') || null,
-        String(memberId || '') || null, n, String(source || 'round'), safeNum(at, Date.now()));
+        String(memberId || '') || null, n, String(source || 'round'),
+        String(model || '').trim() || null, safeNum(at, Date.now()));
     return n;
   }
 

@@ -35,7 +35,7 @@ const { isPrivateHost, guardedLookup } = require('./ssrfGuard');
 // 2026-10-15 泛化出 httpRequest（支持 POST / 自定义头 / JSON body）：
 // 搜索类 API（Tavily/Exa 走 POST+Bearer，Brave 走自定义头）需要它；
 // SSRF 防护必须保持**单一实现**——所有出网都经过这里的协议/私网检查，不允许旁路。
-function httpRequest(urlStr, { method = 'GET', headers = {}, body = null, timeoutMs = DEFAULT_TIMEOUT_MS, maxBytes = MAX_BODY_BYTES } = {}) {
+function httpRequest(urlStr, { method = 'GET', headers = {}, body = null, timeoutMs = DEFAULT_TIMEOUT_MS, maxBytes = MAX_BODY_BYTES, hop = 0 } = {}) {
   return new Promise((resolve, reject) => {
     let parsed;
     try { parsed = new URL(urlStr); } catch (e) {
@@ -73,7 +73,8 @@ function httpRequest(urlStr, { method = 'GET', headers = {}, body = null, timeou
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
           const next = new URL(res.headers.location, parsed).toString();
-          httpRequest(next, { method, headers, body, timeoutMs, maxBytes }).then(resolve, reject);
+          if (hop >= 5) { reject(new Error('HTTP 重定向次数超过上限（5）')); return; }
+          httpRequest(next, { method, headers, body, timeoutMs, maxBytes, hop: hop + 1 }).then(resolve, reject);
           return;
         }
         if (res.statusCode !== 200) {

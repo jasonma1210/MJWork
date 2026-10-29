@@ -120,7 +120,11 @@ check('交互式表不传 contextCwd → 读类/git 类入参保持原样（不�
 // ── ③ 接线：三个调用点各自传什么 ──
 check('main.js 接线：交互式不传、定时通道传 unattended+contextCwd、Worker 传 unattended+项目 cwd', () => {
   const src = fs.readFileSync(path.join(ROOT, 'main', 'main.js'), 'utf8');
-  assert.match(src, /\.\.\.scheduledToolHandlers\(\),\n/, '交互式 createToolHandlers 应调用 scheduledToolHandlers()（不传参数）');
+  // 2026-10-29：原正则末尾要求 `,\n`（要求这个 spread 独占一行）—— 那是源码排版代理，不是语义。
+  // 本轮 O-1 把 `...engineMcpHandlers(sender, callMcpTool)` 接在同一行（main.js code 行已顶满 1500
+  // 硬档，换行即越界），断言随之假红。语义只有一条：交互式通道调 scheduledToolHandlers() **不带实参**，
+  // 故去掉 `\n`，保留「括号内为空」这条真正的判据。
+  assert.match(src, /\.\.\.scheduledToolHandlers\(\),/, '交互式 createToolHandlers 应调用 scheduledToolHandlers()（不传参数）');
   // FIX-P04（2026-10-24）：定时通道的实参多了 teamTools: schedCtx.teamTools（团队工具必须
   // 作为**入参**交给工厂才会展开成 team_* 键）。原断言把实参钉成「恰好两个键 + 立即闭括号」，
   // 属源码形状代理而非语义要求，故放宽括号位置；同时**收紧**一条：团队工具必须在这个调用里出现。

@@ -85,7 +85,10 @@ export const suspendedDataSchema = z.object({
 export const doneDataSchema = z.object({
   finalText: z.string(),
   usage: z
-    .object({ prompt_tokens: z.number(), completion_tokens: z.number() })
+    // .passthrough()：放行引擎额外字段（lastPromptTokens 等）——闭合 object 会静默 strip，
+    // 导致渲染层读不到真实「上一轮 prompt 体积」而退化成累计值（上下文圆环一度 100% 的根因）。
+    .object({ prompt_tokens: z.number(), completion_tokens: z.number(), lastPromptTokens: z.number().nullable().optional() })
+    .passthrough()
     .nullable()
     .optional(),
   aborted: z.boolean(),

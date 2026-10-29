@@ -55,6 +55,10 @@ desktop/eval/results/
 # 若不入库，CI 检出后 ecosystem/skills 为空 → 打包产物的「技能」是空的，
 # 而本地打包正常 —— 同一个版本号两个产品（技术设计文档 X1）。
 !/ecosystem/skills/**/*.md
+# 例外：技能索引 skills.md —— 它是 skills.json 的人类可读索引，由 desktop/test/ecosystem.test.js 的
+# B10 门禁强制与 skills.json 一致。若不入库，CI 冷检出门禁假跑（找不到文件只能跳过）。
+# 同一根因的复发（见下方第 80 行注释：README / ecosystem-skills / docs / 本文件）：入库后门禁才可能真跑。
+!/ecosystem/skills.md
 # 例外：docs/ 下**被门禁实际读取**的少数文档（2026-10-28 收敛）。
 # 背景：此前这里是 `!/docs/**/*.md` 全量白名单，于是几十份 AI 生成的调研/设计/审查报告
 # 全部随仓库分发。现在收紧为「只有门禁会读的那几份才入库」：

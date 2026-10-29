@@ -549,7 +549,9 @@ export default function App() {
         onRenameProject={renameProject}
       /></ErrorBoundary>
       )}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col relative">
+        {/* Toast 锚点：对话列顶部居中（portal 目标；用视口居中在右栏打开时会偏左） */}
+        <div id="mj-toast-root" className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-toast flex flex-col items-center gap-2" />
         {showDashboard && <ErrorBoundary compact><Dashboard threadId={activeThreadId} /></ErrorBoundary>}
         <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => navDispatch({ type: 'page', page: 'assistant', tab: a === 'open_assistant_scheduled' ? 'scheduled' : undefined })} />
         {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}

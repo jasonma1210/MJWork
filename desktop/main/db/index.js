@@ -521,6 +521,18 @@ const MIGRATIONS = [
       addColumn(db, 'team_members', 'mcp_allow_json', "TEXT NOT NULL DEFAULT '[]'");
     },
   },
+  {
+    version: 18,
+    name: 'quota-consumptions-model',
+    up: (db) => {
+      // 成本账本补 model 列（2026-10-29）：此前 quota_consumptions 只有 tokens，没有模型维度，
+      // 于是「哪个模型烧掉多少」只能靠扫 messages 表反推，账本页无法按模型对账。
+      // chatUsageLedger 早就在传 modelName，但下游解构时丢掉了——补列 + 打通透传才闭合。
+      // 存量行为不变：旧行为 NULL，UI 已按「未记录」展示（不回填 'default'，那是编数据）。
+      addColumn(db, 'quota_consumptions', 'model', 'TEXT');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_quota_consumptions_model ON quota_consumptions(project_id, model);');
+    },
+  },
 ];
 
 function openDb(dataDir) {

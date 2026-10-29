@@ -13,7 +13,7 @@
 |---|---|
 | `desktop/` | The Electron app. `main/` = main process (windows, IPC, tools, sandbox, approvals), `agent-core/` = headless agent engine (tool loop, model adapters, context budgeting), `renderer/` = React UI |
 | `desktop/shared/`, `shared-ipc/` | Single source of truth for the IPC contract (channel names + payload guards) |
-| `ecosystem/` | Product assets shipped with the app: 100 skills, 78 MCP connectors, 51 digital-employee role templates — role templates = 229 ecosystem assets in total. A separate 214-entry WorkBuddy import list is shipped as reference only and is **not counted** in that total, sharing zero id overlap with the curated connectors. A digital employee is applied through the `rolePreset` chain (catalog preset → session → attached to every agent run → clamped by the host), which is **not** multi-employee orchestration: a preset can only tighten permissions, never widen them. |
+| `ecosystem/` | Product assets shipped with the app: 136 skills, 78 MCP connectors, 51 digital-employee role templates — role templates = 265 ecosystem assets in total. A separate 214-entry WorkBuddy import list is shipped as reference only and is **not counted** in that total, sharing zero id overlap with the curated connectors. A digital employee is applied through the `rolePreset` chain (catalog preset → session → attached to every agent run → clamped by the host), which is **not** multi-employee orchestration: a preset can only tighten permissions, never widen them. |
 | `server/` | Optional self-hosted backend (Express + PostgreSQL): accounts, device sync, cloud delegation |
 | `chrome-extension/` | Browser takeover bridge (CDP), authorized per-connection from inside the app |
 | `miniprogram/` | WeChat mini program (companion surface) |
@@ -28,7 +28,7 @@
 - **Local knowledge base** — import PDFs/DOCX (OCR for scans), chunk and index locally, cite in answers.
 - **Artifacts** — generate `.docx` / `.xlsx` / `.pptx` straight from a conversation.
 - **Scheduled tasks** — cron-style runs with archived outputs, no window needed.
-- **MCP + skills** — connect MCP servers or use the 100 bundled skills; both are workspace-scoped.
+- **MCP + skills** — connect MCP servers or use the 136 bundled skills; both are workspace-scoped.
 - **Local-first storage** — conversations, credentials and settings live in a local SQLite database under the OS app-data directory.
 
 ## Tech stack

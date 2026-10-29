@@ -191,6 +191,9 @@ function exportDiagnosticsZip() {
 function registerDiagExportIpc() {
   const { ipcMain } = require('electron');
   // P0-7：导出前清单查询（UI 确认弹层的数据源——先看内容再决定是否导出）
+  // E2（登记，不静默）：本通道**未在 preload 暴露**，渲染层当前无调用方 ⇒ 实际不可达；
+  // 与之配套的 diagExport 桥本身也在 test/bridge-dead-allowlist.json 台账里（导出 UI 尚未建）。
+  // 保留而非删除：清单查询是导出确认弹层的既定数据源，删了要连 handler 与 preload 一起重加。
   ipcMain.handle('diag:preview', async () => {
     try {
       return previewDiagPackage();

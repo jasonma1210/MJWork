@@ -26,7 +26,7 @@ export function escapeCsvCell(value) {
 /** 稳定英文 snake_case 列名（文档 §7.4：机器可读优先，UI 另行提供中英说明） */
 export const LEDGER_CSV_COLUMNS = [
   'id', 'created_at_iso', 'created_at_ms', 'project_id', 'task_id', 'run_id',
-  'member_id', 'source', 'tokens',
+  'member_id', 'source', 'model', 'tokens',
 ];
 
 /**
@@ -46,6 +46,7 @@ export function ledgerRowToCsv(item) {
     item?.runId ?? '',
     item?.memberId ?? '',
     item?.source ?? '',
+    item?.model ?? '',
     Number(item?.tokens) || 0, // 数字保持数值，不加引号
   ];
   return cells.map(escapeCsvCell).join(',');
