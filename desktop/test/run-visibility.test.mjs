@@ -34,7 +34,7 @@ const enMessage = JSON.parse(read('renderer', 'src', 'i18n', 'locales', 'en-US',
 const rmStart = streamSrc.indexOf('export function renderMessages(');
 const rmBody = rmStart < 0 ? '' : streamSrc.slice(rmStart, streamSrc.indexOf('\n}', rmStart));
 check('P0-7 renderMessages 片段截取成功（空片段会让下面断言空过）', rmBody.length > 400, `len=${rmBody.length}`);
-check('P0-7 renderMessages 接收 running 参数', /export function renderMessages\([^)]*running = false\)/.test(streamSrc));
+check('P0-7 renderMessages 接收 running 参数', /export function renderMessages\([^)]*running = false[,)]/.test(streamSrc));
 check('P0-7 RoundBlock 被传入 running（渲染函数确实往下传）', /running=\{running\}/.test(rmBody));
 check('P0-7 运行中的最后一轮展开工具组（defaultOpen=running && isLast）',
   /defaultOpen=\{running && isLast\}/.test(streamSrc));
@@ -45,7 +45,7 @@ check('P0-7 两处挂载都传了 defaultOpen（不存在漏传的那一处）',
   groupMounts.every((s) => /defaultOpen=/.test(s)), groupMounts.map((s) => (/defaultOpen=/.test(s) ? 'ok' : 'missing')).join(','));
 // 调用方必须把 loading 变成 running 传进去，否则上面全白搭
 check('P0-7 视图层把 loading 作为 running 传入 renderMessages',
-  /renderMessages\(visibleMessages,[^)]*toolCalls, !!loading\)/.test(streamSrc));
+  /renderMessages\(visibleMessages,[^)]*toolCalls, !!loading[,)]/.test(streamSrc));
 
 // ── B. 收尾条出口 ──
 check('P0-7 RunFooter 接收改动计数与回调', /export function RunFooter\(\{ summary, live, changedCount = 0, onOpenChanges, onRevertRun \}\)/.test(streamSrc));

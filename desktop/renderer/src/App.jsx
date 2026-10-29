@@ -222,7 +222,7 @@ export default function App() {
   // 事件名集合视为静态契约：新增事件必须写在这里。
   useWindowEventBus(createAppWindowHandlers({
     restoreMcpTools, setMcpTools, setShowSettings, setShowEcosystem, setShowProjectSpace,
-    setPaneTab, setPaneOpen, getThreads: () => threads, selectThread,
+    setPaneTab, setPaneOpen, openFile: openFileInPane, getThreads: () => threads, selectThread,
   }));
 
   // 招募/派助手：**落点统一到当前会话**（2026-10-27）。enable-expert 是覆盖写 sessionExtras.expert，

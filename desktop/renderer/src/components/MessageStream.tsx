@@ -90,10 +90,10 @@ export default function MessageStream({
   // React 复用同一批 element 就会跳过这些子树的 re-render 与 markdown 重新解析——
   // 每帧只重绘「正在增长的那一段」。
   const rounds = useMemo(
-    () => renderMessages(visibleMessages, !!runSummary || !!loading, onOpenFile, toolCalls, !!loading),
+    () => renderMessages(visibleMessages, !!runSummary || !!loading, onOpenFile, toolCalls, !!loading, cwd),
     // visibleMessages 由 messages/effStart 派生，故直接以二者为依赖（避免数组身份每帧变化）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [messages, effStart, runSummary, loading, onOpenFile, toolCalls],
+    [messages, effStart, runSummary, loading, onOpenFile, toolCalls, cwd],
   );
   return (
       <div className="relative flex-1 min-h-0 flex flex-col">
@@ -331,58 +331,73 @@ function isFilePathLike(text: string): boolean {
   return /[\\/]/.test(s);
 }
 
-/** 文件 chip 的「…」菜单（对标 WorkBuddy）：添加到对话框 / 复制路径 / 在默认应用打开。
- *  「添加到对话框」走 mjcode:add-attachment 事件总线（useAgentRun 监听），与右栏预览同款。 */
-function FileRefMenu({ text, onClose }: { text: string; onClose: () => void }) {
-  const { t } = useI18n();
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) onClose(); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('mousedown', onDown, true);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown, true);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [onClose]);
-  async function copyPath() {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast({ message: t('message.pathCopied') });
-    } catch (err) {
-      console.warn('[message] copy path failed:', err);
-      toast({ message: t('message.copyFailed') });
-    }
-    onClose();
-  }
-  async function openDefault() {
-    try {
-      const r = await window.mjcode?.openPath?.({ path: text });
-      if (r && r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
-    } catch (err) {
-      console.warn('[message] open with default app failed:', err);
-    }
-    onClose();
-  }
-  const item = 'w-full flex items-center gap-2 px-3 py-2 text-xs text-left text-text hover:bg-hover';
-  return (
-    <div ref={menuRef} role="menu" className="absolute left-0 top-full mt-1 z-menu w-[168px] py-1 bg-raise border border-border rounded-xl shadow-[var(--shadow-menu)]">
-      <button type="button" role="menuitem" className={item}
-        onClick={() => { window.dispatchEvent(new CustomEvent('mjcode:add-attachment', { detail: { path: text } })); onClose(); }}>
-        <IconPlus size={13} className="text-text2 shrink-0" />
-        <span className="truncate">{t('message.addToChat')}</span>
-      </button>
-      <button type="button" role="menuitem" className={item} onClick={copyPath}>
-        <IconCopy size={13} className="text-text2 shrink-0" />
-        <span className="truncate">{t('message.copyPath')}</span>
-      </button>
-      <button type="button" role="menuitem" className={item} onClick={openDefault}>
-        <IconExternalLink size={13} className="text-text2 shrink-0" />
-        <span className="truncate">{t('filePreview.openWithSystem')}</span>
-      </button>
-    </div>
-  );
+/** 文件操作的 5 项菜单（左键 = 在右侧预览栏打开；右键 /「…」= 本菜单）。
+ *  顺序与分组固定（对标 WorkBuddy）：打开文件夹 │ 在默认应用中打开 ┃ 添加到对话框 │ 复制路径 ┃ 另存为。
+ *  三处入口（本轮产出卡片 / 正文文件 chip / 右栏标签）共用这一份——
+ *  此前正文 chip 只有 3 项（少「在默认应用中打开」「复制路径」），产出卡片另一套 3 项，
+ *  同一份文件在不同入口能做的事不一样（用户实测反馈「要的效果一个都没有实现」）。 */
+function fileActionItems(target: string, cwd: string | undefined, t: (k: string) => string) {
+  const path = String(target || '').trim();
+  // 统一失败出口：三个动作失败都不该静默（用户点完什么都没发生 = 最差形态）
+  const warn = (err: unknown, key = 'filePreview.openFailed') => {
+    console.warn('[message] file action failed:', err);
+    toast({ message: t(key) });
+  };
+  return [
+    {
+      id: 'reveal', label: t('message.revealInFolder'), icon: IconFolder,
+      onClick: async () => {
+        try {
+          const r = await window.mjcode?.revealPath?.({ path, cwd });
+          if (r && r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
+        } catch (err) { warn(err); }
+      },
+    },
+    {
+      id: 'openDefault', label: t('message.openWithDefault'), icon: IconExternalLink,
+      onClick: async () => {
+        try {
+          // 必须带 cwd：相对路径由主进程按项目根解析（与工具层同一语义），否则一律「路径不存在」
+          const r = await window.mjcode?.openPath?.({ path, cwd });
+          if (r && r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
+        } catch (err) { warn(err); }
+      },
+    },
+    { separator: true },
+    {
+      id: 'addToChat', label: t('message.addToChat'), icon: IconPlus,
+      onClick: () => window.dispatchEvent(new CustomEvent('mjcode:add-attachment', { detail: { path } })),
+    },
+    {
+      id: 'copyPath', label: t('message.copyPath'), icon: IconCopy,
+      onClick: async () => {
+        try { await navigator.clipboard.writeText(path); toast({ message: t('message.pathCopied') }); }
+        catch (err) { warn(err, 'message.copyFailed'); }
+      },
+    },
+    { separator: true },
+    {
+      id: 'saveAs', label: t('message.saveAs'), icon: IconDownload,
+      onClick: async () => {
+        try {
+          const r = await window.mjcode?.saveFileAs?.({ path, cwd });
+          // 用户在系统对话框点取消不算失败，不弹错误
+          if (r && r.ok === false && !r.canceled) toast({ message: String(r.error || t('filePreview.openFailed')) });
+        } catch (err) { warn(err); }
+      },
+    },
+  ];
+}
+
+/** 打开文件到右侧预览栏。
+ *  优先用 App 传下来的回调；回调缺失时退回窗口事件总线 mjcode:open-file ——
+ *  团队流 / 看板回放等渲染路径没有透传 onOpenFile，只靠 props 会让点击静默无效。
+ *  openFileInPane 自身按路径去重，两条通道并存也不会重复开标签。 */
+function openFileEverywhere(onOpenFile: ((p: string) => void) | undefined, raw: string) {
+  const p = String(raw || '').trim();
+  if (!p) return;
+  if (typeof onOpenFile === 'function') { onOpenFile(p); return; }
+  window.dispatchEvent(new CustomEvent('mjcode:open-file', { detail: { path: p } }));
 }
 
 /** 本轮产出文件：任务结束后列出本轮被写入/修改的文件（左键在右侧预览栏打开；右键出操作菜单） */
@@ -405,39 +420,7 @@ function RunOutputFiles({ files = [], onOpenFile, cwd }: { files?: Array<string 
   if (!list.length) return null;
 
   // 三个动作都只传「卡片路径 + 项目根」：相对路径的解析统一在主进程做（与工具层同一语义）
-  function itemsFor(target: string) {
-    return [
-      {
-        id: 'reveal', label: t('message.revealInFolder'), icon: IconFolder,
-        onClick: async () => {
-          try {
-            const r = await window.mjcode?.revealPath?.({ path: target, cwd });
-            if (r && r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
-          } catch (err) {
-            console.warn('[message] reveal in folder failed:', err);
-            toast({ message: t('filePreview.openFailed') });
-          }
-        },
-      },
-      {
-        id: 'saveAs', label: t('message.saveAs'), icon: IconDownload,
-        onClick: async () => {
-          try {
-            const r = await window.mjcode?.saveFileAs?.({ path: target, cwd });
-            // 用户在保存对话框点取消不算失败，不弹错误
-            if (r && r.ok === false && !r.canceled) toast({ message: String(r.error || t('filePreview.openFailed')) });
-          } catch (err) {
-            console.warn('[message] save as failed:', err);
-            toast({ message: t('filePreview.openFailed') });
-          }
-        },
-      },
-      {
-        id: 'addToChat', label: t('message.addToChat'), icon: IconPlus,
-        onClick: () => window.dispatchEvent(new CustomEvent('mjcode:add-attachment', { detail: { path: target } })),
-      },
-    ];
-  }
+  const itemsFor = (target: string) => fileActionItems(target, cwd, t);
 
   // 右侧面板档：正文只留一个计数 chip（文件已在预览栏可见，不再重复铺一列卡片）
   if (display === 'panel') {
@@ -462,7 +445,7 @@ function RunOutputFiles({ files = [], onOpenFile, cwd }: { files?: Array<string 
             <button
               key={path}
               type="button"
-              onClick={() => onOpenFile?.(path)}
+              onClick={() => openFileEverywhere(onOpenFile, path)}
               onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, path }); }}
               title={path}
               className="group flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2 text-left hover:bg-hover hover:border-accent/40 transition-colors min-w-[190px] max-w-[280px]"
@@ -487,13 +470,14 @@ function RunOutputFiles({ files = [], onOpenFile, cwd }: { files?: Array<string 
   );
 }
 
-/** 正文内联代码 / 本地链接 → 可点击的文件 chip：点击在右侧预览栏打开；「…」弹出操作菜单 */
-function FileRefChip({ text, onOpenFile }: { text: string; onOpenFile?: (p: string) => void }) {
+/** 正文内联代码 → 可点击的文件 chip：左键在右侧预览栏打开；右键 /「…」出同一套 5 项菜单。
+ *  可点性只看路径形态、不再依赖「是否拿到回调」——此前 onOpenFile 缺失时 chip 退化成灰色不可点文本，
+ *  用户点它当然「没有任何反应」；现在回调缺失由 openFileEverywhere 走事件总线兜底。 */
+function FileRefChip({ text, onOpenFile, cwd }: { text: string; onOpenFile?: (p: string) => void; cwd?: string }) {
   const { t } = useI18n();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const clickable = !!onOpenFile && isFilePathLike(text);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const base = 'rounded px-2 py-1 text-xs border';
-  if (!clickable) {
+  if (!isFilePathLike(text)) {
     return (
       <code className={`${base} bg-hover border-border text-text2 font-mono`}>{text}</code>
     );
@@ -502,7 +486,8 @@ function FileRefChip({ text, onOpenFile }: { text: string; onOpenFile?: (p: stri
     <span className="relative inline-flex items-center gap-1 align-baseline">
       <button
         type="button"
-        onClick={() => onOpenFile?.(text)}
+        onClick={() => openFileEverywhere(onOpenFile, text)}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }); }}
         title={t('message.openFileHint')}
         className={`${base} bg-accent/10 border-accent/40 text-accent font-mono hover:bg-accent/20 cursor-pointer`}
       >
@@ -510,20 +495,26 @@ function FileRefChip({ text, onOpenFile }: { text: string; onOpenFile?: (p: stri
       </button>
       <button
         type="button"
-        onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          const r = e.currentTarget.getBoundingClientRect();
+          setMenu({ x: r.left, y: r.bottom + 4 });
+        }}
         title={t('message.fileActions')}
         aria-label={t('message.fileActions')}
         className="shrink-0 text-text2 hover:text-text rounded p-1 align-middle"
       >
         <IconChevronDown size={11} />
       </button>
-      {menuOpen && <FileRefMenu text={text} onClose={() => setMenuOpen(false)} />}
+      {menu && (
+        <ContextMenu open x={menu.x} y={menu.y} items={fileActionItems(text, cwd, t)} onClose={() => setMenu(null)} />
+      )}
     </span>
   );
 }
 
 /** markdown 渲染器的自定义节点：只改「行内代码」与「本地链接」，其余保持默认语义 */
-function markdownComponents(onOpenFile?: (p: string) => void) {
+function markdownComponents(onOpenFile?: (p: string) => void, cwd?: string) {
   return {
     // G-visualize：```mermaid 围栏块由 code 渲染器出图，外层 <pre> 必须一并旁路，
     // 否则图表会被套进等宽预格式块（背景、滚动、等宽字体都不对）
@@ -543,14 +534,14 @@ function markdownComponents(onOpenFile?: (p: string) => void) {
           <code className={`${className || ''} font-mono`} {...rest}>{children}</code>
         );
       }
-      return <FileRefChip text={raw} onOpenFile={onOpenFile} />;
+      return <FileRefChip text={raw} onOpenFile={onOpenFile} cwd={cwd} />;
     },
     // 本地相对链接（非 http/mailto/#）同样走文件打开
     a: ({ href, children, ...rest }: { href?: string; children?: ReactNode }) => {
       const h = String(href || '');
-      if (onOpenFile && h && !/^(https?:|mailto:|#|\/\/)/i.test(h) && isFilePathLike(h)) {
+      if (h && !/^(https?:|mailto:|#|\/\/)/i.test(h) && isFilePathLike(h)) {
         return (
-          <button type="button" onClick={() => onOpenFile(h)} className="text-accent underline hover:opacity-80">
+          <button type="button" onClick={() => openFileEverywhere(onOpenFile, h)} className="text-accent underline hover:opacity-80">
             {children}
           </button>
         );
@@ -583,7 +574,7 @@ function markdownComponents(onOpenFile?: (p: string) => void) {
 }
 
 // 轮次块：一轮的 user 气泡 + 工具轨迹组 + assistant 回复（含 meta）。折叠状态本组件持有。
-function RoundBlock({ round, user, assistants, toolResults, isLast, running = false, suppressMeta = false, extraCalls = [], onOpenFile }) {
+function RoundBlock({ round, user, assistants, toolResults, isLast, running = false, suppressMeta = false, extraCalls = [], onOpenFile, cwd }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(isLast);
   const calls = [];
@@ -608,7 +599,7 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
     if (String(assistants[i]?.content || '').trim()) { answerIdx = i; break; }
   }
   if (answerIdx === -1 && assistants.length) answerIdx = assistants.length - 1;
-  const md = markdownComponents(onOpenFile);
+  const md = markdownComponents(onOpenFile, cwd);
   const userPreview = String(user?.content || '').replace(/\s+/g, ' ').slice(0, 60);
   const replyPreview = String(firstReply?.content || '').replace(/\s+/g, ' ').slice(0, 60);
   return (
@@ -696,7 +687,7 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
 // running（P0-7）：本轮是否正在跑。运行中强制展开工具组——
 // 此前 ToolTraceGroup 的 defaultOpen 恒为 false（注释写着「运行态本轮传 true」但两处调用都没传），
 // 用户发起任务后只看到一行「3 次调用 · 点击展开」，完全看不出它正在跑 shell 还是正在改文件。
-export function renderMessages(messages, suppressLastMeta = false, onOpenFile, liveCalls = [], running = false) {
+export function renderMessages(messages, suppressLastMeta = false, onOpenFile, liveCalls = [], running = false, cwd = '') {
   // tool_call_id -> tool 消息内容 索引
   const toolResults = new Map();
   for (const m of messages) {
@@ -745,6 +736,7 @@ export function renderMessages(messages, suppressLastMeta = false, onOpenFile, l
       suppressMeta={suppressLastMeta && it.no === lastRoundNo}
       extraCalls={it.no === lastRoundNo ? liveCalls : []}
       onOpenFile={onOpenFile}
+      cwd={cwd}
     />
   )));
 }

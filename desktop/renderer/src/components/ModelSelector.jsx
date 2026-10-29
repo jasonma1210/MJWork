@@ -141,12 +141,13 @@ export default function ModelSelector({ providers, selected, onSelect }) {
   }
 
   return (
-    <span ref={rootRef} className="relative inline-flex">
+    <span ref={rootRef} className="relative inline-flex min-w-0">
       {/* 触发器与 Composer 下拉控件同 chip 设计语言（h-7/rounded-lg/text-xs），
-          IconCpu 内联进按钮——此前图标挂在 ComposerControls 外层 span，与 chip 脱离不对齐 */}
+          IconCpu 内联进按钮——此前图标挂在 ComposerControls 外层 span，与 chip 脱离不对齐。
+          2026-10-29：min-w-0 让它在单行工具行里可收缩（宽度不够时截断模型名，而不是换行）。 */}
       <button
         onClick={() => setOpen((v) => !v)}
-        className={`h-7 inline-flex items-center gap-2 rounded-lg border px-2 text-xs text-text bg-transparent outline-none hover:bg-hover hover:border-accent cursor-pointer transition-colors max-w-[240px] ${
+        className={`h-7 min-w-0 inline-flex items-center gap-2 rounded-lg border px-2 text-xs text-text bg-transparent outline-none hover:bg-hover hover:border-accent cursor-pointer transition-colors max-w-[240px] ${
           open ? 'border-accent' : 'border-border'
         }`}
         aria-expanded={open}

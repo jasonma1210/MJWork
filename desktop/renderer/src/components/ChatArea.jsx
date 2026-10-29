@@ -626,7 +626,7 @@ export default function ChatArea({
     cwd, lastFailed, onLastFailedChange: setLastFailed,
     extras: sessionExtras, onExtrasChange: setSessionExtras, enabledSkills,
     plusOpen, onPlusOpenChange: setPlusOpen,
-    voice, onDropFiles: ingestFiles, messages,
+    voice, onDropFiles: ingestFiles,
     // 附件 chips：图片 hover 预览 / 文档点击 → onOpenFile（右栏预览，App.openFileInPane）
     attachments, onRemoveAttachment: (path) => setAttachments((a) => a.filter((x) => x.path !== path)),
     onOpenAttachment: onOpenFile,

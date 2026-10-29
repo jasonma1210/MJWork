@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  IconBot, IconBranch, IconChevronRight, IconCheck, IconFile, IconFilePlus, IconMessage, IconMic,
+  IconBot, IconBranch, IconChevronRight, IconCheck, IconFilePlus, IconMessage,
   IconPlug, IconSearch, IconUser, IconUsers, IconX, IconZap,
 } from './icons';
 import TeamDispatchPanel from './TeamDispatchPanel';
@@ -12,7 +12,10 @@ import { BUILTIN_SKILLS } from '../lib/builtinSkills';
 import { useI18n } from '../i18n';
 
 // A4：Composer "+" 扩展菜单（报告第 6 节完整交互规格）
-// 一级：添加文件 / 从会话中引用 / 模式 / 数字员工 / 技能 / 连接器 / 语音输入
+// 一级：添加文件 / 模式 / 数字员工 / 技能 / 连接器 / 团队编制
+// 2026-10-29（用户实测反馈）：移除「从会话中引用」「项目空间」「语音输入」三项——
+//   前两者与 @ 提及、顶栏新建项目重复，语音输入在工具行已有常驻麦克风按钮，
+//   菜单里再放一份只会稀释真正的入口（用户圈选原文：「完全没有存在的必要」）。
 // 二级面板 C/D/E 对应数字员工 / 技能 / 连接器，动作写入会话级 sessionExtras（随线程持久化）
 // 启用模型（生态中心统一入口重构 T5）：目录数据随应用本地分发，无「下载」概念——
 //   数字员工 = 目录全量（ecosystemEmployees IPC）；
@@ -59,8 +62,8 @@ function roleIcon(category) {
 }
 
 export default function PlusMenu({
-  open, onClose, onPickFiles, messages = [], runMode, onModeChange, hasProject,
-  extras, onExtrasChange, onVoiceStart, connectedServers = [], enabledSkills = [],
+  open, onClose, onPickFiles, runMode, onModeChange, hasProject,
+  extras, onExtrasChange, connectedServers = [], enabledSkills = [],
   // 2026-10-20 需求⑤：军团面板只需「当前选中的团队 id」用于回显高亮 + 「选中团队」回调，
   // 派活参数（目标/模式/预算/成员/工作目录）全部由 ChatArea 在发送时按缺省回落补齐，
   // 故此处不再需要 threadId / projectPath。
@@ -153,24 +156,6 @@ export default function PlusMenu({
     };
   }, [open, onClose, anchorEl]);
 
-  // 二级面板 A：会话中出现过的文件（tool_calls 参数路径 + 用户 @ 引用）
-  const referencedFiles = useMemo(() => {
-    const found = new Set();
-    for (const m of messages) {
-      if (m.role === 'user') {
-        for (const match of String(m.content || '').matchAll(/@([^\s@]+\.[^\s@]+)/g)) found.add(match[1]);
-      }
-      const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
-      for (const tc of calls) {
-        try {
-          const args = typeof tc.function?.arguments === 'string' ? JSON.parse(tc.function.arguments) : (tc.function?.arguments || tc.args || {});
-          if (args.path) found.add(String(args.path));
-        } catch (e) { /* ignore */ }
-      }
-    }
-    return [...found].slice(0, 30);
-  }, [messages]);
-
   // 过滤集与懒加载（hooks 必须在 !open 早退之前；数据未加载时自然为空列表）
   const kw = keyword.trim().toLowerCase();
   const matchText = (...texts) => !kw || texts.some((t) => String(t || '').toLowerCase().includes(kw));
@@ -246,11 +231,6 @@ export default function PlusMenu({
 
   if (!open) return null;
 
-  function insertRef(p) {
-    window.dispatchEvent(new CustomEvent('mjcode:insert-path', { detail: p }));
-    onClose?.();
-  }
-
   // 技能单选（T5）：skillIds 字段保留数组（旧存档兼容），点击替换首个启用项；
   // 旧多值存档仅首个视为选中，再次点击首个 = 清空
   function toggleSkill(id) {
@@ -303,8 +283,6 @@ export default function PlusMenu({
       {!panel && (
         <div className="py-2">
           <MenuRow Icon={IconFilePlus} label={tr('plusMenu.addFiles')} onClick={() => { onPickFiles?.(); onClose?.(); }} />
-          <MenuRow Icon={IconMessage} label={tr('plusMenu.refsFromChat')} hasSub disabled={!hasProject}
-            disabledReason={tr('plusMenu.refsDisabled')} onClick={() => setPanel('refs')} />
           <div className="my-2 border-t border-border" />
           <MenuRow Icon={IconBranch} label={tr('plusMenu.mode')} hasSub disabled={!hasProject}
             disabledReason={tr('plusMenu.modeDisabled')} onClick={() => setPanel('mode')} />
@@ -316,31 +294,13 @@ export default function PlusMenu({
           <MenuRow Icon={IconPlug} label={tr('plusMenu.connectors')} hasSub
             badge={extras?.mcpServers?.length ? tr('plusMenu.connectorCount', { n: extras.mcpServers.length }) : null}
             onClick={() => setPanel('connectors')} />
-          {/* M5 / T5-4：军团派活（选团队 → 缺统筹补齐 → 派活三件 → 创建 run）
-              T6-14：与「项目空间」并列会让用户误以为两个都是开工入口——
-              军团是「人」（编制/角色/模型/预算），项目空间是「事」（目标/工件/配额），
-              故改称「团队编制」并加一行说明，避免误读为可删除的重复功能。 */}
+          {/* M5 / T5-4：军团派活（选团队 → 缺统筹补齐 → 派活三件 → 创建 run）。
+              2026-10-29：与菜单里的「项目空间」原本并列，会被误读为两个开工入口；项目空间入口
+              已按用户要求移除（新建项目/工作区在顶栏与会话列表都有入口），军团是菜单里唯一的
+              编制入口，措辞保持「团队编制」以标明它是「人」不是「事」。 */}
           <MenuRow Icon={IconUsers} label={tr('plusMenu.legion')} sub={tr('plusMenu.legionHint')}
             hasSub onClick={() => setPanel('legion')} />
-          {/* T6-9：项目空间（项目 + 工件 + 配额 + 团队 + 会话的七步初始化），弹窗由 App 承载 */}
-          <MenuRow Icon={IconFile} label={tr('plusMenu.projectSpace')} hasSub
-            onClick={() => { window.dispatchEvent(new CustomEvent('mjcode:new-project-space')); onClose?.(); }} />
-          <div className="my-2 border-t border-border" />
-          <MenuRow Icon={IconMic} label={tr('plusMenu.voiceInput')} hint="Ctrl+M" onClick={() => { onVoiceStart?.(); onClose?.(); }} />
         </div>
-      )}
-
-      {panel === 'refs' && (
-        <SubPanel title={tr('plusMenu.refsFromChat')} onBack={() => setPanel(null)}>
-          {referencedFiles.length === 0 ? (
-            <p className="text-text2 text-xs px-3 py-4">{tr('plusMenu.noFileRefs')}</p>
-          ) : referencedFiles.filter((p) => matchText(p)).map((p) => (
-            <button key={p} onClick={() => insertRef(p)} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-hover">
-              <IconFile size={14} className="text-text2 shrink-0" />
-              <span className="text-xs font-mono truncate">{p}</span>
-            </button>
-          ))}
-        </SubPanel>
       )}
 
       {panel === 'mode' && (

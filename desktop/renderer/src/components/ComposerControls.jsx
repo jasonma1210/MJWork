@@ -28,7 +28,10 @@ export function getModeOptions() {
 // 不再有的贴底有的浮高（真机反馈：原 py-1 + bg-surface 与卡片同色，控件高低参差）。
 // 注意：CHIP 刻意不含边框色——状态色（accent/warn）与默认 border-border 同权重，
 // 拼在一起靠样式表顺序决胜不可靠，故由使用处互斥拼接，任何时刻只出现一个边框色类。
-const CHIP = 'h-7 inline-flex items-center gap-2 rounded-lg border px-2 text-xs text-text bg-transparent hover:bg-hover cursor-pointer transition-colors';
+// 2026-10-29：整行固定单行（flex-nowrap）——左右侧栏同时展开时输入框变窄，此前 flex-wrap
+// 会把「本地模式 / 权限 / 沙箱 / 模型」拆成两三行叠起来（用户实测：工具行被压成一个方块）。
+// 单行 + chip 不收缩 + 模型 chip 自行截断：宽度不足时只牺牲模型名长度，行结构不变。
+const CHIP = 'h-7 shrink-0 inline-flex items-center gap-2 rounded-lg border px-2 text-xs text-text bg-transparent hover:bg-hover cursor-pointer transition-colors';
 const CHIP_SELECT = 'bg-transparent outline-none cursor-pointer max-w-[140px] truncate';
 
 export default function ComposerControls({ providers, selectedModel, onSelectModel, approval, onApprovalChange, project, mode, onModeChange, worktreeInfo }) {
@@ -40,7 +43,7 @@ export default function ComposerControls({ providers, selectedModel, onSelectMod
   const approvalMode = migrateApprovalMode(approval?.approval_mode);
   const risky = isRiskyApproval(approval);
   return (
-    <div className="flex items-center gap-2 flex-wrap min-w-0">
+    <div className="flex items-center gap-2 flex-nowrap min-w-0">
       {/* 运行模式：本地 / 隔离工作区（worktree 态转 accent 色，隔离执行必须可见） */}
       <label
         className={`${CHIP} ${mode === 'worktree' ? 'border-accent bg-accent-bg text-accent' : 'border-border'}`}

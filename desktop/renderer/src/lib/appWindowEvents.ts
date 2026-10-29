@@ -14,6 +14,8 @@ export interface AppWindowEventDeps {
   setShowProjectSpace: (v: boolean) => void;
   setPaneTab: (v: any) => void;
   setPaneOpen: (v: boolean) => void;
+  /** 打开文件到右侧预览栏（App.openFileInPane：绝对化相对路径 + 入标签栈 + 切到文件面板） */
+  openFile: (p: string) => void;
   getThreads: () => any[];
   selectThread: (t: any) => void;
 }
@@ -36,5 +38,11 @@ export function createAppWindowHandlers(d: AppWindowEventDeps): Record<string, (
     },
     // P0-7：收尾条「查看 N 个改动」→ 打开右栏变更面板
     'mjcode:open-diff': () => { d.setPaneTab('diff'); d.setPaneOpen(true); },
+    // 2026-10-29：文件 chip 打开走事件总线兜底——团队流 / 看板回放等渲染路径没有透传
+    // onOpenFile 回调，只靠 props 会让「单击文件」静默无效（用户实测「点了没有任何反应」）。
+    'mjcode:open-file': (evt: Event) => {
+      const p = (evt as CustomEvent).detail?.path;
+      if (p) d.openFile(String(p));
+    },
   };
 }

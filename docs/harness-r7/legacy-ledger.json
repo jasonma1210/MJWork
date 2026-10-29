@@ -116,7 +116,7 @@
     "rawButtons": {
       "source": "desktop/renderer/src（排除 components/ui/ 与 styles/，口径同 test/ui-conventions.test.js）",
       "unit": "button",
-      "total": 164,
+      "total": 160,
       "scannedFiles": 163,
       "groups": [
         {
@@ -145,11 +145,6 @@
           "disposition": "pending"
         },
         {
-          "file": "components/PlusMenu.jsx",
-          "count": 8,
-          "disposition": "pending"
-        },
-        {
           "file": "components/settings/ModelsTab.tsx",
           "count": 8,
           "disposition": "pending"
@@ -160,7 +155,7 @@
           "disposition": "pending"
         },
         {
-          "file": "components/MessageStream.tsx",
+          "file": "components/PlusMenu.jsx",
           "count": 7,
           "disposition": "pending"
         },
@@ -191,6 +186,11 @@
         },
         {
           "file": "components/EcosystemModal.jsx",
+          "count": 4,
+          "disposition": "pending"
+        },
+        {
+          "file": "components/MessageStream.tsx",
           "count": 4,
           "disposition": "pending"
         },

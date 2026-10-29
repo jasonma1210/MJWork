@@ -341,12 +341,7 @@ export default function DeskIntake({
               onSelectTeam={undefined}
               extras={extras}
               onExtrasChange={setExtras}
-              // 语音：麦克风由会话侧的 voice 句柄驱动，接单台拿不到 —— 点击给明确提示而不是静默。
-              onVoiceStart={() => {
-                setPlusOpen(false);
-                toast({ message: t('desk.intake.voiceInSession') });
-              }}
-              // 工作模式：runMode 是 ChatArea 内部 state 且不持久化，带不到新线程 —— 同样给提示。
+              // 工作模式：runMode 是 ChatArea 内部 state 且不持久化，带不到新线程 —— 给提示而不是静默。
               onModeChange={() => {
                 setPlusOpen(false);
                 toast({ message: t('desk.intake.modeInSession') });

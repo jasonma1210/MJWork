@@ -47,7 +47,7 @@ export default function Composer({
   // false 时状态行不显示项目/分支/上下文环：新建任务页不得把「上次打开的项目」当已选事实展示。
   workspaceBound = false,
   runMode, onModeChange, worktreeInfo,
-  extras, onExtrasChange, plusOpen, onPlusOpenChange, voice, onDropFiles, messages = [], connectedServers = [],
+  extras, onExtrasChange, plusOpen, onPlusOpenChange, voice, onDropFiles, connectedServers = [],
   enabledSkills = [],
   // 附件 chips（拖入/粘贴/「添加到对话框」）：状态归 ChatArea（useAgentRun.send 统一转 @路径 上下文）
   attachments = [], onRemoveAttachment, onOpenAttachment,
@@ -535,13 +535,11 @@ export default function Composer({
             open={plusOpen}
             onClose={() => onPlusOpenChange?.(false)}
             onPickFiles={onPickFiles}
-            messages={messages}
             runMode={runMode}
             onModeChange={onModeChange}
             hasProject={!!project?.path}
             extras={extras}
             onExtrasChange={onExtrasChange}
-            onVoiceStart={() => voice?.start?.()}
             connectedServers={connectedServers}
             enabledSkills={enabledSkills}
             // 2026-10-20 需求⑤：军团面板只需当前选中团队 id（高亮回显）+ 选中回调
@@ -551,9 +549,11 @@ export default function Composer({
         )}
 
         {/* 底部工具行三段式：输入辅助（+/麦克风）│ 执行配置（模式/审批/沙箱/模型 chip）… 发送。
-            图标按钮与 chip 同高（h-7）同圆角，垂直居中对齐；分隔线区分「加内容」与「定规矩」两组语义 */}
+            图标按钮与 chip 同高（h-7）同圆角，垂直居中对齐；分隔线区分「加内容」与「定规矩」两组语义。
+            2026-10-29：左段固定单行（不再 flex-wrap）——左右侧栏同时打开时输入框变窄，
+            此前会折成两三行把工具行压成方块；现在只让模型 chip 内部截断，行结构恒定。 */}
         <div className="flex items-center justify-between mt-3 gap-2">
-          <div className="flex items-center gap-1 min-w-0 flex-wrap">
+          <div className="flex items-center gap-1 min-w-0 flex-nowrap">
             <button
               onClick={() => onPlusOpenChange?.(!plusOpen)}
               className={`shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-lg transition-colors duration-150 ${
