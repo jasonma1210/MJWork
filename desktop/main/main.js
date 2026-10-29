@@ -1,6 +1,5 @@
 const { app, BrowserWindow, ipcMain, safeStorage, shell } = require('electron');
 const path = require('path');
-const fsp = require('fs/promises');
 const fs = require('fs');
 const { writeFileDurable } = require('./data/durableWrite');
 const { AsyncLocalStorage } = require('async_hooks');
@@ -52,8 +51,8 @@ const conversationRules = []; // 「本对话同类」：进程内存
 try {
   alwaysRules = JSON.parse(fs.readFileSync(APPROVAL_RULES_FILE(), 'utf8'));
   if (!Array.isArray(alwaysRules)) alwaysRules = []; else alwaysRules = alwaysRules.filter((r) => (r && (typeof approval.isRememberable !== 'function' || approval.isRememberable(r.tool))));
-} catch (e) {
-  alwaysRules = []; // 首次启动
+} catch {
+  alwaysRules = []; // 首次启动或文件损坏：审批「始终允许」规则回落空集（fail-closed）
 }
 
 function saveAlwaysRules() {
@@ -76,7 +75,7 @@ function saveAlwaysRules() {
 const { ApprovalChannel, approvalReasonOf, denialText, initDiffCommentChannel } = require('./approvalChannel');
 const approvalChannel = new ApprovalChannel({ timeoutMs: 120000 });
 // 模型形状转换（扁平形 ⇄ 嵌套形）：全项目唯一事实来源，见 modelShape.js 顶部事故背景
-const { toAgentModel, toChatRequest, resolveModelRef } = require('./modelShape');
+const { toAgentModel, resolveModelRef } = require('./modelShape');
 
 // 审批结束广播：让渲染层撤下对应卡片。
 // 没有这条通道时，主进程侧 pending 一旦因超时消失，UI 卡片却仍挂着——用户事后点击
@@ -183,8 +182,6 @@ const { LocalStore } = require('./localStore');
 // P1-1：无人值守路径的审批/沙箱档来源（用户设置），与交互 run 的 payload 档严格分开
 const approvalSettings = require('./approvalSettings');
 const { CredentialCrypto } = require('./credentialCrypto');
-// 自定义模型配置文件（对标 WorkBuddy models.json）：~/.mjcode/models.json → providers 同步
-const modelsFile = require('./modelsFile');
 let localStore = null;   // whenReady 后初始化
 let credentialCrypto = null; // 凭证加密双轨：safeStorage 首选，不可用降级文件密钥 AES-GCM（打包版真机事故）
 const localVault = new Map(); // 本地 provider id -> { api_key, base_url }（解密后的内存态）
@@ -245,7 +242,7 @@ localDataIpc.initLocalDataIpc({
   // M3：记忆文件双通道（打开项目时同步 .mjcode/ 记忆文件）
   getMemoryFileSync: () => memoryFileSync,
 });
-const { syncModelsFile, maybeSyncModelsFile, migrateLocalModelsToFile } = localDataIpc;
+const { syncModelsFile, migrateLocalModelsToFile } = localDataIpc;
 
 // 差集 A：diff 行内评论存储——评论挂到 localStore 的线程对象（t.diffComments）随
 // local-data.json 持久化；localStore 未就绪时 getter 返回 null，内部退化为进程内 Map。
@@ -564,7 +561,7 @@ toolExec.initToolExec({
   // 懒取（仅运行时调用，故可引用下方才 require 的 mcpIpc）。
   getGovernance: () => mcpIpc.getGovernance(),
 });
-const { toolShell, toolReadFile, runWriteTool, toolListDir, toolGrep, toolGlob, toolGitStatus, toolGitDiff, toolGitLog, toolGitBranch, toolGitCommit, toolGitAdd, shellEnv, runGit } = toolExec;
+const { toolShell, toolReadFile, runWriteTool, toolListDir, toolGrep, toolGlob, toolGitStatus, toolGitDiff, toolGitLog, toolGitBranch, toolGitCommit, toolGitAdd, runGit } = toolExec;
 
 // T4-1：Browser Use——Playwright 下沉独立子进程（T3-6 驻留模式），主进程只做编排/审批/审计。
 // 六工具（navigate/click/fill/select/screenshot/extract）经 browserTools 挂进会话 toolHandlers；
@@ -657,7 +654,7 @@ const mcpIpc = require('./ipc/mcp');
 // 期 2：注入 getLocalStore——治理偏好（档位/文件能力/沙盒网络）存在 localStore 偏好中，
 // localStore 在 whenReady 后才非 null，故传闭包 getter（与其它偏好注入同源）。
 mcpIpc.initMcpIpc({ requestApproval, applyApprovalDecision, getAlwaysRules: () => alwaysRules, conversationRules, audit, emitTaskEvent, getCredentialCrypto: () => credentialCrypto, toolHooks, getLocalStore: () => localStore });
-const { connectMcpServer, callMcpTool, killAllMcpServers, reconnectMcpServers, mcpServers } = mcpIpc;
+const { connectMcpServer, callMcpTool, killAllMcpServers, reconnectMcpServers } = mcpIpc;
 // GitHub PR 审查闭环工具仍在本文件组装（gh CLI 封装见 main/github.js）
 const github = require('./github');
 
@@ -1851,8 +1848,9 @@ cuaProcess.initCuaProcess({});
 // T4-6：操作录制与回放——LLM 跑通的任务录成确定性 AX 脚本，回放不调模型
 const cuaRecorder = require('./cuaRecorder');
 const cuaRecordingsDir = () => path.join(app.getPath('userData'), 'recordings');
-let activeCuaLoop = null; // 当前进行中的 CUA 循环（供 cua:stop 中断）
-let activeReplayLoop = null; // 当前进行中的回放循环（与录制互斥，共用 stop）
+// 当前进行中的 CUA / 回放循环：占用状态与互斥守卫下沉到独立模块（同步 test-and-set，
+// 避免跨 await 赋值导致「并发都通过守卫、互相覆盖占用」的真实竞态）。
+const cuaLoopRegistry = require('./cuaLoopRegistry');
 
 // CUA 逐次确认弹窗：独立通道，避免与并行工具审批（tool:approval-response）互相串扰
 // 决策不进入 applyApprovalDecision 规则库 —— 敏感动作必须逐次确认，不可会话/永久放行
@@ -1924,7 +1922,7 @@ async function toolComputerUse(args = {}, ctx = {}) {
   if (!objective || !appName) return { ok: false, error: 'objective 与 app_name 必填' };
   if (process.platform !== 'darwin') return { ok: false, error: '界面自动化仅支持 macOS' };
   // 同一时刻只允许一个 CUA 循环（与 cua:run / cua:replay 共用同一把锁）——模型与设置页不并发操作桌面
-  if (activeCuaLoop || activeReplayLoop) return { ok: false, error: '已有进行中的界面自动化任务，请先停止' };
+  if (cuaLoopRegistry.hasRunning()) return { ok: false, error: '已有进行中的界面自动化任务，请先停止' };
   // 顶层授权：L1 逐次确认（任何审批档都弹卡），决策不落规则库（NON_REMEMBERABLE）。
   // 由本 handler 自行把关——引擎的 APPROVAL_TOOLS 仅注入治理字段，不代为弹卡。
   // fail-closed：仅 'once'（允许一次）放行；'deny'/超时/其他一律视为拒绝。
@@ -1992,7 +1990,10 @@ async function toolComputerUse(args = {}, ctx = {}) {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('cua:event', evt);
     },
   });
-  activeCuaLoop = loop;
+  // 同步 test-and-set 占用：守卫与占用之间隔着多次 await，必须原子判定，
+  // 否则两个并发调用会各自覆盖占用，cua:stop 只能停到后一个（先跑的那个失控）。
+  const releaseCua = cuaLoopRegistry.claimCua(loop);
+  if (!releaseCua) { cua.destroyHud(); dispose(); return { ok: false, error: cuaLoopRegistry.BUSY }; }
   // 运行中止（用户点停止/切会话）→ 立即中断循环（与 cua:run 的 cua:stop 同源）
   if (ctx.signal) ctx.signal.addEventListener('abort', () => loop.stop(), { once: true });
 
@@ -2002,7 +2003,7 @@ async function toolComputerUse(args = {}, ctx = {}) {
   } catch (err) {
     return { ok: false, error: `界面自动化执行失败：${err.message}${err.cuaDegraded ? '（能力降级）' : ''}` };
   } finally {
-    activeCuaLoop = null;
+    releaseCua();
     cua.destroyHud();
     dispose();
   }
@@ -2068,7 +2069,7 @@ ipcMain.handle('cua:permission-help', async (_, payload = {}) => {
 });
 
 ipcMain.handle('cua:run', async (_, { objective, appName, approvalMode = 'on-request', conversationId, model, providerId, isGlobal = false, baseUrl, allowedApps, maxSteps, record = false, recordingName = '' }) => {
-  if (activeCuaLoop || activeReplayLoop) return { ok: false, error: '已有进行中的界面自动化任务，请先停止' };
+  if (cuaLoopRegistry.hasRunning()) return { ok: false, error: '已有进行中的界面自动化任务，请先停止' };
   if (!objective || !appName) return { ok: false, error: 'objective 与 appName 必填' };
   if (process.platform !== 'darwin') return { ok: false, error: '界面自动化仅支持 macOS' };
   // X14：objective/appName 会进模型上下文并被审计落盘，allowedApps 是执行白名单——
@@ -2153,7 +2154,8 @@ ipcMain.handle('cua:run', async (_, { objective, appName, approvalMode = 'on-req
     hud,
     onEvent,
   });
-  activeCuaLoop = loop;
+  const releaseCua = cuaLoopRegistry.claimCua(loop);
+  if (!releaseCua) { cua.destroyHud(); try { cuaSession?.dispose(); } catch (e) { console.warn('[cua] 会话释放失败:', e.message); } return { ok: false, error: cuaLoopRegistry.BUSY }; }
   loop.run()
     // T4-6：任务成功完成且有已执行步骤 → 录制落盘；中途失败/停止 → 清理半成品截图不留脏数据
     .then(async (res) => {
@@ -2173,7 +2175,7 @@ ipcMain.handle('cua:run', async (_, { objective, appName, approvalMode = 'on-req
     // cuaDegraded：子进程重启超限——消息本身即能力降级提示（degraded 标记供渲染层区分展示）
     .catch((err) => send({ type: 'error', message: err.message, degraded: !!err.cuaDegraded }))
     .finally(() => {
-      activeCuaLoop = null;
+      releaseCua();
       cua.destroyHud();
       try { cuaSession?.dispose(); } catch (e) { console.warn('[cua] 会话释放失败:', e.message); }
     });
@@ -2181,9 +2183,9 @@ ipcMain.handle('cua:run', async (_, { objective, appName, approvalMode = 'on-req
 });
 
 ipcMain.handle('cua:stop', async () => {
-  if (activeReplayLoop) { activeReplayLoop.stop(); return { ok: true }; }
-  if (!activeCuaLoop) return { ok: false, error: '没有进行中的界面自动化任务' };
-  activeCuaLoop.stop();
+  const stopped = cuaLoopRegistry.stopCurrent();
+  // 回放不走 CUA 确认通道，停完直接返回（保持原语义）；无任务则报错
+  if (stopped !== 'cua') return stopped ? { ok: true } : { ok: false, error: '没有进行中的界面自动化任务' };
   // P1-24：停止运行时统一撤下挂起的 CUA 确认卡（按 deny 收尾）——
   // 此前卡残留：循环已死、卡还在，用户点「允许」打到已无消费者的通道上
   try { cuaApprovalChannel.disposeAll(); } catch (e) { console.warn('[cua] 撤卡失败:', e.message); }
@@ -2193,7 +2195,7 @@ ipcMain.handle('cua:stop', async () => {
 // T4-6：确定性回放——不调模型，按录制步骤逐一「定位节点→（敏感则逐次确认）→执行」；
 // 节点定位失败 fail-closed 中止；审批/审计与录制路径共用同一套通道（requestCuaApproval/audit）
 ipcMain.handle('cua:replay', async (_, { recordingId, approvalMode = 'on-request' } = {}) => {
-  if (activeCuaLoop || activeReplayLoop) return { ok: false, error: '已有进行中的界面自动化任务，请先停止' };
+  if (cuaLoopRegistry.hasRunning()) return { ok: false, error: '已有进行中的界面自动化任务，请先停止' };
   if (process.platform !== 'darwin') return { ok: false, error: '界面自动化仅支持 macOS' };
   // X14：recordingId 会拼成录制文件路径（cuaRecorder 内部另有净化），边界先守类型与长度
   try {
@@ -2227,11 +2229,12 @@ ipcMain.handle('cua:replay', async (_, { recordingId, approvalMode = 'on-request
     },
     onEvent: send,
   });
-  activeReplayLoop = loop; // eslint-disable-line require-atomic-updates -- 互斥守卫已在 await 前检查，单窗口串行赋值安全
+  const releaseReplay = cuaLoopRegistry.claimReplay(loop);
+  if (!releaseReplay) { try { cuaSession?.dispose(); } catch (e) { console.warn('[cua] 会话释放失败:', e.message); } return { ok: false, error: cuaLoopRegistry.BUSY }; }
   loop.run()
     .catch((err) => send({ type: 'error', message: err.message, degraded: !!err.cuaDegraded }))
     .finally(() => {
-      activeReplayLoop = null;
+      releaseReplay();
       try { cuaSession?.dispose(); } catch (e) { console.warn('[cua] 会话释放失败:', e.message); }
     });
   return { ok: true };

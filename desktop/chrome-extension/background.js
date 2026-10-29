@@ -21,15 +21,25 @@ function relayUrl() {
 async function connect() {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
   const url = await relayUrl();
-  try { ws = new WebSocket(url); } catch { scheduleReconnect(); return; }
-  ws.onopen = () => { reconnectDelay = 2000; };
-  ws.onmessage = async (ev) => {
+  // await 期间可能有另一次 connect（alarm / onStartup / onInstalled）已抢先建连：
+  // 先把 socket 与它的全部 handler 绑到局部变量，最后一次性发布到 ws，避免对共享 ws
+  // 的跨 await 赋值（require-atomic-updates）与「旧回调误清新连接」。
+  let socket;
+  try { socket = new WebSocket(url); } catch { scheduleReconnect(); return; }
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+    // 二次确认：await 后已有活动连接，本次新建的 socket 立即关闭，不发布、不覆盖
+    try { socket.close(); } catch { /* 尚未打开 */ }
+    return;
+  }
+  ws = socket;
+  socket.onopen = () => { reconnectDelay = 2000; };
+  socket.onmessage = async (ev) => {
     let msg;
     try { msg = JSON.parse(String(ev.data)); } catch { return; }
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 'hello') {
       helloNonce = String(msg.nonce || '');
-      ws.send(JSON.stringify({
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({
         t: 'identify',
         extension: EXTENSION_ID,
         version: chrome.runtime.getManifest().version,
@@ -46,15 +56,14 @@ async function connect() {
       } catch (err) {
         res = { t: 'callRes', callId: msg.callId, ok: false, error: String(err && err.message || err) };
       }
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(res));
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(res));
     }
   };
-  ws.onclose = scheduleReconnect;
-  ws.onerror = () => { try { ws.close(); } catch { /* 已关闭 */ } };
+  socket.onclose = () => { if (ws === socket) { ws = null; scheduleReconnect(); } };
+  socket.onerror = () => { try { socket.close(); } catch { /* 已关闭 */ } };
 }
 
 function scheduleReconnect() {
-  ws = null;
   setTimeout(connect, reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 2, 30000); // 指数退避封顶 30s：桌面端未启动时不狂重连
 }

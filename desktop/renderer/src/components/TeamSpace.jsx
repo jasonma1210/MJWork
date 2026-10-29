@@ -82,7 +82,7 @@ export default function TeamSpace({ spaceId = 'default', projectId = null }) {
       await syncDoc(approvalDocId, t('teamSpace.me'));
       reloadLocal();
       setError('');
-    } catch (err) {
+    } catch {
       // 离线属正常态：本地内容照常可用，仅提示未同步
       setNotice(t('teamSpace.offlineNotice'));
     } finally {

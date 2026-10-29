@@ -202,7 +202,7 @@ export default function SettingsModal({
     try {
       const u = new URL(s);
       return u.protocol === 'http:' || u.protocol === 'https:';
-    } catch (e) { return false; }
+    } catch { return false; }
   }
 
   async function addProvider() {
@@ -422,8 +422,8 @@ export default function SettingsModal({
                 {THEMES.map((th) => (
                   <button key={th.id}
                     onClick={() => onThemeChange(th.id)}
-                    onMouseEnter={(e) => document.documentElement.setAttribute('data-theme', th.id)}
-                    onMouseLeave={(e) => document.documentElement.setAttribute('data-theme', theme)}
+                    onMouseEnter={(_e) => document.documentElement.setAttribute('data-theme', th.id)}
+                    onMouseLeave={(_e) => document.documentElement.setAttribute('data-theme', theme)}
                     className={`p-3 rounded-xl border-2 text-center ${theme === th.id ? 'border-accent' : 'border-border'}`}>
                     <div className="w-12 h-12 rounded-lg mx-auto mb-2 border border-border overflow-hidden flex" title={`${th.swatch?.bg || th.color} / ${th.swatch?.accent || ''}`}>
                       <span className="w-1/3 h-full" style={{ background: th.swatch?.bg || th.color }} />

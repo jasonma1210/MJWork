@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 
@@ -358,6 +359,84 @@ await check('协议/扩展/主进程/引擎接线完整', () => {
   assert.match(core, /chrome_status: 'chromeStatus'/);
   const pkg = fs.readFileSync(path.join(DESKTOP, 'package.json'), 'utf8');
   assert.match(pkg, /"ws":/);
+});
+
+// ── 17. MV3 service worker 连接竞态（vm 隔离加载 background.js，行为级而非静态断言）──
+// 用可控的 storage.get deferred 制造「两次 connect 都通过首道守卫、又都在 await 之后」的交错，
+// 断言第二次建连会被二次确认挡下并关掉自己 —— 这是 require-atomic-updates 指向的真实竞态。
+function loadServiceWorker() {
+  const src = fs.readFileSync(path.join(DESKTOP, 'chrome-extension', 'background.js'), 'utf8');
+  const sockets = [];
+  const storageGets = [];
+  const listeners = {};
+  const timers = [];
+  class FakeWebSocket {
+    constructor(url) { this.url = url; this.readyState = 0; this.closed = false; this.handlers = 0; sockets.push(this); }
+    set onopen(v) { if (v) this.handlers++; } set onmessage(v) { if (v) this.handlers++; }
+    set onclose(v) { if (v) { this.handlers++; this._onclose = v; } }
+    set onerror(v) { if (v) this.handlers++; }
+    get onclose() { return this._onclose; }
+    send() {} close() { this.closed = true; this.readyState = 3; }
+  }
+  FakeWebSocket.CONNECTING = 0; FakeWebSocket.OPEN = 1; FakeWebSocket.CLOSED = 3;
+  const sandbox = {
+    console: { log() {}, warn() {}, debug() {} }, navigator: { userAgent: 'test' },
+    WebSocket: FakeWebSocket,
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: () => {},
+    chrome: {
+      storage: { local: { get: (_k, cb) => storageGets.push(cb) } },
+      alarms: { create: () => {}, onAlarm: { addListener: (fn) => { listeners.alarm = fn; } } },
+      runtime: {
+        onStartup: { addListener: (fn) => { listeners.startup = fn; } },
+        onInstalled: { addListener: (fn) => { listeners.installed = fn; } },
+        getManifest: () => ({ version: '0.0.0-test' }),
+      },
+      tabs: { get: async () => ({}), query: async () => [] },
+      debugger: { attach: async () => {}, sendCommand: async () => ({}), detach: async () => {} },
+    },
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(src, sandbox, { filename: 'background.js' });
+  return { sockets, storageGets, listeners, timers };
+}
+const tick = () => new Promise((r) => setImmediate(r));
+
+await check('service worker：并发 connect 只有一个 socket 存活，第二个被二次确认关闭', async () => {
+  const sw = loadServiceWorker();
+  const first = sw.storageGets[0];          // 模块顶层 connect() 发起的第一个
+  sw.listeners.startup();                    // 模拟 onStartup 并发发起第二个
+  assert.equal(sw.storageGets.length, 2, '两次 connect 都应进入 await relayUrl()');
+  first({});                                 // 先放行第一个
+  await tick(); await tick();
+  assert.equal(sw.sockets.length, 1, '第一个应建连');
+  sw.storageGets[1]({});                     // 再放行第二个（此时 ws 已被第一个占用）
+  await tick(); await tick();
+  assert.equal(sw.sockets.length, 2, '第二个确实构造了 socket');
+  assert.equal(sw.sockets[1].closed, true, 'await 后二次确认必须关掉多余的 socket');
+  assert.equal(sw.sockets[1].handlers, 0, '被丢弃的 socket 不应绑定任何 handler');
+  assert.ok(sw.sockets[0].handlers >= 4, '存活的 socket 应绑定 open/message/close/error 四个 handler');
+  assert.equal(sw.sockets[0].closed, false, '第一个 socket 不应被误关');
+});
+await check('service worker：旧 socket 的迟到 onclose 不清掉新连接、不重复重连', async () => {
+  const sw = loadServiceWorker();
+  sw.storageGets[0]({});
+  await tick(); await tick();
+  const old = sw.sockets[0];
+  // 旧 socket 关闭后重连（scheduleReconnect → setTimeout(connect)）
+  old.onclose();
+  assert.equal(sw.timers.length, 1, '关闭存活连接应排一次重连');
+  sw.timers[0].fn();                         // 手动执行重连
+  await tick();
+  assert.equal(sw.storageGets.length, 2, '重连应再次读取 relayUrl');
+  sw.storageGets[1]({});
+  await tick(); await tick();
+  assert.equal(sw.sockets.length, 2, '新连接应建立');
+  const before = sw.timers.length;
+  old.onclose();                             // 迟到的旧 onclose 再次触发
+  assert.equal(sw.timers.length, before, '旧 socket 的 onclose 不得再次排重连');
+  assert.equal(sw.sockets[1].closed, false, '新连接不得被旧回调清掉');
 });
 
 console.log(`\nchrome-relay: ${pass}/${total} 通过`);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { IconEdit, IconFile, IconFolder, IconMessage, IconSearch, IconSettings } from './icons';
+import { IconFile, IconMessage, IconSearch, IconSettings } from './icons';
 import Modal from './ui/Modal';
 import { useI18n } from '../i18n';
 

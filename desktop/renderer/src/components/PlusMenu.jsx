@@ -110,7 +110,10 @@ export default function PlusMenu({
         // 2026-10-16（用户实测反馈）：目录技能 display_name（中文名）用于 + 菜单显示富化——
         // 此前 + 菜单直接显示磁盘 frontmatter name（英文），与生态中心的中文展示不一致。
         if (catalog?.ok) setSkillCatalog(catalog.skills || []);
-      } catch (e) { /* 目录加载失败：面板显示空态提示 */ }
+      } catch (e) {
+        // 目录加载失败：面板显示空态提示
+        console.warn('[plus] catalog load failed:', e);
+      }
       // 启用清单（recommended 默认集 + 旧下载清单一次性迁移，幂等）；
       // 同时用本机已存 values 初始化引导表单，实现「缺项就地表单、补齐即直连」
       try {
@@ -124,7 +127,10 @@ export default function PlusMenu({
           if (Object.keys(v).length) seed[c.id] = v;
         }
         setCfgVals(seed);
-      } catch (e) { /* 启用清单读取失败：连接器面板保持空 */ }
+      } catch (e) {
+        // 启用清单读取失败：连接器面板保持空
+        console.warn('[plus] enabled list load failed:', e);
+      }
       // 已保存的 MCP 服务（含目录外自定义服务）——2026-10-17 用户实测反馈：
       // ima 在生态中心配置完成、也写进了 mcp-servers.json，但 + 菜单只按目录的
       // install 信息推导状态，目录里 ima 是 install.type='manual'（无统一 npm 包），
@@ -132,7 +138,10 @@ export default function PlusMenu({
       try {
         const cfg = await api.mcpGetConfig?.();
         if (cfg?.ok && Array.isArray(cfg.servers)) setSavedServers(cfg.servers.map((s) => ({ name: String(s.name || '') })).filter((s) => s.name));
-      } catch (e) { /* 配置读取失败：退化为仅按目录展示 */ }
+      } catch (e) {
+        // 配置读取失败：退化为仅按目录展示
+        console.warn('[plus] mcp config load failed:', e);
+      }
     })();
   }, [open]);
 

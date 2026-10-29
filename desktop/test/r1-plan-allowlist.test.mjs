@@ -20,6 +20,9 @@ const model = {
 let chatScript = [];
 let chatPayloads = [];
 const calls = { shell: [], writeFile: [], read: [] };
+// 捕获工具结果对象本身：只断言「handler 零调用」看不到「拒绝结果被 undefined 覆盖」这种
+// 形状缺陷（A10：断言机制非结果）——终态副作用相同，但回给模型的结果是错的。
+const toolResults = [];
 function makeToolHandlers() {
   return {
     chat: async (payload) => {
@@ -42,7 +45,9 @@ function makeToolHandlers() {
 function reset() {
   chatScript = []; chatPayloads = [];
   calls.shell.length = 0; calls.writeFile.length = 0; calls.read.length = 0;
+  toolResults.length = 0;
 }
+const collectTool = (e) => { toolResults.push(e); };
 
 (async () => {
   // ── 1) planMode：shell 不在通告集合，且谎报调用被运行时守卫拒绝 ──
@@ -56,9 +61,16 @@ function reset() {
     messages: [{ role: 'user', content: '做个计划' }],
     model, cwd: '/tmp/project', planMode: true,
     toolHandlers: makeToolHandlers(),
+    onToolCall: collectTool,
     onDone: (t) => { done1 = t; },
   });
   check('planMode: shell 未被执行（handler 零调用）', calls.shell.length === 0);
+  // fail-closed 的兑现不只看「没执行」，还要看「回给模型的确实是结构化拒绝结果」——
+  // 防止 IIFE 分发结果把拒绝对象覆盖成 undefined（去掉 !toolRejected 守卫即会触发）。
+  const rejected1 = toolResults.find((e) => e.name === 'shell');
+  check('planMode: 谎报 shell 的拒绝结果形状正确（ok=false + notInAllowlist）',
+    !!rejected1 && !!rejected1.result && rejected1.result.ok === false && rejected1.result.notInAllowlist === true,
+    `result=${JSON.stringify(rejected1?.result)}`);
   check('planMode: 通告工具集中无 shell/write_file/code_exec', (() => {
     const names = new Set((chatPayloads[0]?.tools || []).map((t) => t?.function?.name));
     return !names.has('shell') && !names.has('write_file') && !names.has('code_exec') && !names.has('edit_file');
@@ -79,9 +91,14 @@ function reset() {
     messages: [{ role: 'user', content: '做个计划' }],
     model, cwd: '/tmp/project', planMode: true,
     toolHandlers: makeToolHandlers(),
+    onToolCall: collectTool,
     onDone: () => {},
   });
   check('planMode: write_file 未被执行（handler 零调用）', calls.writeFile.length === 0);
+  const rejected2 = toolResults.find((e) => e.name === 'write_file');
+  check('planMode: 谎报 write_file 的拒绝结果形状正确',
+    !!rejected2 && !!rejected2.result && rejected2.result.ok === false && rejected2.result.notInAllowlist === true,
+    `result=${JSON.stringify(rejected2?.result)}`);
 
   // ── 3) 子代理越权：父（非 plan）派发子代理，子代理谎报 shell 被拒 ──
   reset();
