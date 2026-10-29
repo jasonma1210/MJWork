@@ -38,6 +38,9 @@ function main() {
   check('数字员工缺省模型档为 standard', employees[0].default_model_tier === 'standard');
   check('数字员工 industry 字符串归一化为数组', Array.isArray(employees[1].industry) && employees[1].industry[0] === '金融');
   check('数字员工缺省 id 由 name 生成', employees[1].id && employees[1].id.length > 0, `id=${employees[1].id}`);
+  // P1-2（2026-10-29）：core_skills 必须并入运行期 skillNames，否则只在目录展示、运行时不加载（死字段）
+  const preset0 = eco.buildEmployeeRuntimePreset(employees[0]);
+  check('core_skills 并入运行期 skillNames', preset0.skillNames.includes('编码'), JSON.stringify(preset0.skillNames));
 
   // MCP 连接器：权限白名单过滤
   writeJson(dir, 'mcp-connectors.json', [

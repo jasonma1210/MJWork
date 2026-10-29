@@ -159,7 +159,7 @@ const ROLE_APPROVAL_MAP = {
 };
 
 // 由归一化后的员工对象组装 rolePreset（进 agent:run 载荷；审批/沙箱的最终钳制在 agentRunner）
-// skillNames：员工 starter_skills 透传——agentRunner 按名从 ~/.mjcode/skills 读 SKILL.md
+// skillNames：员工 core_skills + starter_skills 合并透传——agentRunner 按名从 ~/.mjcode/skills 读 SKILL.md
 // 内容注入引擎（技能内容的安全处置在引擎侧统一走不可信内容管道，此处只传名不传内容）
 function buildEmployeeRuntimePreset(emp) {
   const toolNames = [...new Set((emp.tools || []).flatMap((t) => ROLE_TOOL_ALIASES[t] || []))];
@@ -182,7 +182,9 @@ function buildEmployeeRuntimePreset(emp) {
     allowMcp: emp.allowMcp !== false,
     approvalMode: ROLE_APPROVAL_MAP[emp.approval_policy] || 'on-request',
     sandboxPolicy: emp.sandbox_policy || 'workspace-write',
-    skillNames: (emp.starter_skills || []).map((s) => (s == null ? '' : String(s))).filter(Boolean),
+    // P1-2（2026-10-29）：core_skills（常驻技能）此前只展示不进 skillNames ⇒ 运行时不加载（死字段）。
+    // 现与 starter_skills 合并去重后交 agentRunner 按名装载。
+    skillNames: [...new Set([...(emp.core_skills || []), ...(emp.starter_skills || [])].map((s) => (s == null ? '' : String(s))).filter(Boolean))],
   };
 }
 
