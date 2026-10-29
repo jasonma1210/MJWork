@@ -508,6 +508,19 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    // P1-4（2026-10-29）：成员级 MCP 工具粒度。改前 team_members 只有 allow_mcp 一个布尔，
+    // 语义是「全部 MCP 工具开 / 全部关」，中间档缺失——只读角色的成员要么拿到 write/delete
+    // 这类破坏性工具，要么一个 MCP 工具都用不了，权限粒度比角色粗一档。
+    // 新列存白名单数组（服务器名 或 完整工具名，语义见 shared/mcpAllow.mjs）。
+    // 缺省 '[]' = 不改既有行为：allow_mcp=1 依旧全放开，=0 依旧只走 tool_names_json 交集，
+    // 故存量 51 个数字员工与已招募成员升级后行为逐字节不变。
+    version: 17,
+    name: 'team-mcp-allow',
+    up: (db) => {
+      addColumn(db, 'team_members', 'mcp_allow_json', "TEXT NOT NULL DEFAULT '[]'");
+    },
+  },
 ];
 
 function openDb(dataDir) {

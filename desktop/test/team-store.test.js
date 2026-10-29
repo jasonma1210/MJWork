@@ -81,6 +81,17 @@ function check(name, ok, detail = '') {
   check('allowMcp 缺省为 false（最小权限）', bad.allowMcp === false);
   const mcpOn = store.addMember(team.id, { name: '开 MCP', allowMcp: true });
   check('显式 allowMcp=true 被尊重', mcpOn.allowMcp === true);
+  // P1-4（2026-10-29）：成员级 MCP 粒度——走**真实 DB**（sql.js）：列存在、写入不丢、读回一致。
+  // 只用源码断言不够：占位符与列数错位、列名拼错都只有在真正 INSERT/SELECT 时才炸。
+  const mcpScoped = store.addMember(team.id, { name: '限服务', allowMcp: true, mcpAllow: [' filesystem ', 'time', 'time', ''] });
+  check('mcpAllow 落库并读回（去空白/去重/丢空）',
+    JSON.stringify(mcpScoped.mcpAllow) === JSON.stringify(['filesystem', 'time']),
+    JSON.stringify(mcpScoped.mcpAllow));
+  check('缺省 mcpAllow 为空数组（不改既有行为）', Array.isArray(bad.mcpAllow) && bad.mcpAllow.length === 0);
+  const mcpPatched = store.updateMember(team.id, mcpScoped.id, { mcpAllow: ['github'] });
+  check('updateMember 可改 mcpAllow', JSON.stringify(mcpPatched.mcpAllow) === JSON.stringify(['github']));
+  check('改 mcpAllow 不影响 allowMcp（补丁是浅合并，不整对象覆盖）', mcpPatched.allowMcp === true);
+  store.removeMember(team.id, mcpScoped.id);
   // 清掉这次多建的成员，避免影响后续上限/计数断言
   store.removeMember(team.id, bad.id);
   store.removeMember(team.id, mcpOn.id);

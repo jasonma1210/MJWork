@@ -198,6 +198,7 @@ function rowToMember(r) {
     systemPrompt: r.system_prompt,
     toolNames: safeParse(r.tool_names_json) || [],
     allowMcp: !!r.allow_mcp,
+    mcpAllow: safeParse(r.mcp_allow_json) || [],
     model: r.model,
     approvalMode: r.approval_mode,
     sandboxPolicy: r.sandbox_policy,
@@ -277,6 +278,13 @@ function normalizeMemberInput(input = {}, { patch = false } = {}) {
   if (!patch || has('allowMcp')) {
     // 最小权限语义：缺省 false（只有显式 true 才放开 MCP）
     out.allowMcp = src.allowMcp === true;
+  }
+  if (!patch || has('mcpAllow')) {
+    // P1-4：MCP 服务器/工具白名单。此处只做**形状**清洗（去空/限长/去重/限条数）；
+    // 语义匹配（服务名可能经 encodeServerSegment 编码）在 shared/mcpAllow.mjs 的
+    // narrowToolsByMcpAllow 里做——存储层不复制一份前缀判断，避免两处口径漂移。
+    out.mcpAllow = [...new Set((Array.isArray(src.mcpAllow) ? src.mcpAllow : [])
+      .map((s) => trimStr(s, 128).trim()).filter(Boolean))].slice(0, 64);
   }
   if (!patch || has('model')) {
     // T5-7：成员模型绑定存 canonical 引用串（`providerId::modelId`）；解析不出的输入一律落 null
@@ -450,10 +458,11 @@ class TeamStore {
     const id = newId('mbr');
     this.db.prepare(`INSERT INTO team_members
       (id, team_id, name, avatar, role_kind, source, template_ref, system_prompt, tool_names_json,
-       allow_mcp, model, approval_mode, sandbox_policy, skill_names_json, state, enabled, created_at, removed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, NULL)`)
+       allow_mcp, mcp_allow_json, model, approval_mode, sandbox_policy, skill_names_json, state, enabled, created_at, removed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, NULL)`)
       .run(id, String(teamId), m.name, m.avatar, m.roleKind, m.source, m.templateRef, m.systemPrompt,
-        JSON.stringify(m.toolNames), m.allowMcp ? 1 : 0, m.model, m.approvalMode, m.sandboxPolicy,
+        JSON.stringify(m.toolNames), m.allowMcp ? 1 : 0, JSON.stringify(m.mcpAllow),
+        m.model, m.approvalMode, m.sandboxPolicy,
         JSON.stringify(m.skillNames), m.state, this.now());
 
     if (m.roleKind === 'lead') this.setLead(teamId, id);
@@ -471,12 +480,13 @@ class TeamStore {
     const col = {
       name: 'name', avatar: 'avatar', roleKind: 'role_kind', source: 'source', templateRef: 'template_ref',
       systemPrompt: 'system_prompt', toolNames: 'tool_names_json', allowMcp: 'allow_mcp', model: 'model',
+      mcpAllow: 'mcp_allow_json',
       approvalMode: 'approval_mode', sandboxPolicy: 'sandbox_policy', skillNames: 'skill_names_json', state: 'state',
     };
     for (const [key, colName] of Object.entries(col)) {
       if (!(key in m)) continue;
       let v = m[key];
-      if (key === 'toolNames' || key === 'skillNames') v = JSON.stringify(v);
+      if (key === 'toolNames' || key === 'skillNames' || key === 'mcpAllow') v = JSON.stringify(v);
       else if (key === 'allowMcp') v = v ? 1 : 0;
       sets.push(`${colName} = ?`); params.push(v);
     }

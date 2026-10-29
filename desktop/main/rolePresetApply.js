@@ -105,6 +105,8 @@ function rolePresetFromMember(member) {
     systemPrompt: member.systemPrompt || '',
     toolNames: Array.isArray(member.toolNames) ? member.toolNames : [],
     allowMcp: member.allowMcp === true,
+    // P1-4：成员级 MCP 粒度（服务器名 / 完整工具名）。空数组 = 不抑制 allowMcp 语义。
+    mcpAllow: Array.isArray(member.mcpAllow) ? member.mcpAllow : [],
     model: member.model || null,
     approvalMode: member.approvalMode || null,
     sandboxPolicy: member.sandboxPolicy || null,

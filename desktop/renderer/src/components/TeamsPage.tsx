@@ -42,6 +42,9 @@ interface TeamMember {
   model?: string | null;
   modelRef?: { providerId: string; modelId: string } | null;
   modelLabel?: string | null;
+  // P0-2（2026-10-29）：数字员工运行态（idle/busy/waiting/offline），主进程 setMemberState 写入。
+  // 渲染层只做徽标展示，不推断状态——状态机的唯一判据在 store 侧。
+  state?: string | null;
 }
 interface Team {
   id: string;

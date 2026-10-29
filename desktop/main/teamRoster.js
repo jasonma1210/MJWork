@@ -56,6 +56,9 @@ function snapshotRoster(members) {
       systemPrompt: String(m.systemPrompt || ''),
       toolNames: Array.isArray(m.toolNames) ? [...m.toolNames] : [],
       allowMcp: m.allowMcp === true,
+      // P1-4：MCP 服务器/工具白名单必须随快照走。快照是 Worker 侧的**唯一**成员配置来源，
+      // 漏搬这一列等于「白名单只在团队页显示、运行时完全不生效」——正是要修的那类静默失效。
+      mcpAllow: Array.isArray(m.mcpAllow) ? [...m.mcpAllow] : [],
       model: m.model || null,
       approvalMode: m.approvalMode || null,
       sandboxPolicy: m.sandboxPolicy || null,

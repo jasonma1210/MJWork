@@ -28,6 +28,10 @@ interface TeamMember {
   name: string;
   roleKind: string;
   enabled?: boolean;
+  // MCP 访问权限（2026-10-29）：allowMcp=true 表示可用全部 MCP 工具（此时 mcpAllow 被忽略）；
+  // allowMcp=false 时由 mcpAllow（服务器名白名单）决定可用范围：空数组 = 一个都不可用。
+  allowMcp?: boolean;
+  mcpAllow?: string[];
 }
 interface Team {
   id: string;
@@ -74,6 +78,13 @@ const CAP_KEYS: Array<[string, string]> = [
   ['browser', 'teams.capBrowser'],
 ];
 
+// MCP 权限三档 → i18n key（顺序即按钮顺序；key 只在渲染时经 t() 求值）
+const MCP_MODES: Array<['all' | 'none' | 'pick', string]> = [
+  ['all', 'teams.mcpPermAll'],
+  ['none', 'teams.mcpPermNone'],
+  ['pick', 'teams.mcpPermPick'],
+];
+
 // 成员头像位：编制里的 avatar 多为空，用名称首字兜底（无图片请求、无 emoji）
 export function initial(name?: string): string {
   return String(name || '?').trim().slice(0, 1).toUpperCase();
@@ -114,6 +125,15 @@ export default function MemberModal(props: {
   const [draft, setDraft] = useState<MemberDraft | null>(null);
   // 2026-10-20 需求①：「新建员工」弹窗（复用生态中心员工表单，保存后回填招募列表）
   const [employeeFormOpen, setEmployeeFormOpen] = useState(false);
+  // 2026-10-29：成员 MCP 权限编辑态（null=未展开）。mode 决定保存时组装哪个 patch：
+  //   all  ⇒ { allowMcp: true,  mcpAllow: [] }（全部服务器，mcpAllow 被忽略）
+  //   none ⇒ { allowMcp: false, mcpAllow: [] }（一个都不可用）
+  //   pick ⇒ { allowMcp: false, mcpAllow: selected }（仅白名单服务器）
+  const [mcpEditing, setMcpEditing] = useState<
+    { memberId: string; mode: 'all' | 'none' | 'pick'; selected: string[] } | null
+  >(null);
+  // 可选服务器名（mcpListServers 直接返回数组，不是 { ok, servers } 形状）
+  const [mcpServers, setMcpServers] = useState<string[]>([]);
 
   // 编制刷新：teams:get 是编制读取的唯一入口（含 leadMissing / maxMembers）
   const loadRoster = useCallback(async () => {
@@ -171,6 +191,49 @@ export default function MemberModal(props: {
       else setErr(t('teams.setLeadFailed', { msg: r?.error || '' }));
     } catch (e) {
       setErr(t('teams.setLeadFailed', { msg: (e as Error).message }));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  // MCP 权限面板：按成员当前值**推定**初始模式（与主进程契约一一对应）：
+  //   allowMcp === true           ⇒ all（全部服务，mcpAllow 被忽略，不读它）
+  //   allowMcp !== true 且非空白名单 ⇒ pick（selected = 该名单）
+  //   其余（allowMcp=false 且空名单）⇒ none
+  // 服务器列表失败不阻塞：置空数组，面板显示「尚未连接任何 MCP 服务」，用户仍可保存 all/none。
+  async function openMcpPanel(m: TeamMember) {
+    const allow = m.mcpAllow || [];
+    const mode: 'all' | 'none' | 'pick' = m.allowMcp === true ? 'all' : (allow.length > 0 ? 'pick' : 'none');
+    setMcpEditing({ memberId: m.id, mode, selected: mode === 'pick' ? [...allow] : [] });
+    setErr('');
+    try {
+      const list = (await window.mjcode?.mcpListServers?.()) as Array<{ name?: string }> | undefined;
+      setMcpServers(Array.isArray(list) ? list.map((s) => String(s?.name || '')).filter(Boolean) : []);
+    } catch {
+      setMcpServers([]);
+    }
+  }
+
+  async function saveMcp() {
+    if (!mcpEditing) return;
+    const { memberId, mode, selected } = mcpEditing;
+    const patch = mode === 'all'
+      ? { allowMcp: true, mcpAllow: [] as string[] }
+      : mode === 'none'
+        ? { allowMcp: false, mcpAllow: [] as string[] }
+        : { allowMcp: false, mcpAllow: selected };
+    setBusy('mcp');
+    setErr('');
+    try {
+      const r = (await window.mjcode?.teamsUpdateMember?.(teamId, memberId, patch)) as
+        { ok?: boolean; error?: string } | undefined;
+      if (r?.ok) {
+        setMcpEditing(null);
+        await loadRoster();
+        await onChanged();
+      } else setErr(t('teams.mcpPermFailed', { msg: r?.error || '' }));
+    } catch (e) {
+      setErr(t('teams.mcpPermFailed', { msg: (e as Error).message }));
     } finally {
       setBusy('');
     }
@@ -275,6 +338,7 @@ export default function MemberModal(props: {
                         {t('teams.setLead')}
                       </Button>
                     )}
+                  <Button variant="ghost" size="xs" onClick={() => openMcpPanel(m)}>{t('teams.mcpPermBtn')}</Button>
                 </span>
               );
             })}
@@ -300,6 +364,58 @@ export default function MemberModal(props: {
       <div className="space-y-1">
         {err && <InlineAlert type="error" onDismiss={() => setErr('')}>{err}</InlineAlert>}
         {rosterArea}
+        {/* MCP 权限面板（2026-10-29）：三档互斥（全部 / 禁用 / 仅指定服务），保存后重载编制 */}
+        {mcpEditing && (
+          <div className="border border-border rounded-xl p-3 space-y-2">
+            <div className="text-caption text-text2">{t('teams.mcpPermTitle')}</div>
+            <div className="flex flex-wrap gap-1">
+              {MCP_MODES.map(([mode, key]) => (
+                <Button
+                  key={mode}
+                  variant={mcpEditing.mode === mode ? 'primary' : 'secondary'}
+                  size="xs"
+                  onClick={() => setMcpEditing((s) => (s ? { ...s, mode } : s))}
+                >
+                  {t(key)}
+                </Button>
+              ))}
+            </div>
+            {mcpEditing.mode === 'pick' && (
+              mcpServers.length === 0
+                ? <div className="text-caption text-text2">{t('teams.mcpPermEmpty')}</div>
+                : (
+                  <div className="flex flex-wrap gap-1">
+                    {mcpServers.map((name) => {
+                      const on = mcpEditing.selected.includes(name);
+                      // 选中态用 Button 的 primary/secondary 两档，而不是裸 <button> + 手写配色：
+                      // 裸 <button> 会推高 ui-conventions 的 rawButton 基线（收敛台账要连带同步），
+                      // 而两档 variant 已经能表达选中/未选中。
+                      return (
+                        <Button
+                          key={name}
+                          size="xs"
+                          variant={on ? 'primary' : 'secondary'}
+                          onClick={() => setMcpEditing((s) => {
+                            if (!s) return s;
+                            return {
+                              ...s,
+                              selected: on ? s.selected.filter((x) => x !== name) : [...s.selected, name],
+                            };
+                          })}
+                        >
+                          {name}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                )
+            )}
+            <div className="flex items-center gap-2">
+              <Button size="xs" loading={busy === 'mcp'} onClick={saveMcp}>{t('teams.mcpPermSave')}</Button>
+              <Button variant="ghost" size="xs" onClick={() => setMcpEditing(null)}>{t('teams.mcpPermCancel')}</Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {mode === 'recruit' && (

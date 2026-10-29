@@ -9,6 +9,8 @@
 // B3 #10：同时取强制档判定（toolTableEnforcement，缺省 'warn' = 改前行为，见该函数注释）。
 import { inspectToolTableBudget, toolTableEnforcement, TOOL_TABLE_ENFORCE_ENV } from '../shared/contextBudget.mjs';
 import { parseSlashSkill, matchSkillsByQuery } from '../shared/skillTrigger.mjs';
+// P1-4：成员级 MCP 粒度（服务器名 / 完整工具名白名单）——引擎侧唯一匹配实现
+import { narrowToolsByMcpAllow, mcpAllowMatches } from '../shared/mcpAllow.mjs';
 // P1-8：工具可用性闸（纯函数，零依赖）——通告过的工具必须真的调得动
 import { filterUnavailableTools } from './toolAvailability.js';
 // P1-8 / 讨论方案：工具三档分层 + 窗口自适应裁剪（纯常量 + 纯函数）
@@ -2926,7 +2928,8 @@ export async function runAgent({
   let toolsTrimmedByWindow = false;
   // 候选池：窗口裁剪**之前**的可用工具（activate_tools 从这里取）。
   // 必须留住引用——下面 allTools 会被换成 filter 出来的新数组，原数组就没人持有了。
-  const toolCandidatePool = allTools;
+  // 用 let 而非 const：②b 的成员级 MCP 白名单也要收窄这个池子（否则侧门留着，见 ②b 注释）。
+  let toolCandidatePool = allTools;
   if (toolFace.trimmed) {
     toolsTrimmedByWindow = true;
     console.warn(`[agent] 工具面收敛：窗口 ${toolFace.window}，工具表占比 ${(toolFace.share * 100).toFixed(1)}% → 只通告 ${toolFace.tools.length} 个常开工具，其余 ${toolFace.omitted} 个需经 activate_tools 申请`);
@@ -2972,6 +2975,26 @@ export async function runAgent({
       // 也不能让它带着写文件 / shell / MCP 的权限跑完。
       console.warn(`[agent] 角色模板 toolNames 与内置工具交集为空（${rolePreset.toolNames.slice(0, 8).join(',')}），已按 fail-closed 收敛为空集，请检查角色工具名是否拼写正确`);
     }
+  }
+  // ②b 成员级 MCP 粒度（P1-4，2026-10-29）：mcpAllow 非空 ⇒ 只保留白名单内的 MCP 工具。
+  // **位置必须在 ② 之后**：② 是这条链上唯一会把 MCP 工具**加回来**的分支；②b 只做移除，
+  //   放在它前面等于先删后加、白名单形同不存在。
+  // **且必须独立于 ② 的 if 条件**：② 整段以「toolNames 非空」为前置，若把 ②b 塞进去，
+  //   「不限内置工具、只限 MCP 服务」这种最合理的配置（toolNames=[]）会完全失效。
+  // ③ planMode 在本段之后继续收窄，两者都只减不增，故 ②b 与 ③ 的相对顺序无关。
+  const mcpAllowList = Array.isArray(rolePreset?.mcpAllow) ? rolePreset.mcpAllow : [];
+  if (toolCallCapable && mcpAllowList.length && !customTools) {
+    const before = allTools.length;
+    allTools = narrowToolsByMcpAllow(allTools, mcpAllowList);
+    // 候选池同步收窄：池子是「窗口裁剪前的全量」，是 activate_tools 的取数来源。
+    // 不收窄就等于留了一条「按需申请任意 MCP 工具」的侧门——白名单只挡住了通告面，
+    // 没挡住申请面（窗口 < 32K 时会真的走到那里）。
+    toolCandidatePool = narrowToolsByMcpAllow(toolCandidatePool, mcpAllowList);
+    if (!usableMcpTools.some((t) => mcpAllowMatches(String(t?.function?.name || ''), mcpAllowList))) {
+      // 与服务名拼错 / 服务未连接的情形对齐 F-018：告警而不是静默给一个空集合
+      console.warn(`[agent] 成员 MCP 白名单（${mcpAllowList.slice(0, 8).join(',')}）与本次可用 MCP 工具无一匹配，该成员本轮无 MCP 工具；请检查服务名拼写或服务是否已连接`);
+    }
+    if (allTools.length !== before) console.log(`[agent] 成员 MCP 白名单收窄：工具面 ${before} → ${allTools.length}`);
   }
   // ③ planMode filter（既有只读白名单，逻辑保持不变）
   // 为什么加 `toolCallCapable` 前置：capability=false 时工具已被整体清零，planMode 的
