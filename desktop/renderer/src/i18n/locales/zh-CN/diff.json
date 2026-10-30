@@ -94,5 +94,9 @@
   "commentHint": "提交后立即触发 Agent 新一轮修改",
   "noThread": "请先进入一个会话再评论",
   "lineRange": "第 {start}-{end} 行",
-  "loading": "正在读取改动…"
+  "loading": "正在读取改动…",
+  "changesHeaderNoGit": "本会话改动 {n}",
+  "sessionFilesHeader": "本会话改过的文件",
+  "notRepoHint": "当前工作区没有初始化 Git，无法逐文件比对差异。下面是本会话改动过的文件，可直接打开查看。",
+  "notRepoNoFiles": "本会话还没有改动任何文件。"
 }

@@ -53,10 +53,24 @@ export default function BrowserPanel() {
     if (!host) return undefined;
     const el = document.createElement('webview');
     el.setAttribute('src', HOME_URL);
-    el.style.width = '100%';
-    el.style.height = '100%';
     el.style.border = '0';
     el.style.display = 'block';
+    // 尺寸同步（2026-10-30 用户反馈 1）：此前只写 width/height = 100%，而 webview 的 guest 视图
+    // （独立进程的合成层）不会因为 CSS 百分比变化就跟着重排——面板从 hidden 切回激活态、
+    // 拖拽改宽、最大化/还原之后，页面停在旧尺寸上，表现为「只渲染出上面一截，下面一片空白」。
+    // 这里改为按宿主的实际像素尺寸显式下发，并用 ResizeObserver 覆盖上述全部变形路径。
+    const applySize = () => {
+      const w = host.clientWidth;
+      const h = host.clientHeight;
+      // 隐藏态（display:none 的容器）为 0×0：此时写 0 会把 guest 视图压塌，切回来要重新导航。
+      // 直接跳过，等 RO 在变为可见时再下发一次。
+      if (w <= 0 || h <= 0) return;
+      el.style.width = `${w}px`;
+      el.style.height = `${h}px`;
+    };
+    applySize();
+    const ro = new ResizeObserver(applySize);
+    ro.observe(host);
     const refreshNav = () => {
       const g = el as unknown as WebviewGuest;
       try { setCanBack(g.canGoBack()); setCanFwd(g.canGoForward()); } catch { /* guest 未就绪 */ }
@@ -86,6 +100,7 @@ export default function BrowserPanel() {
     host.appendChild(el);
     guestRef.current = el as unknown as WebviewGuest;
     return () => {
+      ro.disconnect();
       guestRef.current = null;
       if (el.parentNode) el.parentNode.removeChild(el);
     };

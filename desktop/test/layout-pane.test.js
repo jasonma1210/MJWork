@@ -66,6 +66,67 @@ check('Diff 面板不再使用全屏遮罩', () => {
   assert.ok(!/z-diff/.test(src), 'DiffReviewPanel 仍使用 z-diff 模态层级');
 });
 
+// 2026-10-30 用户反馈 1：浏览器 tab 只渲染出上面一截、下面一片空白。
+// 契约：webview 的尺寸必须由宿主实际像素驱动，且覆盖「隐藏→可见 / 拖宽 / 最大化」三条变形路径；
+// 0×0 时必须跳过下发（隐藏态写 0 会把 guest 视图压塌，切回来要重新导航）。
+// 读的是去掉注释的源码——注释里写了 clientWidth/ResizeObserver 这些词，不去注释就等于空过。
+check('浏览器面板 webview 尺寸跟随容器', () => {
+  const { blankComments } = require('../scripts/lib/rawButtonScan.js');
+  const src = blankComments(read('components/BrowserPanel.tsx'));
+  assert.match(src, /new ResizeObserver\(/, '未监听容器尺寸变化');
+  assert.match(src, /host\.clientWidth/, '未按宿主实际宽度下发尺寸');
+  assert.match(src, /host\.clientHeight/, '未按宿主实际高度下发尺寸');
+  // 必须真的把量到的像素写回元素：只读 clientWidth 而不落样式，等于量了不用
+  // （变异实测：把两行换成 width/height=100% 时，仅「读过 clientWidth」的断言照样绿）
+  assert.match(src, /el\.style\.width = `\$\{w\}px`/, '宽度未按像素回写');
+  assert.match(src, /el\.style\.height = `\$\{h\}px`/, '高度未按像素回写');
+  assert.ok(/if \(w <= 0 \|\| h <= 0\) return;/.test(src), '缺少 0×0 跳过守卫（隐藏态会把 guest 压塌）');
+  assert.match(src, /ro\.disconnect\(\)/, 'ResizeObserver 未在卸载时断开');
+});
+
+// 2026-10-30 用户反馈 2：右栏「变更 / 工件」两个 tab 在普通会话里直接显示红色故障，且内容与本会话无关。
+// 契约：① 非 Git 工作区不是故障，必须与真异常分成两态，并给出「本会话改过什么」的出口；
+//       ② 工件面板必须接收并优先展示本会话产物（Studio 项目工件是次段）。
+check('右栏「变更」把非 Git 工作区与真故障分开', () => {
+  const { blankComments } = require('../scripts/lib/rawButtonScan.js');
+  const src = blankComments(read('components/DiffReviewPanel.jsx'));
+  assert.match(src, /not a git repository/i, '未识别「不是 Git 仓库」');
+  assert.match(src, /setNotRepo\(true\)/, '非 Git 未进入独立状态（仍会落进 error 分支）');
+  assert.match(src, /onOpenFile\?\.\(p\)/, '非 Git 视图未提供「打开文件」出口');
+});
+
+check('右栏「工件」按 code 分流常态与故障，并展示本会话产物', () => {
+  const { blankComments } = require('../scripts/lib/rawButtonScan.js');
+  const src = blankComments(read('components/ArtifactPanel.tsx'));
+  assert.match(src, /code === 'NO_PROJECT'/, 'NO_PROJECT 未与真故障分流（会被显示成读取失败）');
+  assert.match(src, /sessionFiles/, '未接收本会话产物');
+});
+
+// 2026-10-30 用户反馈 3：文件预览要「像浏览器那样满幅」，而不是被多行控件和窗口高度挤住。
+// 契约：① 正文尺寸相对面板而不是相对窗口；② 动作按钮收敛为正方形图标（不再占一整行文字按钮）；
+//       ③ 文件树可折起，让预览能占满整个面板宽度。
+check('文件预览按面板高度铺满（不再用 vh 定尺寸）', () => {
+  const { blankComments } = require('../scripts/lib/rawButtonScan.js');
+  const src = blankComments(read('components/FilePreview.jsx'));
+  assert.ok(!/h-\[70vh\]/.test(src), '仍在用 h-[70vh]：面板一窄就上下留白');
+  assert.match(src, /const fill =/, '缺少「需要铺满」的判据');
+  assert.match(src, /absolute inset-0 w-full h-full border-0 bg-white/, 'HTML 渲染视图未铺满内容区');
+});
+
+check('文件预览动作收敛为图标工具条', () => {
+  const { blankComments } = require('../scripts/lib/rawButtonScan.js');
+  const src = blankComments(read('components/FilePreview.jsx'));
+  const squares = (src.match(/h-7 w-7 rounded-lg/g) || []).length;
+  assert.ok(squares >= 4, `操作按钮未收敛为正方形图标按钮（实测 ${squares} 个）`);
+});
+
+check('文件树可折起（预览可占满面板宽度）', () => {
+  const { blankComments } = require('../scripts/lib/rawButtonScan.js');
+  const src = blankComments(read('components/FilesPanel.tsx'));
+  assert.match(src, /setTreeOpen/, '缺少折叠开关');
+  assert.match(src, /: 'hidden'\}/, '折叠后未真正隐藏树列');
+});
+
 check('审批改为非模态悬浮卡片', () => {
   assert.ok(fs.existsSync(path.join(SRC, 'components/ApprovalCard.jsx')));
   const src = read('components/ApprovalCard.jsx');

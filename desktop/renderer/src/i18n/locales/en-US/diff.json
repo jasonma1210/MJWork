@@ -94,5 +94,9 @@
   "commentHint": "Submitting triggers a new agent turn right away",
   "noThread": "Open a conversation before commenting",
   "lineRange": "Lines {start}-{end}",
-  "loading": "Loading changes…"
+  "loading": "Loading changes…",
+  "changesHeaderNoGit": "Changed this session ({n})",
+  "sessionFilesHeader": "Files changed in this session",
+  "notRepoHint": "This workspace is not a Git repository, so no file-by-file diff is available. Below are the files changed in this session — click to open.",
+  "notRepoNoFiles": "No files have been changed in this session yet."
 }

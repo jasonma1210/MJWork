@@ -28,7 +28,9 @@ const BASELINE = {
   //   · 指标不匹配的表单按钮（px-3 py-2 text-sm / rounded-lg 或 rounded-xl，与 md 的 h-8 + text-xs 不符）。
   // 待决策项（暂不转换，避免引入可感知差异）：ScheduledTasks 恢复按钮（px-3 vs md 的 px-4、hover:bg-hover
   // vs danger-ghost 的 hover:bg-danger-bg）、WorktreeBar 移除按钮（rounded-lg vs xs 的 rounded、py-1 vs h-6）。
-  rawButton: 160,  // 2026-10-29 再降 4（164 → 160）：正文文件 chip 的「…」下拉自建了 3 个裸 button，
+  rawButton: 154,  // 2026-10-30 下降 6（160 → 154）：文件预览的 4 个文字操作按钮收成正方形图标按钮
+  // （h-7 w-7，按形态豁免），另两处随「思考/命令区块降档」与轨迹组头部改动消失。棘轮只降不升。
+  // 2026-10-29 再降 4（164 → 160）：正文文件 chip 的「…」下拉自建了 3 个裸 button，
   // 已改为复用 ContextMenu（右键/「…」出同一套 5 项菜单）；随本轮同一处改动下降，棘轮同步下调。
   // 2026-10-27 重测下调（251 → 164）：不是"清掉了 87 个按钮"，而是把上方注释里
   // **声明了但从未实现**的豁免（文字链 / 正方形图标按钮）真正落地后重新测得的口径值。

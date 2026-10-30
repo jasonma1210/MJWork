@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { IconCheck, IconChevronRight, IconFileDiff, IconGitBranch, IconRefresh } from './icons';
+import { IconCheck, IconChevronRight, IconFile, IconFileDiff, IconGitBranch, IconRefresh } from './icons';
 import { confirm, countConfirm, toast } from './feedback';
 import { useI18n } from '../i18n';
 import Button from './ui/Button';
@@ -11,11 +11,15 @@ import Button from './ui/Button';
 // 差集 A（方案文档 §4.2，最高优先核心差集）：行内评论通道——用户对 hunk 发表评论，
 // 经 IPC diff:comment 存主进程（挂线程）后包装成 user 消息回灌模型，把「用户审查」
 // 从否决权升级为指导权（对标 Codex：inline review → agent continues）。
-export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId = null }) {
+export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId = null, onOpenFile }) {
   const { t } = useI18n();
   const [files, setFiles] = useState([]);
   const [lastTurnOnly, setLastTurnOnly] = useState(false);
   const [error, setError] = useState('');
+  // 2026-10-30（用户反馈 2）：非 Git 项目此前落进 error 分支，面板一打开就是一行红字
+  // 「Command failed: git diff … fatal: not a git repository」，看起来像坏了，而且与本会话毫无关系。
+  // 「工作区没初始化 Git」是常态，不是错误 —— 单独一态，改为列出本会话改过的文件。
+  const [notRepo, setNotRepo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   // P1-9（2026-10-22）：加载三态。此前「没有未提交的改动」和「还没读出来」共用同一句文案，
@@ -59,7 +63,17 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
       // 两者都取「相对索引」或「相对 HEAD」的 hunk 头，因此各自视图内的块可直接 apply。
       const r = await window.mjcode.gitDiff({ cwd: projectPath, staged: scope === 'staged' });
       if (seq !== loadSeqRef.current) return;
-      if (r.error && !r.stdout) { setError(r.error); setFiles([]); return; }
+      if (r.error && !r.stdout) {
+        // 「不是 Git 仓库」与「git 真的报错」必须分开：前者是常态（未 git init 的工作区），
+        // 展示成红色故障会误导用户以为面板坏了；后者才是需要用户处理的异常。
+        if (/not a git repository/i.test(`${r.error} ${r.stderr || ''}`)) {
+          setNotRepo(true); setError(''); setFiles([]);
+        } else {
+          setNotRepo(false); setError(r.error); setFiles([]);
+        }
+        return;
+      }
+      setNotRepo(false);
       setError('');
       setFiles(parseDiff(r.stdout || ''));
     } catch (err) {
@@ -257,6 +271,8 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
   const visible = lastTurnOnly && agentSet.size > 0
     ? files.filter((f) => agentSet.has(f.path))
     : files;
+  // 非 Git 视图的列表：本会话改过的文件（已归一为仓库相对路径，去重）
+  const sessionPaths = Array.from(agentSet);
 
   const totalAdd = visible.reduce((s, f) => s + f.added, 0);
   const totalDel = visible.reduce((s, f) => s + f.removed, 0);
@@ -389,9 +405,9 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
       <div className="flex items-center gap-2 px-2 h-9 border-b border-border shrink-0">
         <h3 className="font-semibold text-xs flex items-center gap-2 min-w-0 flex-1 truncate">
           <IconFileDiff size={14} />
-          {t('diff.changesHeader', { n: visible.length })}
-          <span className="text-success text-xs">+{totalAdd}</span>
-          <span className="text-danger text-xs">−{totalDel}</span>
+          {notRepo ? t('diff.changesHeaderNoGit', { n: sessionPaths.length }) : t('diff.changesHeader', { n: visible.length })}
+          {!notRepo && <span className="text-success text-xs">+{totalAdd}</span>}
+          {!notRepo && <span className="text-danger text-xs">−{totalDel}</span>}
         </h3>
         <span className="flex items-center gap-1 shrink-0">
           {/* 视图切换：接受后的块落在「已暂存」，不切过去就看不到（也确认不了） */}
@@ -421,7 +437,35 @@ export default function DiffReviewPanel({ projectPath, agentFiles = [], threadId
       {notice && <div className="px-4 py-2 text-xs text-accent border-b border-border shrink-0">{notice}</div>}
 
       <div className="flex-1 min-h-0 overflow-auto p-3">
-        {error ? (
+        {notRepo ? (
+          // 未初始化 Git 的工作区：给出「本会话改了什么」而不是一句红色 fatal。
+          // 逐个文件可点开（与产出物卡片同一跳转口径：打开到右侧文件预览 tab）。
+          <div className="space-y-2">
+            <p className="text-xs text-text2">{t('diff.notRepoHint')}</p>
+            {sessionPaths.length === 0 ? (
+              <p className="text-text2 text-sm text-center py-6">{t('diff.notRepoNoFiles')}</p>
+            ) : (
+              <>
+                <div className="text-caption text-text2">{t('diff.sessionFilesHeader', { n: sessionPaths.length })}</div>
+                <div className="space-y-1">
+                  {sessionPaths.map((p) => (
+                    <Button
+                      key={p}
+                      variant="ghost"
+                      size="xs"
+                      title={p}
+                      onClick={() => onOpenFile?.(p)}
+                      className="w-full !justify-start !px-2 !h-auto !py-1 !text-text !rounded-lg hover:!bg-hover"
+                    >
+                      <IconFile size={12} />
+                      <span className="ml-2 truncate font-mono">{p}</span>
+                    </Button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        ) : error ? (
           <p className="text-danger text-sm text-center py-10">{error}</p>
         ) : !projectPath ? (
           <p className="text-text2 text-sm text-center py-10">{t('diff.noProject')}</p>

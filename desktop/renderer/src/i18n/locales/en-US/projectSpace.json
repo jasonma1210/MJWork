@@ -107,5 +107,7 @@
   "statusCompacted": "History auto-compacted",
   "statusVersionGenerated": "Generated {version}",
   "statusMemberSuspended": "Member suspended for abnormal usage",
-  "statusContextLimit": "Context limit reached, compacted"
+  "statusContextLimit": "Context limit reached, compacted",
+  "panelSessionFiles": "Outputs from this session ({n})",
+  "panelSessionFilesEmpty": "No output files in this session yet"
 }

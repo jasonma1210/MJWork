@@ -116,7 +116,7 @@
     "rawButtons": {
       "source": "desktop/renderer/src（排除 components/ui/ 与 styles/，口径同 test/ui-conventions.test.js）",
       "unit": "button",
-      "total": 160,
+      "total": 154,
       "scannedFiles": 170,
       "groups": [
         {
@@ -147,11 +147,6 @@
         {
           "file": "components/settings/ModelsTab.tsx",
           "count": 8,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/FilePreview.jsx",
-          "count": 7,
           "disposition": "pending"
         },
         {
@@ -281,6 +276,11 @@
         },
         {
           "file": "components/CustomConnectorForm.tsx",
+          "count": 1,
+          "disposition": "pending"
+        },
+        {
+          "file": "components/FilePreview.jsx",
           "count": 1,
           "disposition": "pending"
         },

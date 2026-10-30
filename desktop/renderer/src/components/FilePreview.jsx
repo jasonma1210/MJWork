@@ -6,7 +6,7 @@ import { openLinkByMode, isHttpUrl } from '../lib/linkOpen';
 // S-005：markdown 链接协议白名单（与 MessageStream 同一份判据，见 lib/safeUrl.ts）
 import { safeUrlTransform } from '../lib/safeUrl';
 import { toast } from './feedback';
-import { IconAlert, IconCopy, IconFolderOpen, IconHammer, IconFile, IconSpinner } from './icons';
+import { IconAlert, IconCopy, IconExternalLink, IconFolderOpen, IconHammer, IconFile, IconSpinner } from './icons';
 import { useI18n } from '../i18n';
 import Button from './ui/Button';
 
@@ -149,40 +149,80 @@ export default function FilePreview({ filePath, projectPath }) {
     ? filePath.slice(projectPath.length + 1)
     : filePath;
 
+  // 需要「铺满」而非「随内容滚动」的两种正文：PDF 与 HTML 渲染视图。
+  // 判据同时校验模式与截断——被截断的 HTML 不渲染（半截文档只会呈现残缺页面，误导用户）。
+  const htmlRender = meta.kind === 'text' && isHtml && htmlMode === 'render' && text.totalLines <= TEXT_MAX_LINES;
+  const fill = htmlRender || meta.kind === 'pdf';
+  // 工具条上只留路径；行数与大小合并进 title（悬停可见），避免窄面板里跟路径抢宽度
+  const metaTitle = [
+    filePath,
+    meta.kind === 'text' && text.totalLines > 0 ? t('filePreview.lineCount', { n: text.totalLines }) : '',
+    meta.size !== undefined ? humanSize(meta.size) : '',
+  ].filter(Boolean).join(' · ');
+
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-bg">
-      {/* 标题栏：相对路径 + 元信息 */}
-      <div className="flex items-center gap-2 px-4 h-9 border-b border-border shrink-0">
-        <IconFile size={14} className="text-text2 shrink-0" />
-        <span className="text-xs font-medium truncate flex-1 font-mono" title={filePath}>{relPath}</span>
-        {meta.kind === 'text' && text.totalLines > 0 && (
-          <span className="text-xs text-text2 shrink-0">{t('filePreview.lineCount', { n: text.totalLines })}</span>
-        )}
-        {meta.size !== undefined && <span className="text-xs text-text2 shrink-0">{humanSize(meta.size)}</span>}
+      {/* 单行工具条（2026-10-30 用户反馈 3，参考浏览器式布局）：路径 + 行数/大小 + 动作图标 +（HTML）视图切换。
+          此前是「标题栏 / 4 个文字按钮 / 沙箱提示条」三行，窄面板里按钮还会换行，
+          内容区被挤掉一百多像素 —— 用户看到的就是「上下全是控件、中间只剩一小条页面」。
+          动作全部收成正方形图标按钮（title / aria-label 承载原文字，悬停可见）。 */}
+      <div className="flex items-center gap-2 px-3 h-9 border-b border-border shrink-0">
+        <IconFile size={13} className="text-text2 shrink-0" />
+        {/* 行数与大小从两个独立 span 收进 title：窄面板里它们会跟路径抢宽度，
+            而它们只是「需要时想看一眼」的元信息，不适合常驻占位。 */}
+        <span className="text-xs font-medium truncate min-w-0 font-mono" title={metaTitle}>{relPath}</span>
+
+        <span className="ml-auto flex items-center gap-1 shrink-0">
+          {/* T4-3：HTML 双视图切换（渲染=沙箱 iframe / 源码=高亮文本）。
+              安全提示从独占一行改为按钮 title——switcher 本身已经表达「这是渲染视图」。 */}
+          {meta.kind === 'text' && isHtml && (
+            <>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => setHtmlMode('render')}
+                disabled={text.totalLines > TEXT_MAX_LINES}
+                title={text.totalLines > TEXT_MAX_LINES ? t('filePreview.htmlTruncatedNoRender') : t('filePreview.htmlSandboxHint')}
+                className={htmlMode === 'render' ? '!text-accent !bg-hover' : '!text-text2 !bg-transparent'}
+              >
+                {t('filePreview.htmlViewRender')}
+              </Button>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => setHtmlMode('source')}
+                title={t('filePreview.htmlSourceHint')}
+                className={htmlMode === 'source' ? '!text-accent !bg-hover' : '!text-text2 !bg-transparent'}
+              >
+                {t('filePreview.htmlViewSource')}
+              </Button>
+              <span className="w-px h-4 bg-border mx-1" />
+            </>
+          )}
+          <button onClick={openInEditor} title={t('filePreview.openInEditorTitle')} aria-label={t('filePreview.openInEditor')}
+            className="h-7 w-7 rounded-lg flex items-center justify-center text-text2 hover:text-text hover:bg-hover">
+            <IconHammer size={13} />
+          </button>
+          <button onClick={openInSystem} title={t('filePreview.openInSystemTitle')} aria-label={t('filePreview.openInSystem')}
+            className="h-7 w-7 rounded-lg flex items-center justify-center text-text2 hover:text-text hover:bg-hover">
+            <IconExternalLink size={13} />
+          </button>
+          <button onClick={revealInFinder} title={t('filePreview.revealTitle')} aria-label={t('filePreview.reveal')}
+            className="h-7 w-7 rounded-lg flex items-center justify-center text-text2 hover:text-text hover:bg-hover">
+            <IconFolderOpen size={13} />
+          </button>
+          <button onClick={copyContent} disabled={meta.kind === 'image' || meta.kind === 'pdf'}
+            title={meta.kind === 'image' || meta.kind === 'pdf' ? t('filePreview.copyBinaryDisabled') : t('filePreview.copyTitle')}
+            aria-label={t('filePreview.copy')}
+            className="h-7 w-7 rounded-lg flex items-center justify-center text-text2 hover:text-text hover:bg-hover disabled:opacity-40 disabled:cursor-not-allowed">
+            <IconCopy size={13} />
+          </button>
+        </span>
       </div>
 
-      {/* 操作栏 */}
-      {/* P1-6（2026-10-26）：操作栏允许换行，避免窄面板下 4 个文字按钮（约 370px）溢出压到右侧文件树。 */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border shrink-0 flex-wrap">
-        <button onClick={openInEditor} title={t('filePreview.openInEditorTitle')}
-          className="text-xs px-2 py-1 rounded-lg border border-border hover:bg-hover flex items-center gap-1">
-          <IconHammer size={12} /> {t('filePreview.openInEditor')}
-        </button>
-        <button onClick={openInSystem} title={t('filePreview.openInSystemTitle')}
-          className="text-xs px-2 py-1 rounded-lg border border-border hover:bg-hover">{t('filePreview.openInSystem')}</button>
-        <button onClick={revealInFinder} title={t('filePreview.revealTitle')}
-          className="text-xs px-2 py-1 rounded-lg border border-border hover:bg-hover flex items-center gap-1">
-          <IconFolderOpen size={12} /> {t('filePreview.reveal')}
-        </button>
-        <button onClick={copyContent} disabled={meta.kind === 'image' || meta.kind === 'pdf'}
-          title={meta.kind === 'image' || meta.kind === 'pdf' ? t('filePreview.copyBinaryDisabled') : t('filePreview.copyTitle')}
-          className="text-xs px-2 py-1 rounded-lg border border-border hover:bg-hover flex items-center gap-1 disabled:opacity-40">
-          <IconCopy size={12} /> {t('filePreview.copy')}
-        </button>
-      </div>
-
-      {/* 内容区 */}
-      <div className="flex-1 min-h-0 overflow-auto">
+      {/* 内容区：可整块填充的类型（PDF / HTML 渲染视图）用绝对定位铺满，
+          不再用 h-[70vh]——那个高度是相对窗口而不是相对面板的，面板一窄就溢出/留白。 */}
+      <div className={fill ? 'relative flex-1 min-h-0 overflow-hidden' : 'flex-1 min-h-0 overflow-auto'}>
         {meta.loading && (
           <div className="flex items-center gap-2 p-4 text-text2 text-xs">
             <IconSpinner size={13} className="animate-spin" /> {t('filePreview.loading')}
@@ -214,7 +254,7 @@ export default function FilePreview({ filePath, projectPath }) {
           <iframe
             title={baseName(filePath)}
             src={meta.previewUrl || meta.dataUrl}
-            className="w-full h-full border-0 bg-surface"
+            className="absolute inset-0 w-full h-full border-0 bg-surface"
           />
         )}
 
@@ -231,27 +271,6 @@ export default function FilePreview({ filePath, projectPath }) {
           </div>
         )}
 
-        {/* T4-3：HTML 视图切换条（渲染=沙箱 iframe / 源码=高亮文本） */}
-        {!meta.loading && meta.kind === 'text' && isHtml && (
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-surface">
-            <IconAlert size={12} className="text-warn shrink-0" />
-            <span className="text-xs text-text2 flex-1">
-              {htmlMode === 'render' ? t('filePreview.htmlSandboxHint') : t('filePreview.htmlSourceHint')}
-            </span>
-            <div className="flex gap-1 shrink-0">
-              <button onClick={() => setHtmlMode('render')} disabled={text.totalLines > TEXT_MAX_LINES}
-                title={text.totalLines > TEXT_MAX_LINES ? t('filePreview.htmlTruncatedNoRender') : undefined}
-                className={`text-xs px-2 py-1 rounded-lg border ${htmlMode === 'render' ? 'border-accent text-accent' : 'border-border text-text2 hover:bg-hover'} disabled:opacity-40`}>
-                {t('filePreview.htmlViewRender')}
-              </button>
-              <button onClick={() => setHtmlMode('source')}
-                className={`text-xs px-2 py-1 rounded-lg border ${htmlMode === 'source' ? 'border-accent text-accent' : 'border-border text-text2 hover:bg-hover'}`}>
-                {t('filePreview.htmlViewSource')}
-              </button>
-            </div>
-          </div>
-        )}
-
         {!meta.loading && meta.kind === 'text' && (isMd ? (
           // Markdown 渲染（与对话气泡同一套 react-markdown + GFM，表格/任务列表/代码块均支持）
           <div className="p-5 markdown-body text-sm leading-6">
@@ -259,12 +278,13 @@ export default function FilePreview({ filePath, projectPath }) {
           </div>
         ) : isHtml && htmlMode === 'render' && text.totalLines <= TEXT_MAX_LINES ? (
           // 沙箱渲染：allow-scripts 让内联图表脚本可跑；不给 allow-same-origin，
-          // 产物页面与宿主应用完全隔离（拿不到 Cookie/存储，跳转与弹窗也被沙箱挡下）
+          // 产物页面与宿主应用完全隔离（拿不到 Cookie/存储，跳转与弹窗也被沙箱挡下）。
+          // 绝对定位铺满内容区（此前 h-[70vh] 是相对窗口的高度，面板一窄就上下都留白）。
           <iframe
             title={baseName(filePath)}
             sandbox="allow-scripts"
             srcDoc={text.content}
-            className="w-full h-[70vh] border-0 bg-white"
+            className="absolute inset-0 w-full h-full border-0 bg-white"
           />
         ) : (
           <pre className="text-code leading-[18px] font-mono whitespace-pre p-3">

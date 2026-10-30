@@ -57,5 +57,7 @@
   "terminalRunning": "Running…",
   "terminalDenied": "Command denied or blocked by policy",
   "terminalExit": "exit {code} · {ms}ms",
-  "terminalPlaceholder": "Type a command…"
+  "terminalPlaceholder": "Type a command…",
+  "hideTree": "Hide file tree (full-width preview)",
+  "showTree": "Show file tree"
 }

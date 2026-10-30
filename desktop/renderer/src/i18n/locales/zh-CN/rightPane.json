@@ -57,5 +57,7 @@
   "terminalRunning": "执行中…",
   "terminalDenied": "命令被拒绝或被安全策略阻断",
   "terminalExit": "退出码 {code} · {ms}ms",
-  "terminalPlaceholder": "输入命令…"
+  "terminalPlaceholder": "输入命令…",
+  "hideTree": "收起文件树（预览占满）",
+  "showTree": "展开文件树"
 }

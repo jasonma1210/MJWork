@@ -107,5 +107,7 @@
   "statusCompacted": "历史已自动摘要压缩",
   "statusVersionGenerated": "已生成 {version}",
   "statusMemberSuspended": "成员消耗异常，已单独暂停",
-  "statusContextLimit": "上下文超限，已压缩"
+  "statusContextLimit": "上下文超限，已压缩",
+  "panelSessionFiles": "本会话产物（{n}）",
+  "panelSessionFilesEmpty": "本会话还没有产出文件"
 }

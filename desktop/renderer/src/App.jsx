@@ -587,7 +587,7 @@ export default function App() {
         tab={paneTab}
         onTab={setPaneTab}
         onClose={() => setPaneOpen(false)}
-        diffPanel={<DiffReviewPanel projectPath={activeProject?.path} agentFiles={agentFiles} threadId={activeThreadId} />}
+        diffPanel={<DiffReviewPanel projectPath={activeProject?.path} agentFiles={agentFiles} threadId={activeThreadId} onOpenFile={openFileInPane} />}
         filesPanel={
           <FilesPanel
             root={activeProject?.path}
@@ -603,6 +603,7 @@ export default function App() {
           // T6-10：项目工件侧面板——默认收起；首次生成工件时由面板回调自动展开一次
           <ArtifactPanel
             threadId={activeThreadId}
+            sessionFiles={agentFiles}
             onOpenFile={openFileInPane}
             onAutoOpen={() => { setPaneTab('artifact'); setPaneOpen(true); }}
           />

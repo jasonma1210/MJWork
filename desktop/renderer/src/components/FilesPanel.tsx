@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import FileTree from './FileTree';
 import FileViewerPane from './FileViewerPane';
 import PanelEmpty from './PanelEmpty';
-import { IconFile, IconFolderOpen, IconSearch, IconX } from './icons';
+import { IconChevronLeft, IconChevronRight, IconFile, IconFolderOpen, IconSearch, IconX } from './icons';
 import { useI18n } from '../i18n';
 
 // 文件面板（对标 Codex 右栏「文件」）：搜索文件名 + 左侧预览 + 右侧文件树，同屏并列。
@@ -53,6 +53,10 @@ export default function FilesPanel({
   const [results, setResults] = useState<string[] | null>(null); // null = 非搜索态（显示文件树）
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
+  // 2026-10-30 用户反馈 3：文件树可折起，让预览接近满宽（参考浏览器式布局：内容满幅、控件让位）。
+  // 刻意不落盘：落盘就要进 useUiPreferences 的偏好清单并配一个设置项，改动面远大于收益；
+  // 面板本身是常驻保活的，会话内切换 tab 不会丢这个状态。
+  const [treeOpen, setTreeOpen] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // ⌘P：右栏停在「文件」面板时，快捷键落到本面板的搜索框（否则仍归 App 的命令面板）
@@ -131,6 +135,16 @@ export default function FilesPanel({
             )}
             {!query && <span className="shrink-0 text-caption text-text2">⌘P</span>}
           </div>
+          {/* 折叠文件树：让预览占满整个面板宽度（与浏览器「内容满幅」一致的观感） */}
+          <button
+            onClick={() => setTreeOpen((v) => !v)}
+            title={treeOpen ? t('rightPane.hideTree') : t('rightPane.showTree')}
+            aria-label={treeOpen ? t('rightPane.hideTree') : t('rightPane.showTree')}
+            aria-expanded={treeOpen}
+            className="h-7 w-7 shrink-0 rounded-lg flex items-center justify-center text-text2 hover:text-text hover:bg-hover"
+          >
+            {treeOpen ? <IconChevronRight size={13} /> : <IconChevronLeft size={13} />}
+          </button>
         </div>
 
         {/* 左：预览正文（多文件标签 + 应用内预览） */}
@@ -147,8 +161,11 @@ export default function FilesPanel({
         </div>
       </div>
 
-        {/* 右：文件树 / 搜索结果（搜索态替换树，清空即回到树） */}
-        <div className="w-[clamp(168px,42%,236px)] shrink-0 border-l border-border flex flex-col min-h-0">
+        {/* 右：文件树 / 搜索结果（搜索态替换树，清空即回到树）。
+            折叠时整列 hidden（不卸载）：树的展开状态与滚动位置必须保留，否则一折一展就回到根目录。 */}
+        <div className={treeOpen
+          ? 'w-[clamp(168px,42%,236px)] shrink-0 border-l border-border flex flex-col min-h-0'
+          : 'hidden'}>
           <div className="shrink-0 flex items-center justify-between px-2 h-9 border-b border-border">
             <span className="text-caption text-text2 truncate">
               {inSearch ? t('rightPane.searchResults', { n: results?.length || 0 }) : t('rightPane.fileTree')}

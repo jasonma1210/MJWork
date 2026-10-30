@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 import Button from './ui/Button';
+import { IconFile } from './icons';
 // D-03：TeamBoardBody / projectTeamRuns 的导入随内嵌看板一并移除（无消费方的依赖不该留）。
 import { formatTokens } from '../../../shared/teamTrace.mjs';
 
@@ -83,9 +84,12 @@ interface ArtifactPanelProps {
   onOpenFile?: (path: string) => void;
   // 首次生成工件 → 父层把右栏切到本 tab 并展开一次
   onAutoOpen?: () => void;
+  /** 本会话写过的文件（abs 或项目相对路径）。用户反馈 2：这个面板必须首先回答
+   *  「当前会话产出了什么」，而不是只显示 Studio 项目工件——普通会话里后者恒为空/报错。 */
+  sessionFiles?: string[];
 }
 
-export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen }: ArtifactPanelProps) {
+export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen, sessionFiles = [] }: ArtifactPanelProps) {
   const { t } = useI18n();
   const [project, setProject] = useState<{ projectId: string; name: string } | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactMeta[]>([]);
@@ -97,6 +101,10 @@ export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen }: Arti
   const [previewVersion, setPreviewVersion] = useState<string | null>(null);
   const [section, setSection] = useState<SectionRead | null>(null);
   const [error, setError] = useState('');
+  // 主进程按 code 区分了「未绑定项目(NO_PROJECT)」与「数据不一致(NOT_FOUND)」，
+  // 但此前渲染层把两者都塞进 error → 常态被显示成「读取失败：该会话尚未绑定项目」，
+  // 用户看到的就是「这个 tab 坏了」。现在按 code 分流：只有真异常才走失败文案。
+  const [loadCode, setLoadCode] = useState('');
   const autoOpenedRef = useRef<string | null>(null);
   // 回调进 ref：父层每次渲染都会新建 onAutoOpen，直接进 load 的依赖会导致反复重拉
   const autoOpenRef = useRef(onAutoOpen);
@@ -113,10 +121,14 @@ export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen }: Arti
       const r = (await window.mjcode?.artifactsForProject?.({ threadId })) as
         { ok?: boolean; project?: { projectId: string; name: string }; artifacts?: ArtifactMeta[]; error?: string } | undefined;
       if (!r?.ok) {
-        setError(r?.error || '');
+        const code = String((r as { code?: string } | undefined)?.code || '');
+        setLoadCode(code);
+        // NO_PROJECT = 普通会话没绑项目空间，是常态而非故障（主进程注释见 ipc/artifacts.js）
+        setError(code === 'NO_PROJECT' ? '' : (r?.error || ''));
         setProject(null); setArtifacts([]); setArtifactId(null);
         return;
       }
+      setLoadCode('');
       setError('');
       setProject(r.project || null);
       const list = r.artifacts || [];
@@ -195,21 +207,58 @@ export default function ArtifactPanel({ threadId, onOpenFile, onAutoOpen }: Arti
   // （连带 `runs` 状态与 teamsListThreadRuns 拉取一并移除 —— 无消费方的请求就是纯开销）。
 
   if (!threadId) return <div className="p-3 text-caption text-text2">{t('projectSpace.panelNoThread')}</div>;
+
+  // 本会话产物（永远排在最上面）：用户问「工件」时真正想看的是「这一轮产出了什么」，
+  // Studio 项目工件（带版本/章节的那套）只是次段 —— 普通会话没有它，不能因此整块变成错误。
+  const sessionSection = (
+    <div className="px-2 py-2 border-b border-border shrink-0">
+      <div className="text-caption text-text2 mb-1">{t('projectSpace.panelSessionFiles', { n: sessionFiles.length })}</div>
+      {sessionFiles.length === 0 ? (
+        <div className="text-caption text-text2">{t('projectSpace.panelSessionFilesEmpty')}</div>
+      ) : (
+        <div className="space-y-1 max-h-48 overflow-y-auto">
+          {sessionFiles.map((p) => (
+            <Button
+              key={p}
+              variant="ghost"
+              size="xs"
+              title={p}
+              onClick={() => onOpenFile?.(p)}
+              className="w-full !justify-start !px-2 !h-auto !py-1 !text-text !rounded-lg hover:!bg-hover"
+            >
+              <IconFile size={12} />
+              <span className="ml-2 truncate font-mono">{p}</span>
+            </Button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   if (!project) {
     return (
-      <div className="p-3 text-caption text-text2">
-        {error ? t('projectSpace.panelLoadFailed', { error }) : t('projectSpace.panelNoProject')}
+      <div className="flex flex-col min-h-0 h-full">
+        {sessionSection}
+        <div className="p-3 text-caption text-text2">
+          {error ? t('projectSpace.panelLoadFailed', { error }) : t('projectSpace.panelNoProject')}
+        </div>
       </div>
     );
   }
   if (!artifacts.length) {
-    return <div className="p-3 text-caption text-text2">{t('projectSpace.panelNoArtifact')}</div>;
+    return (
+      <div className="flex flex-col min-h-0 h-full">
+        {sessionSection}
+        <div className="p-3 text-caption text-text2">{t('projectSpace.panelNoArtifact')}</div>
+      </div>
+    );
   }
 
   const cur = index?.currentVersion || artifacts[0].currentVersion;
 
   return (
     <div className="flex flex-col min-h-0 h-full">
+      {sessionSection}
       <div className="px-2 py-2 border-b border-border shrink-0 space-y-1">
         <div className="flex items-center gap-2">
           <span className="text-xs truncate flex-1" title={artifacts[0].title}>{artifacts[0].title}</span>
