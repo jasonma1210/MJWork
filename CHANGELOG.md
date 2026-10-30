@@ -4,7 +4,13 @@
 版本号规范：`主版本.次版本.修订号`（语义化版本），配套 git tag `v主.次.修订`（如 `v1.0.0`）。
 desktop / server / renderer 三个 package.json 的 version 必须保持一致，发版时同步提升。
 
-## [Unreleased]
+## [0.8.5-beta] - 2026-10-30
+
+### 本版新增（相对 0.8.0-beta）
+- **右栏重构（浏览器 / 文件 / 工件三面板）**：浏览器面板修正 `<webview>` 只渲染上半截的根因（`<webview>` 内部靠 `display:flex` 让 guest iframe 撑满容器，此前被覆写成 `block`）；文件面板移除顶部搜索行与多文件标签条、只留纯预览，文件树可双向折起；工件面板绑定当前会话。
+- **移除「代码变更」tab**：会话侧边栏的「代码变更」入口已删除（工作区非 git 仓库时该视图必错，且产品上无保留必要）；底层 `DiffReviewPanel` 组件暂留，待 `hunkPatch`/`parseDiff` 迁到 lib 层后再彻底删除。
+- **预算耗尽改为续期**：`agent-core/budgetDecision.js` 窗口级 token 耗尽不再中途停止，改为续期继续跑；真终点只剩累计 `TASK_TOTAL_TOKEN_CAP`。
+- **新增 `tsx-guard` 门禁**：补齐 TS/TSX 完全不在 ESLint 覆盖内的洞（hooks 条件调用 / map 直接返回 JSX 缺 key / eval / 危险注入白名单 / 动态 i18n 前缀须命中语言包），退出码三分（无参 / 空目录 exit 2）。
 
 ### 新增
 - **回复完成提示音（三态区分）**：正常结束播 `success`、运行异常播 `stop`、用户手动停止播 `pause`，

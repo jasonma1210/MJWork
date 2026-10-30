@@ -1,6 +1,6 @@
 {
   "name": "mj-code-desktop",
-  "version": "0.8.0-beta",
+  "version": "0.8.5-beta",
   "description": "MJ Nexus - local-first AI agent desktop workspace",
   "main": "main/main.js",
   "scripts": {

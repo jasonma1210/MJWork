@@ -1,6 +1,6 @@
 {
   "name": "mj-code-server",
-  "version": "0.8.0-beta",
+  "version": "0.8.5-beta",
   "description": "MJ Code backend - auth, sessions, model config",
   "main": "src/index.js",
   "scripts": {
