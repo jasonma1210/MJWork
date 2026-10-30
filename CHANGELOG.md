@@ -4,6 +4,11 @@
 版本号规范：`主版本.次版本.修订号`（语义化版本），配套 git tag `v主.次.修订`（如 `v1.0.0`）。
 desktop / server / renderer 三个 package.json 的 version 必须保持一致，发版时同步提升。
 
+## [0.8.6-beta] - 2026-10-30
+
+### 修复（界面）
+- **移除左侧栏「账本（账单）」入口**：一级导航不再单列账单 / 用量入口；账本页仍可由「工作台」深链进入。同步清理未再使用的 `onOpenLedger` prop 与 `IconChart` import，保持 eslint 0 warning。
+
 ## [0.8.5-beta] - 2026-10-30
 
 ### 本版新增（相对 0.8.0-beta）

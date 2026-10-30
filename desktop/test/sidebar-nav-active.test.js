@@ -165,7 +165,8 @@ const sidebar = blankComments(SIDEBAR);
     assert.match(sidebar, /showDesk: !!view\?\.showDesk/, '缺少 showDesk 输入');
     // 第二版：一级导航三项都必须是真实绑定（scheduled 已升回入口）
     // 第三版（2026-10-25）：新增「工作台」一级入口，同样必须有真实绑定
-    for (const key of ['desk', 'assistant', 'scheduled', 'studio', 'ledger']) {
+    // 0.8.6-beta：移除「账本（账单）」一级入口（改由工作台深链进入），故不再要求 ledger 绑定
+    for (const key of ['desk', 'assistant', 'scheduled', 'studio']) {
       assert.match(sidebar, new RegExp(`active=\\{activeNav === '${key}'\\}`),
         `NavItem「${key}」缺少 active={activeNav === '${key}'}`);
     }
