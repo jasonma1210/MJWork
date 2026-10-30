@@ -116,7 +116,7 @@
     "rawButtons": {
       "source": "desktop/renderer/src（排除 components/ui/ 与 styles/，口径同 test/ui-conventions.test.js）",
       "unit": "button",
-      "total": 154,
+      "total": 151,
       "scannedFiles": 170,
       "groups": [
         {
@@ -235,11 +235,6 @@
           "disposition": "pending"
         },
         {
-          "file": "components/FileViewerPane.jsx",
-          "count": 2,
-          "disposition": "pending"
-        },
-        {
           "file": "components/MemorySection.tsx",
           "count": 2,
           "disposition": "pending"
@@ -281,11 +276,6 @@
         },
         {
           "file": "components/FilePreview.jsx",
-          "count": 1,
-          "disposition": "pending"
-        },
-        {
-          "file": "components/FilesPanel.tsx",
           "count": 1,
           "disposition": "pending"
         },

@@ -54,7 +54,12 @@ export default function BrowserPanel() {
     const el = document.createElement('webview');
     el.setAttribute('src', HOME_URL);
     el.style.border = '0';
-    el.style.display = 'block';
+    // 2026-10-30 用户反馈 2（第二次）：上一轮把尺寸改成按像素下发仍没效果，真因在这里——
+    // Electron 的 <webview> 内部靠 `display:flex` 让 guest 的 iframe 撑满元素盒子；
+    // 文档明确写了「不要覆盖默认的 display:flex」，此前写成 display:block，
+    // guest 就停在自身默认尺寸上（看到的就是「上面一截有内容、下面整片纯白」），
+    // 外面那个盒子量得多准都没用。这里显式写 flex 而不是省略，把它变成可断言的不变量。
+    el.style.display = 'flex';
     // 尺寸同步（2026-10-30 用户反馈 1）：此前只写 width/height = 100%，而 webview 的 guest 视图
     // （独立进程的合成层）不会因为 CSS 百分比变化就跟着重排——面板从 hidden 切回激活态、
     // 拖拽改宽、最大化/还原之后，页面停在旧尺寸上，表现为「只渲染出上面一截，下面一片空白」。

@@ -4,7 +4,8 @@ import ChatArea from './components/ChatArea';
 import SettingsModal from './components/SettingsModal';
 import Dashboard from './components/Dashboard';
 import ApprovalCard from './components/ApprovalCard';
-import DiffReviewPanel from './components/DiffReviewPanel';
+// 2026-10-30（用户反馈 1）：「变更」面板入口已移除（理由见 components/RightPane.jsx 的 PANEL_TABS 注释），
+// 组件文件暂留以保住读它源码的 25 条护栏，故这里也不再 import。
 import AssistantPage from './components/AssistantPage'; import ScheduledTasks from './components/ScheduledTasks';
 // 判定点 UI（§7.3）：升级/降级提示条 + C1 确认卡 + C2 引导（消费 entry:route / entry:confirm）
 import EntryRouteNotice from './components/EntryRouteNotice';
@@ -124,7 +125,7 @@ export default function App() {
   const {
     sidebarOpen, setSidebarOpen, paneOpen, setPaneOpen, paneTab, setPaneTab,
     openedFiles, activeFilePath, setActiveFilePath, setOpenedFiles,
-    openFileInPane, closeFileInPane, closeAllFiles,
+    openFileInPane, closeAllFiles,
   } = usePaneLayout({ projectPath: activeProject?.path || '' });
   const [paletteOpen, setPaletteOpen] = useState(false); // ⌘K 命令面板
   const [archiveOpen, setArchiveOpen] = useState(false); // A3：已归档会话管理
@@ -176,14 +177,10 @@ export default function App() {
         else setSidebarOpen((v) => !v);            // ⌘B 左侧栏
       } else if (k === 'p') {
         e.preventDefault();
-        // 右栏停在「文件」面板时，⌘P 落到该面板自己的搜索框（与其占位提示 ⌘P 一致）；
-        // 其余情况仍打开命令面板（面板内含文件搜索 + 会话跳转）。
-        const ps = paneStateRef.current;
-        if (ps.open && ps.tab === 'files') {
-          window.dispatchEvent(new CustomEvent('mjcode:focus-file-search'));
-        } else {
-          setPaletteOpen(true);
-        }
+        // 2026-10-30（用户反馈 3）：文件面板的搜索行已按用户要求删除（三行 chrome 全去掉、只留纯预览），
+        // 因此不再往面板里投递 focus-file-search —— 那里已经没有被聚焦的对象。
+        // ⌘P 一律回到命令面板：它本身就带文件搜索与会话跳转，能力没有丢失，只是入口收成一个。
+        setPaletteOpen(true);
       }
     }
     window.addEventListener('keydown', onKey);
@@ -236,9 +233,8 @@ export default function App() {
   useEffect(() => { activeThreadRef.current = activeThread; }, [activeThread]);
   // P1-6：会话分支注册——「从此处分叉」按钮派发 mjcode:fork-thread，逻辑见 hooks/useForkThread
   useForkThread({ activeThreadRef, onForked: (th) => { selectThread(th); loadData(); } });
-  // 同上：⌘P 需按「右栏是否停在文件面板」分流，闭包读 ref 防陈旧
-  const paneStateRef = useRef({ open: false, tab: 'diff' });
-  useEffect(() => { paneStateRef.current = { open: paneOpen, tab: paneTab }; }, [paneOpen, paneTab]);
+  // 2026-10-30：paneStateRef 随「文件面板搜索行」一起删除 —— 它唯一的读者是 ⌘P 的
+  // 「右栏停在文件面板就问面板搜索框」分流，搜索行没了，这个 ref 也就没有意义了。
   useEffect(() => {
     if (!activeThreadId) setPaneOpen(false);
     // 打开的文件标签属于「某个任务在看的文件」：切任务必须清空，
@@ -252,8 +248,9 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThreadId]);
 
-  // 打开文件到预览栏 / 关闭单个标签：实现已外置到 hooks/usePaneLayout（F-004），
-  // 这里只经上方解构拿到 openFileInPane / closeFileInPane 往下传。
+  // 打开文件到预览栏：实现已外置到 hooks/usePaneLayout（F-004），这里只经上方解构拿到它往下传。
+  // 2026-10-30：不再解构 closeFileInPane —— 多文件标签条按用户要求删除后，没有「关闭单个标签」的入口，
+  // 但 hook 里这个 API 保留（切任务整体清空走 closeAllFiles，两者语义不同，别合并）。
 
   // B3：选中会话 = 任务作用域的唯一事实源。
   // 会话归属哪个项目，右侧文件树/Diff 就显示哪个项目；不跟随上次手动选的项目
@@ -587,15 +584,12 @@ export default function App() {
         tab={paneTab}
         onTab={setPaneTab}
         onClose={() => setPaneOpen(false)}
-        diffPanel={<DiffReviewPanel projectPath={activeProject?.path} agentFiles={agentFiles} threadId={activeThreadId} onOpenFile={openFileInPane} />}
         filesPanel={
           <FilesPanel
             root={activeProject?.path}
             files={openedFiles}
             active={activeFilePath}
             projectPath={activeProject?.path}
-            onSelect={setActiveFilePath}
-            onClose={closeFileInPane}
             onOpenFile={openFileInPane}
           />
         }
@@ -705,7 +699,6 @@ export default function App() {
           { label: tr('app.cmdOpenSettings'), hint: '⌘,', run: () => setShowSettings(true) },
           { label: tr('app.cmdDesk'), run: () => navDispatch({ type: 'page', page: 'desk' }) },
           { label: tr('app.cmdUsage'), run: () => navDispatch({ type: 'page', page: 'dashboard' }) },
-          { label: tr('app.cmdChanges'), hint: '⌘⌥B', run: () => { if (activeThread) { setPaneTab('diff'); setPaneOpen(true); } } },
           { label: tr('app.cmdFiles'), run: () => { if (activeThread) { setPaneTab('files'); setPaneOpen(true); } } },
           { label: tr('app.cmdSummary'), run: () => { if (activeThread) { setPaneTab('subtasks'); setPaneOpen(true); } } },
           { label: tr('app.cmdTerminal'), run: () => { if (activeThread) { setPaneTab('terminal'); setPaneOpen(true); } } },

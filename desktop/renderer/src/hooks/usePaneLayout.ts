@@ -4,14 +4,15 @@
 // 这一组能安全外置的依据：全部是**本组件私有**的 UI 态，唯一的外部输入是 projectPath
 // （相对路径解析基准）——没有跨树共享需求，也没有反向依赖（不存在「布局变化影响数据加载」）。
 //
-// 刻意留在 App.jsx 的两处（别顺手搬进来，搬了会丢掉可见的不变量）：
-//   · `paneStateRef` 的同步 effect —— 它同时被 ⌘P 快捷键分流读取，与快捷键 effect 是一个整体；
+// 刻意留在 App.jsx 的一处（别顺手搬进来，搬了会丢掉可见的不变量）：
 //   · 「切任务 → 收起右栏 + 清空标签 + 清空 agentFiles」那个 effect —— agentFiles 属 App 域，
 //     拆成两半会让「切任务必须清空三样」这条跨任务泄漏防线看不见。
+//   （原「paneStateRef 同步 effect」已于 2026-10-30 随文件面板搜索行一起删除：它的唯一读者
+//    是 ⌘P 的「右栏停在文件面板就问面板搜索框」分流，搜索行按用户要求去掉后没人再读它。）
 import { useEffect, useState } from 'react';
 import { loadJSON } from '../lib/appState';
 
-export type PaneTab = 'diff' | 'files' | 'subtasks' | 'terminal' | 'browser' | 'sidechat' | 'artifact';
+export type PaneTab = 'files' | 'subtasks' | 'terminal' | 'browser' | 'sidechat' | 'artifact';
 
 export interface PaneLayout {
   sidebarOpen: boolean;
@@ -42,7 +43,9 @@ export function usePaneLayout({ projectPath }: { projectPath: string }): PaneLay
   // 三栏布局状态（对标 Codex）：左侧栏与右侧常驻面板可独立折叠
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => loadJSON('mj_sidebar_open', true));
   const [paneOpen, setPaneOpen] = useState<boolean>(() => loadJSON('mj_pane_open', false));
-  const [paneTab, setPaneTab] = useState<PaneTab>('diff');
+  // 默认落在「文件」：「变更」tab 移除后，这是用户手动打开右栏时最常看的面板
+  // （点产出物/文件树都会显式 setPaneTab('files')，这里只决定「空手打开」的落点）。
+  const [paneTab, setPaneTab] = useState<PaneTab>('files');
   const [openedFiles, setOpenedFiles] = useState<string[]>([]);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
 

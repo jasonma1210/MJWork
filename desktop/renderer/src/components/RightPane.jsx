@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  IconBot, IconFile, IconFileDiff, IconFolderOpen, IconGlobe, IconMessage,
+  IconBot, IconFile, IconFolderOpen, IconGlobe, IconMessage,
   IconMaximize, IconMinimize, IconPlus, IconTerminal, IconX,
 } from './icons';
 import { useI18n } from '../i18n';
@@ -13,8 +13,15 @@ import { useI18n } from '../i18n';
 //
 // R5：宽度可拖拽调整（320~900px，持久化 mj_pane_width）
 // i18n：labelKey 存 key 不存求值结果（顶层常量模块加载即冻结），渲染时经 t() 求值
+// 2026-10-30（用户反馈 1）：「变更」tab 已从右栏移除。
+// 判据：这个面板的唯一价值是 git diff 审查，而用户的工作区大量不是 git 仓库
+// （实测 /Users/jianma/Documents/.MJCoder/20261013-1271 → `git diff` 退出码 129，
+// stderr = "warning: Not a git repository"），常态不可用；「工件」tab 已能列出本会话产物、
+// 「文件」tab 能直接看任意文件，它只剩「打开就是一句提示」的负资产属性。
+// DiffReviewPanel 组件本身**暂未删除**：25 条护栏（hunk 反向 apply、行内评论、执行治理）
+// 直接读该文件源码，删文件会连带作废这些对破坏性 Git 操作的保护，需先把
+// hunkPatch/parseDiff 迁到 lib 层再删——已登记为后续清理项，不在本轮混做。
 export const PANEL_TABS = [
-  { id: 'diff', labelKey: 'rightPane.tabDiff', Icon: IconFileDiff },
   { id: 'files', labelKey: 'rightPane.tabFiles', Icon: IconFolderOpen },
   { id: 'artifact', labelKey: 'rightPane.tabArtifact', Icon: IconFile },
   { id: 'subtasks', labelKey: 'rightPane.tabSubtasks', Icon: IconBot },
@@ -31,7 +38,6 @@ export const ADDABLE_PANELS = [
   { id: 'browser', labelKey: 'rightPane.panelBrowser', Icon: IconGlobe, supported: true },
   { id: 'subtasks', labelKey: 'rightPane.panelSummary', Icon: IconBot, supported: true },
   { id: 'sidechat', labelKey: 'rightPane.panelSideChat', Icon: IconMessage, supported: true },
-  { id: 'diff', labelKey: 'rightPane.panelChanges', Icon: IconFileDiff, supported: true },
 ];
 
 // 已支持面板的 id 集合：菜单里点选即切到该 tab
@@ -55,7 +61,6 @@ export default function RightPane({
   tab,
   onTab,
   onClose,
-  diffPanel,
   filesPanel,
   artifactPanel,
   subtasksPanel,
@@ -89,6 +94,7 @@ export default function RightPane({
   // 用 JS 判定而非容器查询——tailwind.config.js 未装 container-queries 插件，@[..] 变体会静默失效。
   // P1-15（2026-10-26）：tab 数量从 4 增至 7，「图标+文字」需要更宽阈值；低于阈值只显示图标，
   // 避免文字截断挤压右侧工具组（此前 460 是按 4 个 tab 定的，7 个 tab 需约 590px）。
+  // 2026-10-30：移除「变更」后为 6 个，590 继续沿用（偏保守即文字少显示一点，不会挤坏工具组）。
   const showTabLabels = maximized || width >= 590;
 
   // 收起时用 hidden 而非 return null：
@@ -231,7 +237,6 @@ export default function RightPane({
               终端跑过的命令、浏览器页面、diff 行内评论草稿、侧聊上下文全部清空。
               改为：激活时 contents（等价于原直接渲染，panel 根直接成为 flex 子项）、非激活时 hidden。
               注意：7 个面板全部常驻挂载，遵循本文件「保持上下文」的设计意图（与 artifact 同策略）。 */}
-          <div className={active.id === 'diff' ? 'contents' : 'hidden'}>{diffPanel}</div>
           <div className={active.id === 'files' ? 'contents' : 'hidden'}>{filesPanel}</div>
           <div className={active.id === 'artifact' ? 'contents' : 'hidden'}>{artifactPanel}</div>
           <div className={active.id === 'subtasks' ? 'contents' : 'hidden'}>{subtasksPanel}</div>

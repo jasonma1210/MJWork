@@ -6,7 +6,8 @@ import { openLinkByMode, isHttpUrl } from '../lib/linkOpen';
 // S-005：markdown 链接协议白名单（与 MessageStream 同一份判据，见 lib/safeUrl.ts）
 import { safeUrlTransform } from '../lib/safeUrl';
 import { toast } from './feedback';
-import { IconAlert, IconCopy, IconExternalLink, IconFolderOpen, IconHammer, IconFile, IconSpinner } from './icons';
+import ContextMenu from './ContextMenu';
+import { IconAlert, IconCopy, IconExternalLink, IconEye, IconFolderOpen, IconHammer, IconPlus, IconSpinner, IconTerminal } from './icons';
 import { useI18n } from '../i18n';
 import Button from './ui/Button';
 
@@ -41,13 +42,6 @@ function baseName(p) {
   return String(p || '').split('/').pop() || String(p || '');
 }
 
-function humanSize(n) {
-  if (!Number.isFinite(n)) return '';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1048576).toFixed(1)} MB`;
-}
-
 // Markdown 内的链接：默认行为在 Electron 里会「用链接导航当前窗口」——文档一点就白屏。
 // 统一改走链接打开策略（设置页「浏览器与链接」），本地路径交给系统默认应用。
 function MarkdownLink({ node: _node, href, children, ..._rest }) {
@@ -77,6 +71,8 @@ export default function FilePreview({ filePath, projectPath }) {
   // T4-3：HTML 双视图（render=沙箱 iframe / source=源码高亮），切文件回到渲染视图
   const isHtml = HTML_EXT.has(ext);
   const [htmlMode, setHtmlMode] = useState('render');
+  // 右键菜单锚点（null = 关闭）。顶部工具条删除后，预览区所有动作只从这里进入。
+  const [menuAt, setMenuAt] = useState(null); // { x, y } | null
   useEffect(() => { setHtmlMode('render'); }, [filePath]);
 
   useEffect(() => {
@@ -145,81 +141,73 @@ export default function FilePreview({ filePath, projectPath }) {
     }
   }
 
-  const relPath = projectPath && filePath && filePath.startsWith(projectPath)
-    ? filePath.slice(projectPath.length + 1)
-    : filePath;
+  async function copyPath() {
+    try {
+      await navigator.clipboard.writeText(filePath);
+      toast({ message: t('message.copyPath') });
+    } catch (err) {
+      console.warn('[filePreview] copy path failed:', err);
+      toast({ message: t('filePreview.copyFailed') });
+    }
+  }
+
+  // 2026-10-30（用户反馈 3）：预览区顶部工具条删除后，这些动作改由右键菜单承载。
+  // 取舍依据：动作数量（HTML 双视图 2 + 文件动作 5）远超「一行图标」能表达的信息量，
+  // 而常驻一行等于永久占掉 ~36px；右键菜单是「需要时出现、不需要时零占用」。
+  function buildMenuItems() {
+    const items = [];
+    if (meta.kind === 'text' && isHtml) {
+      items.push({
+        id: 'view-render',
+        label: t('filePreview.htmlViewRender'),
+        icon: IconEye,
+        disabled: text.totalLines > TEXT_MAX_LINES,
+        title: text.totalLines > TEXT_MAX_LINES ? t('filePreview.htmlTruncatedNoRender') : t('filePreview.htmlSandboxHint'),
+        onClick: () => setHtmlMode('render'),
+      });
+      items.push({
+        id: 'view-source',
+        label: t('filePreview.htmlViewSource'),
+        icon: IconTerminal,
+        title: t('filePreview.htmlSourceHint'),
+        onClick: () => setHtmlMode('source'),
+      });
+      items.push({ separator: true });
+    }
+    items.push({ id: 'open-editor', label: t('filePreview.openInEditor'), icon: IconHammer, title: t('filePreview.openInEditorTitle'), onClick: openInEditor });
+    items.push({ id: 'open-system', label: t('filePreview.openInSystem'), icon: IconExternalLink, title: t('filePreview.openInSystemTitle'), onClick: openInSystem });
+    items.push({ id: 'reveal', label: t('filePreview.reveal'), icon: IconFolderOpen, title: t('filePreview.revealTitle'), onClick: revealInFinder });
+    items.push({ separator: true });
+    const binary = meta.kind === 'image' || meta.kind === 'pdf';
+    items.push({
+      id: 'copy-content',
+      label: t('filePreview.copy'),
+      icon: IconCopy,
+      disabled: binary,
+      title: binary ? t('filePreview.copyBinaryDisabled') : t('filePreview.copyTitle'),
+      onClick: copyContent,
+    });
+    items.push({ id: 'copy-path', label: t('message.copyPath'), onClick: copyPath });
+    // F4：把当前文件作为附件加入对话框（原动作在标签条上，标签条删除后移到这里）
+    items.push({
+      id: 'add-to-chat',
+      label: t('message.addToChat'),
+      icon: IconPlus,
+      onClick: () => window.dispatchEvent(new CustomEvent('mjcode:add-attachment', { detail: { path: filePath } })),
+    });
+    return items;
+  }
 
   // 需要「铺满」而非「随内容滚动」的两种正文：PDF 与 HTML 渲染视图。
   // 判据同时校验模式与截断——被截断的 HTML 不渲染（半截文档只会呈现残缺页面，误导用户）。
   const htmlRender = meta.kind === 'text' && isHtml && htmlMode === 'render' && text.totalLines <= TEXT_MAX_LINES;
   const fill = htmlRender || meta.kind === 'pdf';
-  // 工具条上只留路径；行数与大小合并进 title（悬停可见），避免窄面板里跟路径抢宽度
-  const metaTitle = [
-    filePath,
-    meta.kind === 'text' && text.totalLines > 0 ? t('filePreview.lineCount', { n: text.totalLines }) : '',
-    meta.size !== undefined ? humanSize(meta.size) : '',
-  ].filter(Boolean).join(' · ');
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col bg-bg">
-      {/* 单行工具条（2026-10-30 用户反馈 3，参考浏览器式布局）：路径 + 行数/大小 + 动作图标 +（HTML）视图切换。
-          此前是「标题栏 / 4 个文字按钮 / 沙箱提示条」三行，窄面板里按钮还会换行，
-          内容区被挤掉一百多像素 —— 用户看到的就是「上下全是控件、中间只剩一小条页面」。
-          动作全部收成正方形图标按钮（title / aria-label 承载原文字，悬停可见）。 */}
-      <div className="flex items-center gap-2 px-3 h-9 border-b border-border shrink-0">
-        <IconFile size={13} className="text-text2 shrink-0" />
-        {/* 行数与大小从两个独立 span 收进 title：窄面板里它们会跟路径抢宽度，
-            而它们只是「需要时想看一眼」的元信息，不适合常驻占位。 */}
-        <span className="text-xs font-medium truncate min-w-0 font-mono" title={metaTitle}>{relPath}</span>
-
-        <span className="ml-auto flex items-center gap-1 shrink-0">
-          {/* T4-3：HTML 双视图切换（渲染=沙箱 iframe / 源码=高亮文本）。
-              安全提示从独占一行改为按钮 title——switcher 本身已经表达「这是渲染视图」。 */}
-          {meta.kind === 'text' && isHtml && (
-            <>
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => setHtmlMode('render')}
-                disabled={text.totalLines > TEXT_MAX_LINES}
-                title={text.totalLines > TEXT_MAX_LINES ? t('filePreview.htmlTruncatedNoRender') : t('filePreview.htmlSandboxHint')}
-                className={htmlMode === 'render' ? '!text-accent !bg-hover' : '!text-text2 !bg-transparent'}
-              >
-                {t('filePreview.htmlViewRender')}
-              </Button>
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => setHtmlMode('source')}
-                title={t('filePreview.htmlSourceHint')}
-                className={htmlMode === 'source' ? '!text-accent !bg-hover' : '!text-text2 !bg-transparent'}
-              >
-                {t('filePreview.htmlViewSource')}
-              </Button>
-              <span className="w-px h-4 bg-border mx-1" />
-            </>
-          )}
-          <button onClick={openInEditor} title={t('filePreview.openInEditorTitle')} aria-label={t('filePreview.openInEditor')}
-            className="h-7 w-7 rounded-lg flex items-center justify-center text-text2 hover:text-text hover:bg-hover">
-            <IconHammer size={13} />
-          </button>
-          <button onClick={openInSystem} title={t('filePreview.openInSystemTitle')} aria-label={t('filePreview.openInSystem')}
-            className="h-7 w-7 rounded-lg flex items-center justify-center text-text2 hover:text-text hover:bg-hover">
-            <IconExternalLink size={13} />
-          </button>
-          <button onClick={revealInFinder} title={t('filePreview.revealTitle')} aria-label={t('filePreview.reveal')}
-            className="h-7 w-7 rounded-lg flex items-center justify-center text-text2 hover:text-text hover:bg-hover">
-            <IconFolderOpen size={13} />
-          </button>
-          <button onClick={copyContent} disabled={meta.kind === 'image' || meta.kind === 'pdf'}
-            title={meta.kind === 'image' || meta.kind === 'pdf' ? t('filePreview.copyBinaryDisabled') : t('filePreview.copyTitle')}
-            aria-label={t('filePreview.copy')}
-            className="h-7 w-7 rounded-lg flex items-center justify-center text-text2 hover:text-text hover:bg-hover disabled:opacity-40 disabled:cursor-not-allowed">
-            <IconCopy size={13} />
-          </button>
-        </span>
-      </div>
-
+    <div
+      className="flex-1 min-h-0 flex flex-col bg-bg"
+      onContextMenu={(e) => { e.preventDefault(); setMenuAt({ x: e.clientX, y: e.clientY }); }}
+    >
       {/* 内容区：可整块填充的类型（PDF / HTML 渲染视图）用绝对定位铺满，
           不再用 h-[70vh]——那个高度是相对窗口而不是相对面板的，面板一窄就溢出/留白。 */}
       <div className={fill ? 'relative flex-1 min-h-0 overflow-hidden' : 'flex-1 min-h-0 overflow-auto'}>
@@ -303,6 +291,15 @@ export default function FilePreview({ filePath, projectPath }) {
           </p>
         )}
       </div>
+
+      {/* 右键菜单：预览区的全部动作入口（顶部工具条删除后，这是唯一入口） */}
+      <ContextMenu
+        open={!!menuAt}
+        x={menuAt?.x || 0}
+        y={menuAt?.y || 0}
+        items={menuAt ? buildMenuItems() : []}
+        onClose={() => setMenuAt(null)}
+      />
     </div>
   );
 }

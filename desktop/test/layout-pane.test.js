@@ -48,7 +48,12 @@ check('右侧常驻面板组件存在', () => {
 
 check('App 已挂载 RightPane 且传入各面板内容', () => {
   assert.match(app, /import RightPane/);
-  assert.match(app, /diffPanel=\{<DiffReviewPanel/);
+  // 2026-10-30（用户反馈 1）：「变更」tab 已从右栏移除（常驻但常态不可用——用户工作区大量不是 git 仓库，
+  // `git diff` 直接退出码 129）。这条断言从「必须挂上」翻转为「必须已移除」。
+  assert.ok(!/diffPanel=/.test(app), 'App 仍在传 diffPanel');
+  assert.ok(!/<DiffReviewPanel/.test(app), 'App 仍在 import/渲染 DiffReviewPanel');
+  const rightPaneSrc = read('components/RightPane.jsx');
+  assert.ok(!/id: 'diff'/.test(rightPaneSrc), 'RightPane 仍把「变更」列进 tab / 「+」菜单');
   // 2026-10-17：文件面板升级为「搜索文件名 + 左侧预览 + 右侧文件树」组合面板（FilesPanel 独立组件）——
   // 文件树与预览容器收敛进该组件，断言随之下移到组件层（守护的同一条链路不变：
   // 右栏必须有文件树入口，且预览容器必须挂在可达路径上）。
@@ -82,6 +87,11 @@ check('浏览器面板 webview 尺寸跟随容器', () => {
   assert.match(src, /el\.style\.height = `\$\{h\}px`/, '高度未按像素回写');
   assert.ok(/if \(w <= 0 \|\| h <= 0\) return;/.test(src), '缺少 0×0 跳过守卫（隐藏态会把 guest 压塌）');
   assert.match(src, /ro\.disconnect\(\)/, 'ResizeObserver 未在卸载时断开');
+  // 2026-10-30 第二次真机反馈：只改尺寸没效果，真因是 display 被覆盖。
+  // Electron 的 <webview> 内部靠 display:flex 让 guest 的 iframe 撑满元素盒子，
+  // 写成 block 时盒子量得再准也没用（用户看到的仍是「上面一截、下面纯白」）。
+  assert.match(src, /el\.style\.display = 'flex'/, '未保住 webview 的 display:flex（guest 会停在自身默认尺寸）');
+  assert.ok(!/display = 'block'/.test(src), 'webview 又被设成 display:block（guest iframe 撑不满容器）');
 });
 
 // 2026-10-30 用户反馈 2：右栏「变更 / 工件」两个 tab 在普通会话里直接显示红色故障，且内容与本会话无关。
@@ -113,18 +123,36 @@ check('文件预览按面板高度铺满（不再用 vh 定尺寸）', () => {
   assert.match(src, /absolute inset-0 w-full h-full border-0 bg-white/, 'HTML 渲染视图未铺满内容区');
 });
 
-check('文件预览动作收敛为图标工具条', () => {
+// 2026-10-30（用户反馈 3，用户口径）：预览区顶部三行 chrome 全删，只留纯预览。
+// 契约：① 预览区不得再有工具条行；② 动作没有消失，改由右键菜单承载且逐项可达；
+//       ③ 文件面板不得再有搜索行与多文件标签条；④ 文件树折叠后必须仍有「展开」入口。
+check('文件预览不再有顶部工具条，动作全部走右键菜单', () => {
   const { blankComments } = require('../scripts/lib/rawButtonScan.js');
   const src = blankComments(read('components/FilePreview.jsx'));
-  const squares = (src.match(/h-7 w-7 rounded-lg/g) || []).length;
-  assert.ok(squares >= 4, `操作按钮未收敛为正方形图标按钮（实测 ${squares} 个）`);
+  assert.ok(!/h-9 border-b/.test(src), '预览区仍有一行 h-9 工具条');
+  assert.match(src, /<ContextMenu/, '未渲染右键菜单');
+  assert.match(src, /onContextMenu=|onContextMenu =/, '预览区未挂右键菜单入口');
+  // 删控件不等于删功能：这些动作必须在菜单项里逐项可达，否则就是静默砍功能
+  for (const key of ['openInEditor', 'openInSystem', 'revealInFinder', 'copyContent', 'add-attachment']) {
+    assert.ok(src.includes(key), `右键菜单缺少动作：${key}`);
+  }
 });
 
-check('文件树可折起（预览可占满面板宽度）', () => {
+check('文件面板不再有搜索行与多文件标签条', () => {
+  const { blankComments } = require('../scripts/lib/rawButtonScan.js');
+  const filesPanel = blankComments(read('components/FilesPanel.tsx'));
+  assert.ok(!/IconSearch/.test(filesPanel), '文件面板仍有搜索框');
+  assert.ok(!/searchPlaceholder/.test(filesPanel), '文件面板仍带搜索占位提示');
+  const viewer = blankComments(read('components/FileViewerPane.jsx'));
+  assert.ok(!/MAX_LABELS/.test(viewer), '多文件标签条逻辑未移除');
+  assert.ok(!/onSelect/.test(viewer), '标签切换回调未移除');
+});
+
+check('文件树可折起且折起后仍能展开', () => {
   const { blankComments } = require('../scripts/lib/rawButtonScan.js');
   const src = blankComments(read('components/FilesPanel.tsx'));
-  assert.match(src, /setTreeOpen/, '缺少折叠开关');
-  assert.match(src, /: 'hidden'\}/, '折叠后未真正隐藏树列');
+  assert.match(src, /setTreeOpen\(false\)/, '缺少「收起文件树」入口');
+  assert.match(src, /setTreeOpen\(true\)/, '折起后没有「展开文件树」入口——等于单向操作');
 });
 
 check('审批改为非模态悬浮卡片', () => {
