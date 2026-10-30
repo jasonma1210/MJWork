@@ -81,7 +81,10 @@ const DOC = process.env.MJCODE_DOC_PATH
 //   `mcp-native-overlap.test.mjs`（A-04 原生优先扩到已连接服务）、
 //   `audit-chain-and-defs-pin.test.mjs`（L-3 审计哈希链 + 定义指纹）。
 //   引用数 46 → 51。判据本身不变：精确相等 + 逐个存在性校验，禁止用 >= 放宽。
-const REFERENCE_COUNT_BASELINE = 51;
+// 2026-10-30 再 51 → 52：§12.4「行数软档」整节重写（行数口径由 raw 统一为 code）时，
+//   把守护套件 `max-lines.test.js` 写进了正文（此前该节只写判据、不写守护测试名，
+//   故从未被计数）。引用数 51 → 52。
+const REFERENCE_COUNT_BASELINE = 52;
 
 let pass = 0;
 let fail = 0;

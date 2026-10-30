@@ -1012,6 +1012,12 @@ flowchart TB
 > **行数预警（2026-10-29 实测）**：`main/ipc/teams.js` 为 **800 行（raw，`split('\n').length`）**，**不在** `BASELINE_800` 白名单（该白名单只有 `main/computerUse.js`、`main/main.js`、`agent-core/index.js` 三条）内，门禁判据是 `split('\n').length > 800` ⇒ **余量 0 行**，任何新增行都会触发 800 行软档门禁（`max-lines` 棘轮守护）。
 > 同档的还有 `main/teamStore.js` / `main/workerPool.js` / `main/approval.js`（同为 **800 行**，均不在白名单内）；取法命令见 12.4。
 > 处置方向是**拆模块**而不是加白名单（报告 §4 `D-811`；白名单纪律是「只减不增」）。
+>
+> **2026-10-30 口径更正（本节上文保留原文，勿按上文的「余量 0」行事）**：上文判据来自 raw 口径
+> （`split('\n').length > 800`），该口径已废止，行数软档现统一按 **code** 计（见 12.4）。
+> 按 code 口径这四个文件的余量分别是 `ipc/teams.js` 230 / `teamStore.js` 247 / `workerPool.js` 251 /
+> `approval.js` 305 行，**不存在**「任何新增行都会触发门禁」的约束（那批告警是 raw 口径把注释与
+> 空行计入额度造成的假警报）。保留原文是为了留下「口径失真确实制造过假警报」的痕迹。
 
 ---
 
@@ -1278,38 +1284,71 @@ flowchart TB
 - lint 警告棘轮阈值已收紧至 **0**（零容忍：任意一条 warning 即判红）并配套棘轮守护单元测试，确保警告数不反弹。（取法命令：`grep -n '"lint"' desktop/package.json` → `--max-warnings=0`；棘轮守护测试常量 `LINT_WARNINGS_BASELINE` 同为 `0`，二者同值。）
 - CI 平台为 `ubuntu-latest`，跑 lint / `npm test` / typecheck / build / 全量语法门禁，与本地 `npm test` **同一门禁**。
 
-### 12.4 行数软档（两把尺子，勿混用）
+### 12.4 行数软档（2026-10-30 起统一按 code 行口径）
 
-> **大白话**：项目用两把不同的尺子量代码长度，它们量的不是同一件事，所以「这个文件在 A 名单里却不在 B 名单里」
-> **不是登记不一致**，而是两把尺子的结果本就不同。写的时候必须点明，否则后人会当成 bug 去重一遍。
+> **大白话**：文件长度用**一把尺子**量——`code` 行数（去掉空行与注释），与 ESLint `max-lines` 完全同一口径。
+> 2026-10-30 之前这里写的是「两把尺子，勿混用」（软档按 raw、硬档按 code）；那是**历史事实而非设计**，
+> 本次已统一，理由与代价见本节末尾。
 
-| 文件 | raw 行 | code 行 | 在 `BASELINE_800`？ | 在 ESLint `max-lines` 豁免？ |
-|---|---:|---:|---|---|
-| `main/main.js` | 2258 | 1500 | 是 | 否（code ≤ 1500，本就不需要） |
-| `main/computerUse.js` | 1336 | 994 | 是 | 否（同上） |
-| `agent-core/index.js` | 4186 | 2958 | 是 | 是（唯一一条，因 code > 1500） |
-| **`main/ipc/teams.js`** | **800** | 570 | **否** | 否 |
-| `main/teamStore.js` | 800 | 558 | 否 | 否 |
-| `main/workerPool.js` | 800 | 549 | 否 | 否 |
-| `main/approval.js` | 800 | 496 | 否 | 否 |
+| 文件 | code 行 | raw 行 | `BASELINE_800` 快照（上限） | ESLint `max-lines` 豁免 | code 余量 |
+|---|---:|---:|---|---|---:|
+| `agent-core/index.js` | 2967 | 4209 | 2967 | **是（唯一一条）** | 0 |
+| `main/main.js` | 1500 | 2263 | 1500 | 否（code 未超 1500） | 0 |
+| `main/computerUse.js` | 1004 | 1346 | 1004 | 否（同上） | 0 |
+| `main/scheduler.js` | 602 | 798 | 否（本就未到 800） | 否 | 198 |
+| `renderer/src/hooks/useAgentRun.ts` | 585 | 800 | 否 | 否（**eslint 不检查 .ts**） | 215 |
+| `main/ipc/teams.js` | 570 | 800 | 否 | 否 | 230 |
+| `main/teamStore.js` | 553 | 794 | 否 | 否 | 247 |
+| `main/workerPool.js` | 549 | 800 | 否 | 否 | 251 |
+| `main/ipc/mcp.js` | 535 | 800 | 否 | 否 | 265 |
+| `main/approval.js` | 495 | 800 | 否 | 否 | 305 |
 
-> **两把尺子的口径**（项目既有纪律，非本轮新创）：800 行软档按 **raw**（`split('\n').length`，判据 `> 800`）；
-> ESLint `max-lines: 1500` 按 **code**（`skipBlankLines` + `skipComments`，见 `desktop/eslint.config.mjs`）。
-> 因此「`main.js` 在软档白名单却不在 ESLint 豁免清单」不是登记不一致——两把尺子量的是不同事实，完全自洽（报告 §7.1 第 2 条）。
+> **三条判据（`desktop/test/max-lines.test.js`，共 4 条断言）**：
+> ① `code > 800` 的文件必须全部登记在 `BASELINE_800` 里（新文件超线直接红）；
+> ② 登记过但已拆薄的必须移出（防清单变成养老名单）；
+> ③ **快照棘轮**：每个登记文件带 code 行数上限，只能缩，涨 1 行就红；
+> ④ ESLint 豁免清单的文件名集合必须等于实测 `>1500(code)` 集合（漏改任一侧都红）。
 >
-> **取法命令（2026-10-29 实测）**：raw 列 =
-> `node -e "const fs=require('fs');for(const f of ['main/main.js','main/ipc/teams.js','main/teamStore.js','main/workerPool.js','main/approval.js','agent-core/index.js','main/computerUse.js'])console.log(f,fs.readFileSync(f,'utf8').split('\n').length)"`；
-> code 列 = ESLint `max-lines` 同口径（`skipBlankLines` + `skipComments`）现算。
+> `BASELINE_800` 现为 **3 条，且三条余量都是 0**（快照 = 当前值），这是**刻意的棘轮**：
+> 它们任何增长都必须先拆模块，不允许抬高快照。
 >
-> **余量警示（2026-10-29 实测）**：`main/ipc/teams.js` / `main/teamStore.js` / `main/workerPool.js` / `main/approval.js`
-> 四个文件的 raw 行数（`split('\n').length`）**已顶到 800 整**，而 `BASELINE_800` 白名单**仍是 3 条**（不含它们）
-> ⇒ 这四个文件**余量为 0**，任何新增行都会触发 800 行软档门禁（`max-lines` 棘轮守护）。
-> 本轮 `9bcfc21`（P0）曾把 `main/approval.js` / `main/ipc/teams.js` / `main/workerPool.js` 推过 800 软档，
-> 随后由 `fd8b1c0` 做**行为无关的回压**（压缩 P0 注释、合并相邻注释、单语句 `if` 收为一行）压回 800 整。
-> 处置方向仍是**拆模块**，不是加白名单（白名单纪律是「只减不增」）。
+> **ESLint 覆盖范围的坑**：`eslint.config.mjs` 的 `files` 只含 `**/*.{js,mjs}` 与
+> `renderer/**/*.{js,jsx}`，渲染层 `.ts/.tsx` **不被 eslint 检查**（实测报
+> `File ignored because no matching configuration was supplied`）。所以本套件是渲染层
+> `.ts/.tsx` 唯一生效的行数门禁——`useAgentRun.ts`（code 585）只有它管。
 >
-> **口径提醒**：本表 raw 行按 `split('\n').length` 计（与门禁判据一致）；`wc -l` 口径比它**少 1**
-> （末行换行）。设计文档记的 `main.js` raw 2257 是 `wc -l` 口径，两处不是漂移，是口径不同——引用时必须带口径。
+> **取法命令（2026-10-30 实测）**：code 行 = 在 `desktop/` 下执行
+> `npx eslint <file> --rule '{"max-lines":["error",{"max":1,"skipBlankLines":true,"skipComments":true}]}'`，
+> 报错文案里的 `File has too many lines (NNN)` 即权威 code 行数。本套件的 `codeLines()`
+> 已用此法在 6 个文件上逐一校验一致（`main.js` 1500 / `computerUse` 1004 / `agent-core` 2967 /
+> `mcp.js` 535 / `workerPool` 549 / `scheduler` 602）。raw 行 = 用 `split('\n').length` 计，
+> 与 `wc -l` 差 1（末行换行），引用时必须带口径。
+
+> **口径变更的真实代价（为什么要改）**：
+>
+> 后果一：本节 2026-10-29 版曾判定 `ipc/teams.js` / `teamStore.js` / `workerPool.js` / `approval.js`
+> 四个文件「余量为 0，任何新增行都会触发门禁」——按 code 口径它们的余量分别是
+> **230 / 247 / 251 / 305 行**。那批告警是**假的**（raw 口径下注释与空行也占额度）。
+>
+> 后果二：已经有一批模块的**存在理由被写在文件头**——「从 X 抽出以守 800 行软档」，共 **15 个**：
+> `teamCapabilities`（raw 45 / code 16）、`workerText`（33/19）、`mcpProgress`（61/19）、
+> `groupConcurrency`（43/27）、`workerCritical`（35/28）、`workerIdentity`（72/30）、
+> `mcpStdioTransport`（58/37）、`mcpServerRequests`（81/44）、`memory/team`（94/53）、
+> `teamIpcTrace`（81/57）、`teamRoster`（98/61）、`workerSession`（148/82）、
+> `teamDispatchPlan`（241/111）、`memory/recall`（223/138）、`teamWorkerTrace`（214/167）——
+> **code 合计 889 行、平均 59 行/模块，其中 6 个不到 30 行**。
+> 注意 `workerText` 的 raw 33 里只有 code 19：抽出时说明注释一起搬走，而 raw 口径下注释同样
+> 占额度，于是「带注释的拆出模块」比「原处那几行代码」更贵。这批模块的拆分依据是
+> **注释密度，不是职责边界**。
+>
+> 后果三：2026-10-30 本轮出现为把 `approval.js` 从 raw 801 压回 800，而把新增说明并进既有
+> JSDoc 行的操作（提交 `c9d2ea1`）——方向是删注释保行数，与代码质量目标相反。
+>
+> **改口径不改判定结果**：`raw > 800` 的 3 个文件正是 `code > 800` 的 3 个，**无一个文件因口径
+> 切换而进出基线**。所以这是纯口径统一，不是放宽标准（必须写清，否则下次 review 会以为门禁变松）。
+>
+> **这 15 个模块本次不合并**：合回去要动 15 个运行期模块的组装点，收益只是省文件数，风险却
+> 落在真实行为路径上。改口径的作用是**让未来不再产生新的这类模块**，不是追溯撤销已有的。
 
 ### 12.5 离线评估
 
@@ -1364,6 +1403,12 @@ flowchart TB
 > **TL-10 的后续行数（2026-10-29 实测）**：上表的 **783 行**是 D-811 拆模块后的**当时中间态**，本行保留原文不改。
 > 后续 `9bcfc21`（P0）曾把 `ipc/teams.js` / `workerPool.js` / `approval.js` 推过 800 软档，由 `fd8b1c0` 做行为无关回压，
 > 现已**回到 800 整（余量 0）**；`BASELINE_800` 仍是 **3** 条，未加白名单。取法命令见 12.4。
+>
+> **2026-10-30 口径更正**：本节 TL-10 行与上文中的「783 行 / 距 800 软档余量 17 行」「回到 800 整（余量 0）」
+> 都是 **raw** 口径（含空行与注释）的结论，raw 口径已废止、软档改按 **code** 计（见 12.4）。
+> 按 code 口径实测：`ipc/teams.js` 570（余量 230）、`workerPool.js` 549（余量 251）、
+> `approval.js` 495（余量 305）、`teamStore.js` 553（余量 247）。原文保留作为「raw 口径确曾制造
+> 假警报」的痕迹，但**不得**据此判断当前余量。
 
 > 关于 TL-6 的一句话提醒（报告 §4 `D-808`）：现状是**最危险的一种形态**——用户在界面上配了限制，系统也把限制存了下来，
 > 但执行的时候根本不看它。这比「不做」更糟，因为它**制造了一个虚假的安全保证**。
@@ -1400,10 +1445,16 @@ flowchart TB
 | GL-2 | 前置外部门禁 `GATES` | **已完成** | **5 项**：`eval:check` / `doc-fact-check` / `harness-r7:check` / `i18n-scan` / `i18n-modcheck` |
 | GL-3 | i18n 扫描进入门禁 | **已完成**（第八轮 D-807② 收口） | 两条同时接入：`i18n-scan` 扫 `renderer/src`（注释剥离后的裸中文，当前 0 残留）、`i18n-modcheck` 查 42 个语言包模块的中英键集与 `{var}` 插值一致性。两条都**自证会红**（无参 exit 2、有残留或缺键 exit 1），并有变异验证：裸中文必红、**只出现在注释里的中文必绿**、不存在的模块必红 |
 | GL-4 | 汇总口径把「跳过」计入「通过」 | **已完成**（第八轮 C-04 收口） | 汇总改为三数齐全：`通过 = 总计 − 失败 − 仅跳过`，口径落在 `test/helpers/summary.mjs` 纯函数。跳过**不影响退出码**（平台限制不是缺陷），但已从「通过」里扣出；一项目既失败又跳过只计失败（否则等式会破）。守护 18 条，含「旧公式已删除」反向断言 |
-| GL-5 | lint 警告棘轮 | **已完成** | 阈值 157，配套棘轮守护单元测试，不得反弹（取法命令见 12.3） |
+| GL-5 | lint 警告棘轮 | **已完成** | 阈值 **0**（2026-10-30 由 157 收紧为零容忍：`--max-warnings=0` 与 `LINT_WARNINGS_BASELINE = 0` 同值），配套棘轮守护单元测试，不得反弹（取法命令见 12.3） |
 | GL-6 | 行数软档白名单「只减不增」 | **已完成（张力已缓解）** | `BASELINE_800` 保持 3 条不变；`ipc/teams.js` 由 799 → **790 行**（余量 10），靠拆模块而非加白名单解决（D-811 抽 `teamRoster.js`，第八轮三次收尾抽 `teamDispatchPlan.js`） |
 | GL-7 | 冷检出可复现性（新） | **本机已完成 / CI 无证据** | 已修「`CHANGELOG.md` 被 `*.md` 排除导致冷检出必红」（提交 `bf423fa`），并用干净 worktree 复核（两个 `node_modules` 软链 + `NODE_OPTIONS=--preserve-symlinks`，报告 §8.4）。**CI 运行历史已查：0 次运行**（`gh run list` 空 / 工作流 state=active / 运行记录 total_count=0）⇒ 「以 CI 为准」这句话当前**没有证据**，只能是待办检查项（`L-1`） |
-| GL-8 | 技术文档一致性门禁（`docs-consistency`） | **已完成（实测 23/23）** | `node desktop/test/docs-consistency.test.mjs`：① 10 项数值常量 + 7 项结构常量与源码同源；② `TOOL_CHANNELS` / `NOTIFY_CBS` / `REQUEST_CBS` 条数与源码一致；③ 半衰期与迁移 v7 一致；④ 文档引用的测试文件**精确等于基线 51 个**且**逐个真实存在**（严格相等棘轮，禁止用 `>=` 放宽） |
+| GL-8 | 技术文档一致性门禁（`docs-consistency`） | **已完成（实测 23/23）** | `node desktop/test/docs-consistency.test.mjs`：① 10 项数值常量 + 7 项结构常量与源码同源；② `TOOL_CHANNELS` / `NOTIFY_CBS` / `REQUEST_CBS` 条数与源码一致；③ 半衰期与迁移 v7 一致；④ 文档引用的测试文件**精确等于基线 52 个**且**逐个真实存在**（严格相等棘轮，禁止用 `>=` 放宽；2026-10-30 §12.4 重写时新增 `max-lines.test.js` 引用，51 → 52） |
+
+> **2026-10-30 行数口径更正（针对 GL-6）**：GL-6 判定依据里的「由 799 → 790 行（余量 10）」是 **raw**
+> 口径（`split('\n').length`，含空行与注释）。该口径已于 2026-10-30 废止，行数软档现统一按 **code** 计
+> （见 12.4）。按 code 口径 `ipc/teams.js` 为 570 行、余量 230 行。GL-6 要守的结论（「靠拆模块而非加白名单」）
+> 不变，但「余量 10 行」不得再被引用；`teamRoster.js` / `teamDispatchPlan.js` 这两个为守行数而做的抽取
+> **保留不合并**（合并要动运行期装配点，收益只是省文件数，见 12.4 末段）。
 
 ### 13.6 上下文工程
 
