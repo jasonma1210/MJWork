@@ -122,8 +122,12 @@ check('gitHunks 的档位判断不再依赖「最后一次 run」', () => {
 });
 
 check('渲染层把设置同步给主进程（否则无人值守永远拿不到用户设置）', () => {
-  const src = readMain('renderer/src/App.jsx');
-  if (!src.includes("key: 'approval_settings'")) throw new Error('App.jsx 未同步 approval_settings 到主进程');
+  // F-004：同步逻辑随偏好持久化外置到 hooks/useUiPreferences.ts。判据跟到新家，
+  // 并按「接线必须数点位数」补齐：只查 hook 内部，删掉 App.jsx 的 useUiPreferences() 调用也照样绿。
+  const src = readMain('renderer/src/hooks/useUiPreferences.ts');
+  if (!src.includes("key: 'approval_settings'")) throw new Error('useUiPreferences 未同步 approval_settings 到主进程');
+  const app = readMain('renderer/src/App.jsx');
+  if (!/} = useUiPreferences\(\)/.test(app)) throw new Error('App 未接线 useUiPreferences（同步成了孤儿代码）');
 });
 
 console.log(`\n结果：${pass}/${total} 通过`);

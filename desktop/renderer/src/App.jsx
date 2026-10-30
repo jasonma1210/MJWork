@@ -32,8 +32,12 @@ import FeedbackHost, { confirm, toast } from './components/feedback';
 // P3-1：MCP 工具执行的请求级进度条（全局一条，订阅主进程 mcp:progress）
 import McpProgressStrip from './components/McpProgressStrip';
 import { createProjectActions } from './lib/projectActions';
-import { getDefaultProject, loadJSON, applyThemeToDocument, rememberModel, pickInitialModel, pickOnboardingModel } from './lib/appState';
+import { getDefaultProject, loadJSON, rememberModel, pickInitialModel, pickOnboardingModel } from './lib/appState';
 import usePendingExpert from './hooks/usePendingExpert';
+// F-004（2026-10-30）：偏好持久化 / 布局与预览标签两组状态外置（App 只做装配）。
+// 选型结论（为何不引入 zustand、不合并 reducer）写在 hooks/useUiPreferences.ts 文件头。
+import { useUiPreferences } from './hooks/useUiPreferences';
+import { usePaneLayout } from './hooks/usePaneLayout';
 import { useWindowEventBus } from './hooks/useWindowEventBus';
 import { createAppWindowHandlers } from './lib/appWindowEvents';
 import { useThreadModel } from './hooks/useThreadModel';
@@ -49,17 +53,18 @@ setLocalMode(true);
 export default function App() {
   // 本文件多处 map/filter 回调参数名为 t（会话/主题项），解构改名 tr 避免遮蔽
   const { t: tr } = useI18n();
+  // F-004：偏好持久化（主题 / 审批档 / 技能启用 / 自动拆分）——无跨 state 依赖，可放在最前；
+  // 布局与预览标签的 hook 必须等 activeProject 声明之后（见下方注释），别一起上移。
+  const {
+    theme, setTheme, approvalSettings, setApprovalSettings,
+    enabledSkills, setEnabledSkillsSafe, autoDecompose, setAutoDecompose,
+  } = useUiPreferences();
   const [threads, setThreads] = useState([]);
   const [activeThread, setActiveThread] = useState(null);
   const [userProviders, setUserProviders] = useState([]);
   const [globalProviders, setGlobalProviders] = useState([]);
   const [selectedModel, setSelectedModel] = useState(null);
-  // TH3：无本地偏好时跟随系统明暗（prefers-color-scheme），避免明室用户首启见黑屏
-  const [theme, setTheme] = useState(() => {
-    const saved = localStorage.getItem('mj_theme');
-    if (saved) return saved;
-    return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-  });
+  // 主题（TH3：无本地偏好时跟随系统明暗）与审批档/技能/自动拆分均由 useUiPreferences 持有
   const [showSettings, setShowSettings] = useState(false);
   // 一级导航单一事实来源（设计文档 §4.3）：route 一个 page 字段 + reducer，非法组合不可表示；布尔视图由 routeToLegacyView 派生，旧组件签名不动；ecosystem/settings 由独立弹层/命令驱动，保留各自布尔开关。
   const [route, setRoute] = useState(INITIAL_ROUTE);
@@ -104,44 +109,29 @@ export default function App() {
   useEffect(() => { restoreMcpTools().then(setMcpTools).catch((err) => console.warn('[app] restoreMcpTools failed:', err)); }, []);
   // 生态中心连接/断开/JSON 保存 → dirty 事件重建工具集（替代已删除的设置页 McpTab 回调）
   // 与其它跨组件动作一起收敛到 useWindowEventBus（见下方「窗口事件总线」），避免 App 累积样板。
-  // A6：Skill 启用态持久化（此前 useState 初始值从不落盘，重启即重置）
-  // 数组守卫：localStorage 曾被写入过非数组（如插件安装误把 plugin 对象存进来）时，
-  // 不得原样进入 state，否则下游 enabledSkills.filter 崩溃且每次重启都崩
-  const [enabledSkills, setEnabledSkills] = useState(() => {
-    const v = loadJSON('mj_enabled_skills', ['code_review']);
-    return Array.isArray(v) ? v : ['code_review'];
-  });
-  const setEnabledSkillsSafe = (next) => setEnabledSkills(Array.isArray(next) ? next : ['code_review']);
-  useEffect(() => { localStorage.setItem('mj_enabled_skills', JSON.stringify(enabledSkills)); }, [enabledSkills]);
-  // 大任务自动拆分开关（ChatArea 闸门同读 mj_auto_decompose；'0' = 关闭）
-  const [autoDecompose, setAutoDecompose] = useState(() => localStorage.getItem('mj_auto_decompose') !== '0');
-  useEffect(() => { localStorage.setItem('mj_auto_decompose', autoDecompose ? '1' : '0'); }, [autoDecompose]);
+  // A6：Skill 启用态 / 大任务自动拆分开关已并入 useUiPreferences（含落盘与数组守卫）
   const [onboarded, setOnboarded] = useState(() => localStorage.getItem('mj_onboarded') === '1');
   // 启动页：冷启动展示 2.4s（可点击跳过），与首启向导叠加——splash 在上，向导在下
   const [splashDone, setSplashDone] = useState(false);
   // 引导里选的数字员工在主界面挂载后注入当前会话（一次性消费）
   usePendingExpert(onboarded);
   const [initialPrompt, setInitialPrompt] = useState('');
-  const [approvalSettings, setApprovalSettings] = useState(() => loadJSON('mj_approval_settings', { sandbox_policy: 'workspace-write', approval_mode: 'on-request' }));
   // 登录系统已移除：恒用本机数据层（local-first），启动即直达主界面
   const [localMode] = useState(true);
-  // 右侧预览栏：多文件标签（openedFiles 为打开顺序，activeFilePath 为当前标签）
-  const [openedFiles, setOpenedFiles] = useState([]);
-  const [activeFilePath, setActiveFilePath] = useState(null);
-  const closeAllFiles = () => { setOpenedFiles([]); setActiveFilePath(null); };
+  // F-004：布局与预览标签（侧栏/右栏/面板页/打开的文件标签）已外置到 usePaneLayout。
+  // 位置纪律（与下方 scheduledSetModel 那条同源）：本 hook 的参数里读 activeProject，
+  // 必须声明在 activeProject 之后——挪到前面就是「Cannot access before initialization」启动白屏。
+  const {
+    sidebarOpen, setSidebarOpen, paneOpen, setPaneOpen, paneTab, setPaneTab,
+    openedFiles, activeFilePath, setActiveFilePath, setOpenedFiles,
+    openFileInPane, closeFileInPane, closeAllFiles,
+  } = usePaneLayout({ projectPath: activeProject?.path || '' });
   const [paletteOpen, setPaletteOpen] = useState(false); // ⌘K 命令面板
   const [archiveOpen, setArchiveOpen] = useState(false); // A3：已归档会话管理
   const [agentsMd, setAgentsMd] = useState(null); // 项目规范（按项目路径缓存，避免面板切换重复探测）
-  // 三栏布局状态（对标 Codex）：左侧栏与右侧常驻面板可独立折叠
-  const [sidebarOpen, setSidebarOpen] = useState(() => loadJSON('mj_sidebar_open', true));
-  const [paneOpen, setPaneOpen] = useState(() => loadJSON('mj_pane_open', false));
-  const [paneTab, setPaneTab] = useState('diff'); // diff | files | subtasks | terminal | browser | sidechat
   const [agentFiles, setAgentFiles] = useState([]); // 本轮 Agent 改动的文件（Diff 面板「上一轮」筛选）
   // T1-4：子任务事件按会话分桶（threadId -> 事件流），后台会话的子任务照常入桶，切回仍可见
   const [subagentsByThread, setSubagentsByThread] = useState({});
-
-  // 主题落地（写 data-theme/data-platform + 强调色双写 + 记住选择）见 lib/appState.ts
-  useEffect(() => { applyThemeToDocument(theme); }, [theme]);
 
   // TH2：顶栏快捷换肤入口 —— 在主题列表中循环（点击循环，全部主题在 设置 → 外观）
   function cycleTheme() {
@@ -154,19 +144,6 @@ export default function App() {
     const th = THEMES.find((x) => x.id === theme);
     return th ? tr(th.nameKey) : theme;
   }
-
-  // 审批档位持久化（沙箱策略 + 审批模式）
-  useEffect(() => {
-    localStorage.setItem('mj_approval_settings', JSON.stringify(approvalSettings));
-    // P1-1：主进程的无人值守路径（定时任务 / 编排组快照 / CUA / Worker 兜底）必须读「用户设置」，
-    // 而设置原本只存在渲染层 localStorage ⇒ 主进程只能记住「最后一次 run 的档」，
-    // 会话级覆盖（thread.approval_mode）时就会拿到别的会话的档。这里同步一份到本地库偏好。
-    // 失败不影响交互路径（交互 run 的档由 agent:run 载荷直接携带）。
-    try {
-      Promise.resolve(window.mjcode?.localSetPreference?.({ key: 'approval_settings', value: approvalSettings }))
-        .catch(() => {});
-    } catch { /* 旧版 preload 无此桥方法：交互不受影响，仅无人值守回落默认档 */ }
-  }, [approvalSettings]);
 
   useEffect(() => {
     api.globalProviders()
@@ -269,30 +246,14 @@ export default function App() {
     setOpenedFiles([]);
     setActiveFilePath(null);
     setAgentFiles([]);
+  // 三个 setter 来自 usePaneLayout、底下仍是 useState 的 setState，身份恒定；
+  // exhaustive-deps 只能识别「本组件内 useState 的返回值」，认不出跨 hook 转手的 setter，
+  // 补进依赖数组纯属噪音（且会把「切任务」的触发源从 1 个变 4 个）。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThreadId]);
 
-  // 打开文件到右侧预览栏（已在标签中则仅切换，不重复入栈）
-  // 相对路径统一按当前项目根解析：聊天里模型常只写文件名（如「报告已生成：xxx.md」），
-  // 若原样入栈，FileViewerPane 会以主进程 cwd 为基准去找 → 必然找不到文件。
-  // 落点 tab 为 files：预览已并入「文件」面板（左预览 + 右文件树同屏），不再是独立 tab。
-  function openFileInPane(filePath) {
-    if (!filePath) return;
-    const raw = String(filePath);
-    const isAbsolute = /^([a-zA-Z]:[\\/]|\\\\)/.test(raw) || raw.startsWith('/');
-    const resolved = (!isAbsolute && activeProject?.path) ? `${activeProject.path}/${raw.replace(/^\.\//, '')}` : raw;
-    setOpenedFiles((prev) => (prev.includes(resolved) ? prev : [...prev, resolved]));
-    setActiveFilePath(resolved);
-    setPaneTab('files');
-    setPaneOpen(true);
-  }
-
-  // 关闭单个标签：若关的是当前标签，激活相邻标签（优先右邻，其次左邻）
-  function closeFileInPane(path) {
-    const idx = openedFiles.indexOf(path);
-    const next = openedFiles.filter((p) => p !== path);
-    setOpenedFiles(next);
-    if (activeFilePath === path) setActiveFilePath(next[idx] ?? next[idx - 1] ?? null);
-  }
+  // 打开文件到预览栏 / 关闭单个标签：实现已外置到 hooks/usePaneLayout（F-004），
+  // 这里只经上方解构拿到 openFileInPane / closeFileInPane 往下传。
 
   // B3：选中会话 = 任务作用域的唯一事实源。
   // 会话归属哪个项目，右侧文件树/Diff 就显示哪个项目；不跟随上次手动选的项目
@@ -312,8 +273,7 @@ export default function App() {
   }
 
   // 布局 / 项目状态持久化（各自独立 effect，依赖数组即触发源）
-  useEffect(() => { localStorage.setItem('mj_sidebar_open', JSON.stringify(sidebarOpen)); }, [sidebarOpen]);
-  useEffect(() => { localStorage.setItem('mj_pane_open', JSON.stringify(paneOpen)); }, [paneOpen]);
+  // 侧栏 / 右栏两条已随 usePaneLayout 一起搬走了（重复写会双写 localStorage），这里只剩项目态。
   useEffect(() => { localStorage.setItem('mj_active_project', JSON.stringify(activeProject)); }, [activeProject]);
   useEffect(() => { localStorage.setItem('mj_projects', JSON.stringify(projects)); }, [projects]);
 

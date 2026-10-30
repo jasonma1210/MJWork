@@ -5,7 +5,7 @@
 // 语义：基线 = `git stash create` 生成的 commit SHA（不改工作区、不入 stash 列表）。
 // 返回空串有两种正常情况——工作区本来干净（撤回 = 回到 HEAD）、cwd 不是 git 仓库
 // （撤回会失败并如实报错）。两种情况都不该阻断 run 启动，所以失败一律 fail-open。
-export async function captureBaseline(cwd: string): Promise<string> {
+export async function captureBaseline(cwd: string | undefined): Promise<string> {
   // 直接经 window.mjcode 调用（不走参数注入）：桥面引用扫描按 `mjcode.xxx` / 整桥别名统计，
   // 参数注入会被判成「死方法」，让台账数字虚高（bridge-parity 会红）。
   try {

@@ -44,6 +44,7 @@ const cuaRecorder = require('./cuaRecorder');
 const cuaRecordingsDir = () => path.join(app.getPath('userData'), 'recordings');
 // CUA / 回放的互斥占用表：占用与释放在模块内同步完成（跨 await 的读改写会把并发请求放进来）
 const cuaLoopRegistry = require('./cuaLoopRegistry');
+const { APPROVAL_WAIT_TIMEOUT_MS } = require('./tools/timeouts');
 
 // CUA 逐次确认弹窗：独立通道，避免与并行工具审批（tool:approval-response）互相串扰
 // 决策不进入 applyApprovalDecision 规则库 —— 敏感动作必须逐次确认，不可会话/永久放行
@@ -57,7 +58,7 @@ const cuaLoopRegistry = require('./cuaLoopRegistry');
 //   ② 超时分支只 resolve 不摘监听器 ⇒ 监听器残留，可能吃掉后续无关响应。
 // 现与 tool: 通道同款：生成 approvalId → 按 id 精确分发；无 id 的旧响应走
 // dispatchLegacy（仅在恰有一个挂起时按唯一挂起处理，多于一个则拒绝猜测、按超时 deny）。
-const cuaApprovalChannel = new ApprovalChannel({ timeoutMs: 120000 });
+const cuaApprovalChannel = new ApprovalChannel({ timeoutMs: APPROVAL_WAIT_TIMEOUT_MS });
 ipcMain.on('cua:approval-response', (_, payload) => {
   const hasId = payload && typeof payload === 'object' && payload.approvalId;
   const dispatched = hasId

@@ -46,7 +46,8 @@ function parse(file) {
       runs: Array.isArray(j.runs) ? j.runs : [],
       cleared_at: typeof j.cleared_at === 'string' ? j.cleared_at : '',
     };
-  } catch {
+  } catch { /* C-001：低层探测，故意把「不存在/损坏/结构非法」压成同一个 null；
+      区分由上层 loadStore 负责（它带 corrupt-restored / corrupt-unrecoverable 与 corruptCopy），此处不重复记 */
     return null;
   }
 }
@@ -101,7 +102,11 @@ function read(file) {
   }
 
   let kept = '';
-  try { kept = corruptCopyPath(file); fs.copyFileSync(file, kept); } catch { kept = ''; }
+  try { kept = corruptCopyPath(file); fs.copyFileSync(file, kept); } catch (e) { /* C-001：坏文件留档失败 ⇒ corruptCopy 为空 */
+    // 这一步失败意味着**原件即将被新内容覆盖而无法回溯**，属数据丢失风险，必须留痕。
+    console.warn('[scheduledStore] 损坏文件备份失败，原始内容将无法回溯:', e?.message || e);
+    kept = '';
+  }
   return { store: empty(), recoverable: null, needsRewrite: false, reason: 'corrupt-unrecoverable', corruptCopy: kept };
 }
 

@@ -64,6 +64,9 @@ const ENV_ALLOWLIST = [
   'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
 ];
 
+// 探测抛错过的路径（去重，避免每次执行都刷一行）
+const probeFailed = new Set();
+
 function shellEnv() {
   const home = IS_WIN ? (process.env.USERPROFILE || '') : (process.env.HOME || '');
   // 打包版冒烟实测（2026-10-15）：MCP 重连 spawn uvx ENOENT——uv 官方装到
@@ -79,7 +82,14 @@ function shellEnv() {
     : [];
   const all = [...userPaths, ...(IS_WIN ? WIN_TOOL_DIRS : POSIX_TOOL_DIRS)];
   // 只保留真实存在的目录：注入不存在的路径既无意义，也让 PATH 解析变慢
-  const existing = all.filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
+  // 探测抛错时按「不存在」丢弃，但这个丢弃会让该目录里的工具全部 ENOENT（表现成「没装」），
+  // 与「确实没装」不可区分 ⇒ 每个路径只 warning 一次（shellEnv 每次执行都会被调用，不去重会刷屏）。
+  const existing = all.filter((p) => {
+    try { return fs.existsSync(p); } catch (e) {
+      if (!probeFailed.has(p)) { probeFailed.add(p); console.warn('[shellEnv] 路径探测失败，已从子进程 PATH 剔除（该目录内的工具将 ENOENT）：', p, e?.message || e); }
+      return false;
+    }
+  });
   const env = {};
   for (const key of ENV_ALLOWLIST) {
     if (process.env[key] !== undefined) env[key] = process.env[key];

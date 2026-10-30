@@ -36,9 +36,7 @@ function safeStringify(value, indent) {
       if (typeof v === 'symbol') return String(v);
       return v;
     }, indent);
-  } catch {
-    return String(value);
-  }
+  } catch { /* 这是**日志格式化器**本身：在里面再打日志会自递归；退化成 String(value) 至少保住「有个值」这条信息 */ return String(value); }
 }
 
 function fmtConsoleArg(a) {

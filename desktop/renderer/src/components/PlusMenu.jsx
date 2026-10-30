@@ -61,6 +61,33 @@ function roleIcon(category) {
   return hit ? hit[1] : IconUser;
 }
 
+/**
+ * 会话内扩展（数字员工 / 技能 / 连接器）。与 ComposerExtras、DeskExtras 同形。
+ * @typedef {object} PlusMenuExtras
+ * @property {any} [expert] 数字员工（三处调用方形状各异：unknown / ComposerExpert / 目录对象）
+ * @property {string[]} [skillIds]
+ * @property {string[]} [mcpServers]
+ */
+
+/**
+ * 入参契约（F-005：此前无类型，TS 从解构默认值反推出 `anchorEl` 必填、`activeTeamId` 只能为 null、
+ * connectedServers/enabledSkills 为 never[]，于是所有调用方都报 TS2322/TS2741——与作者意图相反）。
+ * @param {{
+ *   open?: boolean,
+ *   onClose?: () => void,
+ *   onPickFiles?: () => void,
+ *   runMode?: string,
+ *   onModeChange?: (mode: string) => void,
+ *   hasProject?: boolean,
+ *   extras?: PlusMenuExtras|null,
+ *   onExtrasChange?: (next: PlusMenuExtras) => void,
+ *   connectedServers?: string[],
+ *   enabledSkills?: string[],
+ *   activeTeamId?: string|null,
+ *   onSelectTeam?: (id: string) => void,
+ *   anchorEl?: (HTMLElement|null),
+ * }} props
+ */
 export default function PlusMenu({
   open, onClose, onPickFiles, runMode, onModeChange, hasProject,
   extras, onExtrasChange, connectedServers = [], enabledSkills = [],

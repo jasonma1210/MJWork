@@ -35,7 +35,7 @@ function groupsOf(res: unknown): AnyGroup[] {
  * 取消某会话下仍在跑的编排组。返回被取消的组数。
  * threadId 为 null 时不取消任何组（宁可少停，也不误杀其他会话的后台任务）。
  */
-export async function abortGroupsForThread(threadId: string | null): Promise<number> {
+export async function abortGroupsForThread(threadId: string | number | null): Promise<number> {
   const api = (globalThis as { window?: { mjcode?: Record<string, unknown> } }).window?.mjcode;
   const list = api?.tasksList as ((opts?: unknown) => Promise<unknown>) | undefined;
   const abort = api?.tasksAbortGroup as ((groupId: string) => Promise<unknown>) | undefined;

@@ -118,6 +118,8 @@ class LocalStore {
     try {
       return this.migrate(JSON.parse(fs.readFileSync(this.bak, 'utf8')));
     } catch {
+      // C-001：备份也坏 → null，调用方随即进入 corrupt-blocked 并 console.error 明确告知用户，
+      // 这里再记一条只会和那条重复。
       return null;
     }
   }

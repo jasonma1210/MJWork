@@ -37,7 +37,7 @@ export interface CompactSessionDeps {
   setMessages: (list: any[]) => void;
   setWindowStart: (n: number) => void;
   toast: (opts: any) => void;
-  t: (key: string, vars?: Record<string, unknown>) => string;
+  t: (key: string, vars?: Record<string, string | number>) => string;
 }
 
 /**

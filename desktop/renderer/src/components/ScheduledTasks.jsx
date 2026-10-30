@@ -22,6 +22,10 @@ const STATUS_META = {
   missed: { labelKey: 'scheduled.statusMissed', cls: 'text-warn' },
 };
 
+// nextCronRun 抛错时该行整块不渲染（见任务卡片），表现成「这条任务没有下次运行」——
+// 与「cron 合法但没有下次触发」同形。按表达式去重，避免每次重渲染都告警一次。
+const badCronWarned = new Set();
+
 // Cron 解析 / 重复模板 / 下次运行 / 人话描述：**已抽到 lib/schedulePresets.ts**。
 // 为什么必须共用一份：「发布任务」界面（选「定时任务」时内联同样的三个控件）与这一页
 // 必须算出同一个 cron，否则「预览写 09:00、实际跑在 10:00」这类漂移没有门禁能发现。
@@ -628,7 +632,7 @@ export default function ScheduledTasks() {
                     <span className="font-mono opacity-60">{t('scheduled.cronParens', { cron: task.schedule })}</span>
                   )}
                   {task.last_run_at && <span className="ml-2">{t('scheduled.lastRun', { time: new Date(task.last_run_at).toLocaleString('zh-CN') })}</span>}
-                  {task.trigger_type !== 'event' && (() => { try { const d = nextCronRun(task.schedule); return d ? <span className="ml-2">{t('scheduled.nextRun', { time: d.toLocaleString('zh-CN') })}</span> : null; } catch { return null; } })()}
+                  {task.trigger_type !== 'event' && (() => { try { const d = nextCronRun(task.schedule); return d ? <span className="ml-2">{t('scheduled.nextRun', { time: d.toLocaleString('zh-CN') })}</span> : null; } catch (e) { /* 解析失败整块不渲染 ⇒ 看着像「无下次运行」，与「合法但没有下次」同形，故去重告警 */ if (!badCronWarned.has(task.schedule)) { badCronWarned.add(task.schedule); console.error('[ScheduledTasks] nextCronRun failed:', task.schedule, e); } return null; } })()}
                 </div>
                 {/* 任务级模型：已建任务也能改（此前只有新建表单能选，改一次得删了重建）
                     选中即保存，下一轮执行按新模型跑 */}

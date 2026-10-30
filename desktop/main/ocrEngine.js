@@ -96,7 +96,10 @@ function detect({ refresh = false } = {}) {
       .split('\n')
       .map((l) => l.trim())
       .filter((l) => l && !/^List of available/i.test(l));
-  } catch {
+  } catch (e) {
+    // 关键：langs 空会让下面报「tesseract 未安装任何语言包」——但 tesseract 明明在（bin 已找到）。
+    // 探测崩了与没有语言包是两件事，混一起会让用户去装错东西。本函数结果有缓存，不会刷屏。
+    console.warn('[ocr] tesseract --list-langs 探测失败，语言包判定将失真：', bin, e?.message || e);
     langs = [];
   }
   const preferred = PREFERRED_LANGS.filter((l) => langs.includes(l));

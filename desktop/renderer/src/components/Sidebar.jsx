@@ -51,7 +51,7 @@ export default function Sidebar({
       <div className="shrink-0 px-4 pt-3 pb-2">
         {/* 品牌行：logo + 名称（右侧版本号已移除，见上方说明）；下一行 slogan 单行显示 */}
         <div className="flex items-center gap-2 min-w-0">
-          <img src={logo} alt="MJ Nexus" className="w-6 h-6 rounded-lg shrink-0 object-cover" draggable={false} />
+          <img src={logo} alt="" className="w-6 h-6 rounded-lg shrink-0 object-cover" draggable={false} />
           <div className="font-semibold text-base leading-none">MJ Nexus</div>
         </div>
         <div className="text-xs text-text2 mt-1 truncate">{t('sidebar.tagline')}</div>

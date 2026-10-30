@@ -13,6 +13,7 @@
 //
 // T5-1 只落 teams / team_members 两表；team_messages / team_turns 属 T5-2，
 // 看板任务扩展列属 T5-3，编制快照属 T5-9（届时给 group 加 JSON 列即可，无返工）。
+const { safeParseJson } = require('./jsonSafe');
 const crypto = require('crypto');
 const { ROLE_TOOL_ALIASES, ROLE_APPROVAL_MAP } = require('./ecosystem');
 // T5-7：成员模型绑定引用串的编解码（单一事实来源 = main/modelShape.js）
@@ -92,11 +93,6 @@ const BUDGET_LIMITS = {
 // 引擎具体工具名集合（ROLE_TOOL_ALIASES 的值域）——用于「已是具体名也保留」的反向识别
 const CONCRETE_TOOL_NAMES = new Set(Object.values(ROLE_TOOL_ALIASES).flat());
 
-function safeParse(s) {
-  if (s == null) return null;
-  try { return JSON.parse(s); } catch { return null; }
-}
-
 function clampInt(v, [min, max], fallback) {
   const n = Number(v);
   if (!Number.isFinite(n)) return fallback;
@@ -173,7 +169,7 @@ function rowToTeam(r) {
     projectPath: r.project_path,
     leadMemberId: r.lead_member_id,
     defaultMode: r.default_mode,
-    budget: safeParse(r.budget_json),
+    budget: safeParseJson(r.budget_json),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     archivedAt: r.archived_at,
@@ -190,13 +186,13 @@ function rowToMember(r) {
     source: r.source,
     templateRef: r.template_ref,
     systemPrompt: r.system_prompt,
-    toolNames: safeParse(r.tool_names_json) || [],
+    toolNames: safeParseJson(r.tool_names_json) || [],
     allowMcp: !!r.allow_mcp,
-    mcpAllow: safeParse(r.mcp_allow_json) || [],
+    mcpAllow: safeParseJson(r.mcp_allow_json) || [],
     model: r.model,
     approvalMode: r.approval_mode,
     sandboxPolicy: r.sandbox_policy,
-    skillNames: safeParse(r.skill_names_json) || [],
+    skillNames: safeParseJson(r.skill_names_json) || [],
     state: r.state,
     enabled: !!r.enabled,
     createdAt: r.created_at,
@@ -214,8 +210,8 @@ function rowToMessage(r) {
     toMemberId: r.to_member_id,
     kind: r.kind,
     summary: r.summary,
-    refs: safeParse(r.refs_json) || [],
-    payload: safeParse(r.payload_json),
+    refs: safeParseJson(r.refs_json) || [],
+    payload: safeParseJson(r.payload_json),
     createdAt: r.created_at,
   };
 }
@@ -649,7 +645,9 @@ class TeamStore {
     const rawSummary = String(input.summary == null ? '' : input.summary);
     let payloadJson = null;
     if (input.payload != null) {
-      try { payloadJson = JSON.stringify(input.payload); } catch { payloadJson = null; }
+      // 序列化失败（循环引用 / BigInt）⇒ payload 静默变 null：消息看起来「本来就没带 payload」，
+      // 也不会走下面的「体积超限」reason 分支 ⇒ 队友收到空载荷且无任何痕迹。
+      try { payloadJson = JSON.stringify(input.payload); } catch (e) { console.warn('[teamStore] payload 序列化失败，本条消息将不带载荷：', e?.message || e); payloadJson = null; }
     }
     const summaryBytes = byteLen(rawSummary);
     const payloadBytes = byteLen(payloadJson);

@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { highlightLine } from './CodeView';
 import { openLinkByMode, isHttpUrl } from '../lib/linkOpen';
+// S-005：markdown 链接协议白名单（与 MessageStream 同一份判据，见 lib/safeUrl.ts）
+import { safeUrlTransform } from '../lib/safeUrl';
 import { toast } from './feedback';
 import { IconAlert, IconCopy, IconFolderOpen, IconHammer, IconFile, IconSpinner } from './icons';
 import { useI18n } from '../i18n';
@@ -253,7 +255,7 @@ export default function FilePreview({ filePath, projectPath }) {
         {!meta.loading && meta.kind === 'text' && (isMd ? (
           // Markdown 渲染（与对话气泡同一套 react-markdown + GFM，表格/任务列表/代码块均支持）
           <div className="p-5 markdown-body text-sm leading-6">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: MarkdownLink }}>{text.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: MarkdownLink }} urlTransform={safeUrlTransform}>{text.content}</ReactMarkdown>
           </div>
         ) : isHtml && htmlMode === 'render' && text.totalLines <= TEXT_MAX_LINES ? (
           // 沙箱渲染：allow-scripts 让内联图表脚本可跑；不给 allow-same-origin，

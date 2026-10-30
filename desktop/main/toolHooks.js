@@ -81,12 +81,18 @@ function normalizeHooks(list) {
 }
 
 // 一条 hook 是否命中某次工具调用（tool=展示名, channel=通道名）
+// 坏正则必须留痕：返回 false 的语义是「这条 hook 不匹配」⇒ 该 hook 永不触发，
+// 用户只会看到「我配的 hook 没生效」。按 pattern 去重，避免每次工具调用都刷一行。
+const badRegexWarned = new Set();
 function hookMatches(pattern, tool, channel) {
   if (!pattern || pattern === '*') return true;
   return pattern.split('|').map((s) => s.trim()).filter(Boolean).some((p) => {
     if (p === tool || p === channel) return true;
     if (p.startsWith('re:')) {
-      try { return new RegExp(p.slice(3)).test(tool); } catch { return false; }
+      try { return new RegExp(p.slice(3)).test(tool); } catch (e) {
+        if (!badRegexWarned.has(p)) { badRegexWarned.add(p); console.warn('[toolHooks] match 正则非法，该 hook 永不触发：', p, e?.message || e); }
+        return false;
+      }
     }
     return false;
   });

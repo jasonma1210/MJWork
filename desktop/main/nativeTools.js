@@ -18,7 +18,7 @@
 // Electron 能力按需解析（不在模块顶层 require 硬绑定）：非 Electron 宿主（单测）下
 // 各能力置 null，调用时返回明确不可用错误——本模块因此可在 Node 里被真实单测。
 let electron = null;
-try { electron = require('electron'); } catch { electron = null; }
+try { electron = require('electron'); } catch { /* 见上：非 Electron 宿主（单测）的预期路径，各能力置 null 后调用时返回不可用错误 */ electron = null; }
 const clipboard = electron?.clipboard || null;
 const Notification = electron?.Notification || null;
 const utilityProcess = electron?.utilityProcess || null;

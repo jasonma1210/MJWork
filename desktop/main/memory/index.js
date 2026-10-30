@@ -377,7 +377,8 @@ class MemoryManager {
       // M5 / T5-5：团队归属两列（非团队层为 null）——渲染层/宿主据此区分「团队共享 vs 成员私有」
       teamId: r.team_id || null, agentId: r.agent_id || null,
       content: r.content, summary: r.summary, importance: r.importance,
-      entityTags: (() => { try { return JSON.parse(r.entity_tags || '[]'); } catch { return []; } })(),
+      // C-001：单字段解析兜底——坏了只是这条记忆没有标签，条目本身仍可用（标签不参与召回）
+      entityTags: (() => { try { return JSON.parse(r.entity_tags || '[]'); } catch { /* 坏标签只退化为无标签，不影响条目可用性，故不单独记日志 */ return []; } })(),
       expireAt: r.expire_at, isValid: !!r.is_valid, compressed: !!r.compressed,
       reHitCount: r.re_hit_count, usageCount: r.usage_count, source: r.source,
       trust: trustOf(r), // P0-2b：可信度随条目输出（由 source 推导）

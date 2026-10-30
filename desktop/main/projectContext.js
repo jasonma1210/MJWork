@@ -36,7 +36,7 @@ function readLatestSummary(db, projectId) {
       WHERE project_id = ? ORDER BY COALESCE(summary_at, updated_at) DESC, created_at DESC LIMIT 5`).all(projectId);
     for (const r of rows) {
       let parsed = null;
-      try { parsed = JSON.parse(r.summary_json || '{}'); } catch { parsed = null; }
+      try { parsed = JSON.parse(r.summary_json || '{}'); } catch { /* C-001：单条摘要坏了只跳过这一条（continue），不毁掉整块上下文 */ parsed = null; }
       if (!parsed || typeof parsed !== 'object') continue;
       const value = parsed.last_summary || parsed.summary || '';
       const done = Array.isArray(parsed.done) ? parsed.done : [];
@@ -106,7 +106,7 @@ function collectProjectContext({ project, db, artifactStore, group, currentTaskI
     let index = null;
     const artifactId = project.artifactId || '';
     if (artifactStore && artifactId) {
-      try { index = artifactStore.getIndex({ artifactId, recentLimit: 5 }); } catch { index = null; }
+      try { index = artifactStore.getIndex({ artifactId, recentLimit: 5 }); } catch { /* C-001：产物索引取不到 ⇒ 本轮上下文不含产物清单（每轮都会调，不逐次告警） */ index = null; }
     }
     const summary = readLatestSummary(db, project.projectId);
     return buildProjectContextBlock({

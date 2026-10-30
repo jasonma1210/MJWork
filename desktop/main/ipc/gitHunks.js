@@ -39,7 +39,9 @@ function currentApprovalMode(fallbackGetter) {
   }
   // 2026-10-17（P1-1）：逐 hunk 暂存的档位判断属「无人值守纪律」一侧，读用户设置；
   // 原先读 agentRunner 的「最后一次 run」档，会话级覆盖时会拿到别的会话的档。
-  try { return require('../approvalSettings').getUserApprovalMode() || 'on-request'; } catch { return 'on-request'; }
+  // 落到 'on-request' 是**更保守**的方向（设置读坏了就多问一句，不会静默放行），但仍是降级：
+  // 用户若配过 never（全自动），表现为「忽然什么都弹窗」，得能从日志看出是设置读不出来而非他改错了。
+  try { return require('../approvalSettings').getUserApprovalMode() || 'on-request'; } catch (e) { console.warn('[gitHunks] 读取用户审批档失败，本次按 on-request 处理（更保守）：', e?.message || e); return 'on-request'; }
 }
 
 // 破坏性 git 操作（丢弃工作区改动 / 回退索引）的审批闸。

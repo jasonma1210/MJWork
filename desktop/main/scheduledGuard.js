@@ -56,7 +56,10 @@ function readHead(cwd) {
   try {
     const { execFileSync } = require('node:child_process');
     return String(execFileSync('git', ['rev-parse', 'HEAD'], { cwd, timeout: 3000, encoding: 'utf8' })).trim();
-  } catch {
+  } catch (e) {
+    // C-001：非 git 仓库 / git 缺失 / 3s 超时都走这里，返回 '' 的语义是「无 HEAD 基线」。
+    // 读结果有记忆化（每任务至多一次），warn 不会刷屏；不然「为什么没取到基线」完全无从判断。
+    console.warn('[scheduledGuard] git rev-parse HEAD 失败，按无基线处理:', e?.message || e);
     return '';
   }
 }

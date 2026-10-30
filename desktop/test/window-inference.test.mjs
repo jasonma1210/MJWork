@@ -13,7 +13,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   runAgent, effectiveWindowOf, DEFAULT_CONTEXT_WINDOW_FALLBACK,
-  estimateMessagesTokens,
 } from '../agent-core/index.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');

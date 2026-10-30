@@ -29,7 +29,9 @@ const hook = read('renderer/src/hooks/useAgentRun.ts');
 // ── ① 行为契约 ──
 check('运行中发送 → 入队（不并发执行）', () => {
   assert.match(hook, /if \(loading\) queueNext\(text\)/, 'send 未在 loading 时入队');
-  assert.match(hook, /function queueNext\(text\)[\s\S]{0,200}setQueued\(\(q\) => \[\.\.\.q, t\]\)/,
+  // F-005（2026-10-30）：queueNext 参数补了类型标注（`text: string | null | undefined`），故不再锁 `(text)` 字面量。
+  // 断言意图不变：参数名仍是 text，且函数体把 t **追加**进队列（`[...q, t]`，不是覆盖 q）。
+  assert.match(hook, /function queueNext\(text[^)]*\)[\s\S]{0,200}setQueued\(\(q\) => \[\.\.\.q, t\]\)/,
     'queueNext 未把指令追加到队列');
 });
 

@@ -430,7 +430,12 @@ class PluginRegistry {
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       const list = Array.isArray(raw) ? raw : (Array.isArray(raw.plugins) ? raw.plugins : []);
       return { plugins: list.map((p) => ({ ...p, name: normalizeName(p.name) })) };
-    } catch {
+    } catch (e) {
+      // C-001：这里返回空表的后果比「列表空」严重得多——后续任意 flush() 会把空表原子写回
+      // plugins.json，等于**用读失败的结果覆盖用户已装插件**。首次运行（ENOENT）是正常空态，
+      // 其余（JSON 损坏 / 权限不足）必须出声，否则用户只看到「插件全没了」。
+      // 未改的行为：仍不阻断启动（注册表坏了不该让人打不开应用），但把成因写进日志可回溯。
+      if (e?.code !== 'ENOENT') console.warn('[pluginMarket] plugins.json 读取/解析失败，本次按空注册表进入（注意：之后任一次 flush 会覆盖该文件）：', this.file, e?.message || e);
       return { plugins: [] };
     }
   }

@@ -25,6 +25,12 @@
 //   ⑤ 审批分级登记（TOOL_LEVEL ⊕ 特判 ⊕ 只读，**不得依赖 || 'L2' 兜底**）← 本轮核心
 //   ⑥ BASE_PROMPT 承诺                       ⑦ UI 轨迹标签（toolNameCN）+ i18n 双语言包
 //
+// B-005（2026-10-30）：新增第 5 节——**分级登记 ≠ 分级生效**。TOOL_LEVEL 只给「级别」，
+// 能否被问到取决于调用面：模型工具要 agent-core 的 APPROVAL_TOOLS 透传 approvalMode，
+// 非模型入口（diff 面板 IPC / Chrome 中继 / 定时任务）各自有闸。实测 15 条 L2/L3 登记里
+// 只有 2 条真正走到 needsApproval，其余是纯文档。第 5 节把「谁在真读分级」变成机器可读的
+// 豁免表（每条带可验证证据），并双向防陈旧：新登记不接线 → 红；声明无闸却接了线 → 也红。
+//
 // 验收：故意造一个「有 schema + 有通道 + 有 handler 但没写 TOOL_LEVEL」的假工具 → 本套件必须非零退出。
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -181,7 +187,10 @@ const handlerRegion = (hStart !== -1 && hEnd > hStart ? mainSrc.slice(hStart, hE
   + '\n' + blankComments(read('main/scheduledTools.js'));
 function extractSetLiteral(src, varName) {
   const m = src.match(new RegExp(`const ${varName} = new Set\\(\\[([\\s\\S]*?)\\]\\)`));
-  return m ? Array.from(m[1].matchAll(/'([a-z_]+)'/g)).map((x) => x[1]) : null;
+  // B-005 变异实测：原正则是 `'([a-z_]+)'`，含数字的键（如 'b005_fake_tool'）**不被匹配**，
+  // 于是往 APPROVAL_TOOLS 塞一个假工具后 APPR 照旧、断言全绿（抽取器静默缩小 ⇒ 判据空过）。
+  // 项目里已有 b2_b14 式命名先例，工具名带数字完全可能，故放开数字。第 6 节有专门自检钉住这条。
+  return m ? Array.from(m[1].matchAll(/'([a-z0-9_]+)'/g)).map((x) => x[1]) : null;
 }
 const CWD = asSet(extractSetLiteral(indexSrc, 'CWD_TOOLS'));
 const APPR = asSet(extractSetLiteral(indexSrc, 'APPROVAL_TOOLS'));
@@ -496,7 +505,122 @@ console.log('');
     mcpPrefixed.length ? `不可达条目：${mcpPrefixed.join(', ')}` : '无前缀键；自检 1/1 检出');
 }
 
-// ── 5. 自检（防「恒绿」假闸）──
+// ── 5. B-005：审批分级「登记面」与「调用面」对齐（登记 ≠ 生效）──────────────────
+// 为什么需要这一卡：TOOL_LEVEL 只决定「级别」，**能不能被问到**取决于调用面——
+//   · 模型工具：agent-core 仅在 `APPROVAL_TOOLS.has(name)` 时把 approvalMode/conversationId 透传给
+//     宿主（agent-core/index.js 的「审批档位 + 沙箱策略透传」块）。不在该集合的模型工具**拿不到
+//     用户档位**，其 needsApproval 退回默认 'on-request' ⇒ 用户把档位调成 auto-safe / never 对它无效。
+//   · 非模型入口（diff 面板 IPC / Chrome 中继 / 定时任务）：自行决定档位，本就不经该集合。
+// 所以「TOOL_LEVEL 写了 L2/L3」≠「这个分级会被读到」。实测形态：15 条 L2/L3 登记里只有 2 条真正
+// 走到 needsApproval（git_checkout / git_restore_staged 经 guardDestructive），其余 13 条是纯文档——
+// 排查分级问题时先怀疑那张表，而实际没有任何代码读它。
+// 本卡把「谁在真读分级」变成**机器可读事实**，并双向防陈旧：
+//   · 新增一条 L2/L3 登记却没接任何闸、也没声明归属 → 红（逼接线或逼写理由）；
+//   · 声明的「无闸」工具日后被接了闸却没进 APPROVAL_TOOLS → 红（否则档位透传缺失，静默失效）。
+// 豁免分两类，各自带可验证证据（不是一张「允许清单」）：
+//   A. 独立闸：不经 APPROVAL_TOOLS，但其实现文件里确实有自己的审批调用（正则必须在源码中命中）。
+//   B. 无闸：只读 / 纯编排类，登记仅供规则与审计展示；**不得超过**——扫描器会证明它确实没有调用点。
+const WAIVED_INDEPENDENT = [
+  { tool: 'chrome_connect', file: 'main/chromeRelay/server.js',
+    evidence: /requestApproval\('chrome_connect'/,
+    why: '扩展连接授权走中继 IPC：恒逐次弹卡（授权只对当次连接有效），比 L3 更严；不读本表档位' },
+  // git_checkout / git_restore_staged 是**真的读分级**的：diff 面板 IPC → guardDestructive → needsApproval，
+  // 档位取自 approvalSettings.getUserApprovalMode()（渲染层入口没有模型侧透传，也不该有）。
+  { tool: 'git_checkout', file: 'main/ipc/gitHunks.js',
+    evidence: /guardDestructive\(deps, 'git_checkout'/,
+    why: 'diff 面板「放弃修改」：经 guardDestructive → needsApproval，档位读用户设置' },
+  { tool: 'git_restore_staged', file: 'main/ipc/gitHunks.js',
+    evidence: /guardDestructive\(deps, 'git_restore_staged'/,
+    why: 'diff 面板「取消暂存」：同上（判 L2 因其可逆，避免用户转去用更危险的「放弃修改」）' },
+  // scheduled_create：自有闸，但**只认 never 档**（`approvalMode === 'never'` 直接静默创建）。
+  // ⚠ 已知不一致（记入核查报告，待产品裁决）：approval.needsApproval 对同一工具名的 never 语义是
+  //   「L3 ∧ NON_REMEMBERABLE ⇒ 仍弹卡」（见 test/approval.test.js 的 O1 断言），而本闸相反。
+  //   两侧各有测试锁定，故本轮**不改行为**，只把事实钉在这里，避免后人以为分级已统一。
+  { tool: 'scheduled_create', file: 'main/scheduledTools.js',
+    evidence: /ctx\.requestApproval\('scheduled_create'/,
+    why: '自带 approvalChannel 闸（恒弹、不落规则库）；never 档静默创建与 needsApproval 的 never 语义相反' },
+];
+const WAIVED_NO_SURFACE = [
+  { tool: 'search_plugins', why: '只读检索，外发查询词；分级用于规则/审计展示' },
+  { tool: 'pr_list', why: '只读 GitHub API（token 与私有仓库元数据）；读操作按设计不弹卡' },
+  { tool: 'pr_view', why: '同上' },
+  { tool: 'pr_diff', why: '同上（diff 内容含私有仓库代码）' },
+  { tool: 'web_search', why: '外发查询词，只读；维持现状（收紧属产品行为变更）' },
+  { tool: 'web_fetch', why: '可拉任意 URL（SSRF 守卫在 webTools 侧）；维持现状（同上）' },
+  { tool: 'deep_research', why: '多轮 web_search 的上层聚合，无独立副作用' },
+  { tool: 'spawn_subagent', why: '子代理只用只读工具集，且内层每次工具调用另有独立审批' },
+  { tool: 'orchestrate_task', why: 'Worker 池内层逐工具审批（2026-10-20 裁决：外层不再判 L3，避免二次确认）' },
+  { tool: 'team_send_message', why: '写团队内部总线（不触盘/不出网），体积闸在 teamStore 内部' },
+  { tool: 'team_wait', why: '只改本任务自己的等待边，无外部副作用' },
+];
+{
+  // 调用点扫描器：把每次审批判定调用抓成一段代码片段（最多 240 字符），再看片段里有没有工具名字面量。
+  // 比逐行 grep 稳——跨行写法 `needsApproval({\n tool: 'x'` 也能抓到。
+  // 残留限制（与 blankComments 同级）：片段窗口是**位置代理**，若同一窗口内出现别的工具名字面量会误判；
+  // 故失败信息直接打印命中位置，由人复核（本文件的常规做法：判据可读 > 判据聪明）。
+  const walkJs = (dir, out = []) => {
+    for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) { if (e.name !== 'node_modules') walkJs(rel, out); }
+      else if (/\.(?:c|m)?js$/.test(e.name)) out.push(rel);
+    }
+    return out;
+  };
+  const SRC_FILES = [...walkJs('main'), ...walkJs('agent-core')];
+  const SOURCES = new Map(SRC_FILES.map((f) => [f, read(f)]));
+  const CALL_RE = /(?:needsApproval|requestApproval|toolLevel|approvalTarget)\s*\([^;]{0,240}/g;
+  const WIRED = new Map(SRC_FILES.map((f) => [f, Array.from(SOURCES.get(f).matchAll(CALL_RE)).map((m) => m[0])]));
+  /** 该工具名出现在哪些文件的审批调用片段里（空数组 = 没有任何代码在问它）。 */
+  const approvalSitesOf = (tool) => SRC_FILES.filter((f) => WIRED.get(f).some((s) => s.includes(`'${tool}'`)));
+
+  const gradeTools = Object.keys(TL).filter((t) => TL[t] === 'L2' || TL[t] === 'L3');
+  const independent = new Set(WAIVED_INDEPENDENT.map((w) => w.tool));
+  const noSurface = new Set(WAIVED_NO_SURFACE.map((w) => w.tool));
+  const passedThrough = gradeTools.filter((t) => APPR.has(t));
+  const unexplained = gradeTools.filter((t) => !APPR.has(t) && !independent.has(t) && !noSurface.has(t));
+  check('B-005 每条 L2/L3 分级登记都能指出调用面（APPROVAL_TOOLS 透传 / 独立闸 / 显式无闸）',
+    unexplained.length === 0,
+    unexplained.length
+      ? `无归属：${unexplained.join(', ')} —— 新登记一条分级，必须同时接线或显式声明豁免理由`
+      : `${gradeTools.length} 条 L2/L3 全部有归属（透传 ${passedThrough.length} / 独立闸 ${independent.size} / 无闸 ${noSurface.size}）`);
+
+  // 豁免表本身也要防自我膨胀：两边都不得登记不在 TOOL_LEVEL 里的工具名（否则是死配置）。
+  const deadWaivers = [...independent, ...noSurface].filter((t) => !hasOwn(TL, t));
+  check('B-005 豁免表条目均为真实 TOOL_LEVEL 登记（防「白名单写了个不存在的工具」）',
+    deadWaivers.length === 0, deadWaivers.length ? `死条目：${deadWaivers.join(', ')}` : `${independent.size + noSurface.size} 条全部对应真实登记`);
+
+  // A 类豁免：证据正则必须在指定文件里命中——「有独立闸」是被证明的事实，不是注释里的传说。
+  const brokenEvidence = WAIVED_INDEPENDENT.filter((w) => {
+    const src = SOURCES.get(w.file);
+    return !src || !w.evidence.test(src);
+  });
+  check('B-005 独立闸豁免的证据仍在源码里（实现被删/改名即红，豁免不会变成传说）',
+    brokenEvidence.length === 0,
+    brokenEvidence.length ? `证据失效：${brokenEvidence.map((w) => `${w.tool}@${w.file}`).join(', ')}`
+      : `${WAIVED_INDEPENDENT.length} 条独立闸均已核实`);
+
+  // B 类豁免：必须**确实没有**审批调用点。若日后有人给它接了闸却没进 APPROVAL_TOOLS，
+  // 这里立刻红——因为那种接线拿不到用户档位（needsApproval 退默认 on-request），是静默失效。
+  const stale = WAIVED_NO_SURFACE.filter((w) => approvalSitesOf(w.tool).length > 0);
+  check('B-005「无闸」豁免未陈旧：这些工具确实没有审批调用点（日后接线必须同时进 APPROVAL_TOOLS）',
+    stale.length === 0,
+    stale.length
+      ? `已接线但仍声明无闸：${stale.map((w) => `${w.tool}@${approvalSitesOf(w.tool).join('+')}`).join(', ')}`
+      : `${WAIVED_NO_SURFACE.length} 个工具均无审批调用点`);
+
+  // 反向：APPROVAL_TOOLS 里每个「能收到档位」的工具都必须有分级依据，否则收到档位也无级可判。
+  const apprNoGrade = [...APPR].filter((t) => !hasOwn(TL, t) && !SP.has(t));
+  check('B-005 APPROVAL_TOOLS 成员均有分级依据（显式登记或 toolLevel 特判），不留无级可判的透传',
+    apprNoGrade.length === 0,
+    apprNoGrade.length ? `无分级依据：${apprNoGrade.join(', ')}` : `${APPR.size} 个透传工具全部有依据`);
+
+  // 自检：扫描器必须能检出已知有闸的工具，否则上面「无闸」断言恒真（假闸自证）。
+  const scannerProbe = ['chrome_connect', 'scheduled_create'].filter((t) => approvalSitesOf(t).length > 0);
+  check('自检：调用点扫描器能检出已知有闸的工具（否则「无闸」断言＝恒绿假闸）',
+    scannerProbe.length === 2, `检出 ${scannerProbe.join(',') || '无'}`);
+}
+
+// ── 6. 自检（防「恒绿」假闸）──
 {
   const detected = diff(['a', 'b'], asSet(['a']));
   check('自检：差集断言能检出缺失项（删一环即红）', detected.length === 1 && detected[0] === 'b', detected.join(','));
@@ -511,6 +635,14 @@ console.log('');
   const realOk = levelCoverage('write_file').covered && levelCoverage('read_file').covered
     && levelCoverage('notify').covered;
   check('自检：审批覆盖判据对已登记工具判 true（三条路径 TOOL_LEVEL / 只读 / 特判各验一次）', realOk);
+
+  // 自检：集合抽取器必须保留含数字的键。
+  // B-005 反向验证时实测：原正则 `'([a-z_]+)'` 把 'b005_fake_tool' 整个丢掉，APPR 不变 ⇒
+  // 塞假工具的变异**依旧全绿**（空过的第四种形态：不是断言写错，而是判据的输入被静默截断）。
+  const probeSet = extractSetLiteral("const FAKE_SET = new Set(['b005_fake', 'plain_tool']);", 'FAKE_SET');
+  check('自检：集合抽取器保留含数字的键（旧正则 `[a-z_]+` 会静默丢弃，导致判据空过）',
+    Array.isArray(probeSet) && probeSet.includes('b005_fake') && probeSet.includes('plain_tool'),
+    JSON.stringify(probeSet));
 }
 
 console.log(`\ntool-registration-matrix: ${pass}/${pass + fail} 通过`

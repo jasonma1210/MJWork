@@ -68,6 +68,12 @@ const ORCHESTRATE_TASK_DEFAULT_MS = 10 * 60 * 1000;
 const ORCHESTRATE_TASK_MAX_MS = 30 * 60 * 1000;
 const ORCHESTRATE_GROUP_WAIT_MS = 30 * 60 * 1000;
 
+// ── 审批等待（人机协同）──
+// 此前 120000 在 ApprovalChannel 的默认值、main.js、cuaHandlers.js 各写一遍（3 处同值）。
+// 语义：审批卡最多等多久，超时一律按 deny/timeout 收尾——宁可拒绝也不能让 run 无限挂起。
+/** 审批卡等待上限（120s） */
+const APPROVAL_WAIT_TIMEOUT_MS = 120000;
+
 module.exports = {
   SHELL_DEFAULT_TIMEOUT_MS,
   SHELL_WATCHDOG_TIMEOUT_MS,
@@ -86,4 +92,5 @@ module.exports = {
   ORCHESTRATE_TASK_DEFAULT_MS,
   ORCHESTRATE_TASK_MAX_MS,
   ORCHESTRATE_GROUP_WAIT_MS,
+  APPROVAL_WAIT_TIMEOUT_MS,
 };

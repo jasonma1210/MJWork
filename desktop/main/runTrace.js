@@ -51,7 +51,11 @@ function evictOldTraces(max = MAX_TRACE_FILES) {
       .sort((a, b) => a.mtime - b.mtime);
     let removed = 0;
     while (files.length - removed > max) {
-      try { fs.rmSync(files[removed].p); } catch { break; }
+      try { fs.rmSync(files[removed].p); } catch {
+        // C-001：删除失败（被占用 / 权限）就停止淘汰 —— 已删数量如实返回，下一轮再试。
+        // 不重抛：淘汰是后台维护，不该让写入路径失败。
+        break;
+      }
       removed += 1;
     }
     return removed;
@@ -67,7 +71,11 @@ function readTraceEvents(runId) {
   try {
     const raw = fs.readFileSync(`${traceDir}/${sanitizeRunId(runId)}.jsonl`, 'utf8');
     return raw.split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  } catch {
+  } catch (e) {
+    // C-001：这里把两种截然不同的情况压成了同一个返回值 —— 「本轮还没写过事件」（ENOENT，正常）
+    // 与「文件损坏/无权限读不到」（调试数据丢了）。后者会让追踪面板显示「零事件」而看不出异常，
+    // 所以按 code 分流：ENOENT 静默，其余留痕。
+    if (e?.code !== 'ENOENT') console.warn('[runTrace] 事件读取失败，按零事件返回:', e?.message || e);
     return [];
   }
 }

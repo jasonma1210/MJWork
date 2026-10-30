@@ -11,7 +11,7 @@
 // 刷新策略：首次进入拉一次；此后订阅 `teams:event`（消息落库/派活）与 `tasks:event`
 // （组与任务状态推进），合并 500ms 再拉。团队 run 的状态既会经任务事件变化，也会经消息事件
 // 变化，只订阅其中一条都会出现「消息到了、状态还停在运行中」的半截界面。
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 import { IconBot, IconChevronDown, IconFile, IconAlert } from './icons';
 import Button from './ui/Button';

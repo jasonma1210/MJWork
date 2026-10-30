@@ -8,6 +8,7 @@
 //      事务外不做任何写入，避免「正文写了、版本没加」的半成品。
 //
 // 本模块不依赖 projectStore / quotaLedger（避免初始化顺序耦合），只校验 project_spaces 存在性。
+const { safeParseJson } = require('./jsonSafe');
 const crypto = require('crypto');
 
 const ARTIFACT_KINDS = ['document', 'spec', 'plan', 'custom'];
@@ -59,10 +60,6 @@ function newArtifactId() {
   return `art_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
 }
 
-function safeParse(raw, fallback) {
-  try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
-}
-
 function bytesOf(s) { return Buffer.byteLength(String(s == null ? '' : s), 'utf8'); }
 function charsOf(s) { return Array.from(String(s == null ? '' : s)).length; }
 
@@ -107,7 +104,7 @@ function rowToArtifact(r) {
     projectId: r.project_id,
     kind: r.kind,
     title: r.title,
-    outline: safeParse(r.outline_json, []),
+    outline: safeParseJson(r.outline_json, []),
     currentVersion: r.current_version,
     snapshotPolicy: r.snapshot_policy,
     retainVersions: Number(r.retain_versions) || 10,

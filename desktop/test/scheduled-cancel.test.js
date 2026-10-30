@@ -201,6 +201,42 @@ const neverEnds = (url, init) => new Promise((resolve, reject) => {
       !/return \(args\) => toolHandlers\[camelName\]\(args\);/.test(coreSrc));
   }
 
+  // ⑦ S-002（2026-10-30 全量核查）：交互式流式通道的取消接线。
+  //   此前只验了非流式通道（①-⑥，行为级）+ 引擎 chatFn（源码级），而主对话走的
+  //   `chatStreamOnce` 从未被断言过 —— 它的形态与 D-805 那次事故一模一样：
+  //   **少传/漏合并一个 signal 不报错，行为静默退化**（用户点停止后模型仍在远端生成并计费）。
+  //   这里不能跑行为（依赖 Electron sender / ipcMain），故锁三条结构不变量 + 一条顺序不变量。
+  {
+    const mainSrc = fs.readFileSync(path.join(ROOT, 'main/main.js'), 'utf8');
+    const from = mainSrc.indexOf('async function chatStreamOnce(');
+    // 函数边界取下一条 ipcMain.handle（chatStreamOnce 之后紧接 model:chat 注册）
+    const to = mainSrc.indexOf("ipcMain.handle('model:chat'", from);
+    check('⑦ 能定位 chatStreamOnce 函数体（空片段一律 FAIL，不许「没匹配所以通过」）',
+      from > 0 && to > from + 2000, `区间 ${from}..${to}`);
+    if (from > 0 && to > from + 2000) {
+      const body = mainSrc.slice(from, to);
+      const noComment = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1');
+      // ① fetch 必须拿到 signal，且该 signal 同时包含「内部守卫 controller」与「外部 run 信号」
+      const fetchOpt = noComment.slice(noComment.indexOf('/chat/completions'));
+      check('⑦ fetch 选项里带 signal（漏了这个，停止键对主对话完全无效）',
+        /signal:\s*[^,\n]*/.test(fetchOpt));
+      check('⑦ 该 signal 合并了外部 run 信号（externalSignal）与内部 controller',
+        /externalSignal/.test(fetchOpt.slice(0, 600)) && /controller\.signal/.test(fetchOpt.slice(0, 600)));
+      // ② 外部中止要级联到内部 controller（否则守卫到点才停）
+      check('⑦ 外部 abort 会级联中止内部 controller',
+        /externalSignal\.addEventListener\('abort'/.test(noComment) && /controller\.abort\(\)/.test(noComment));
+      // ③ 用户中止不得被误报成守卫超时：守卫判定必须先于 aborted 分支（顺序是机制本身）
+      const iGuard = noComment.indexOf('streamGuard.reason()');
+      const iAbort = noComment.indexOf('aborted: true');
+      check('⑦ 先判守卫超时、再判用户中止（顺序反了会把「用户停止」写成「模型超时」）',
+        iGuard > 0 && iAbort > iGuard, `guard@${iGuard} aborted@${iAbort}`);
+      // ④ 停止按钮必须能把在途 chat 一起 abort，且同时收敛 run
+      check('⑦ model:abort 会 abort 全部在途 chat 并收敛 run',
+        /for \(const c of activeChats\) c\.abort\(\)/.test(mainSrc)
+        && /abortAllRuns\(\)/.test(mainSrc));
+    }
+  }
+
   console.log(`\nscheduled-cancel: ${pass}/${pass + fail} 通过`);
   if (fail > 0) process.exitCode = 1;
 })();

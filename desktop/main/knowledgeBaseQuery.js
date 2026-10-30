@@ -10,6 +10,7 @@
 //   · BM25 风格 tf·idf 排序；分数只用于相关性排序，绝不显示成「可信度百分比」。
 'use strict';
 
+const { safeParseJson } = require('./jsonSafe');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -122,7 +123,10 @@ async function importDocument({
   onStage = null, shouldCancel = null, yieldEvery = YIELD_EVERY,
 }) {
   const stage = (name) => { try { if (onStage) onStage(name); } catch { /* 进度回调异常不得影响导入 */ } };
-  const cancelled = () => { try { return !!(shouldCancel && shouldCancel()); } catch { return false; } };
+  // 取消判定抛错 ⇒ 返回「未取消」= 用户点了取消但导入照跑到底，且没有任何痕迹。
+  // 只在首次留痕：cancelled() 每 yieldEvery 个分块调一次，坏掉的判定器会按块刷屏。
+  let cancelProbeWarned = false;
+  const cancelled = () => { try { return !!(shouldCancel && shouldCancel()); } catch (e) { if (!cancelProbeWarned) { cancelProbeWarned = true; console.warn('[kb] 取消判定抛错，本次导入将无法中途取消：', e?.message || e); } return false; } };
 
   if (!filePath || typeof filePath !== 'string') return { ok: false, code: 'INVALID_PATH' };
   if (!fs.existsSync(filePath)) return { ok: false, code: 'FILE_NOT_FOUND' };
@@ -391,7 +395,7 @@ function validateContextPlanForRun({ db, planId, planHash, actorId }) {
   if (curEpoch !== plan.actor_authz_epoch) {
     return { ok: false, code: 'CONTEXT_PLAN_STALE', reason: 'actor_authz_epoch', expected: plan.actor_authz_epoch, actual: curEpoch };
   }
-  const chunkMap = safeParse(plan.chunk_map, {});
+  const chunkMap = safeParseJson(plan.chunk_map, {});
   for (const [chunkId, info] of Object.entries(chunkMap)) {
     const c = q(db).get('SELECT source_version, content_hash FROM knowledge_chunks WHERE id = ?', [chunkId]);
     if (!c) return { ok: false, code: 'CONTEXT_PLAN_STALE', reason: 'chunk_missing', chunkId };
@@ -447,7 +451,7 @@ function resolvePlanContext({ db, planId, planHash, actorId = 'owner', maxChars 
 function listPlanCitations({ db, planId }) {
   const plan = q(db).get('SELECT chunk_map FROM context_plans WHERE plan_id = ?', [planId]);
   if (!plan) return { ok: false, code: 'PLAN_NOT_FOUND' };
-  const map = safeParse(plan.chunk_map, {});
+  const map = safeParseJson(plan.chunk_map, {});
   const ids = Object.keys(map);
   if (ids.length === 0) return { ok: true, items: [] };
   const rows = q(db).all(
@@ -486,7 +490,7 @@ function recordPlanUse({ db, runId, planId, projectId = null, chunkIds = [] }) {
 function listRunCitations({ db, runId }) {
   const row = q(db).get('SELECT plan_id, chunk_ids, created_at FROM kb_plan_uses WHERE run_id = ?', [runId]);
   if (!row) return { ok: true, items: [], planId: null };
-  return { ok: true, planId: row.plan_id, createdAt: row.created_at, items: safeParse(row.chunk_ids, []) };
+  return { ok: true, planId: row.plan_id, createdAt: row.created_at, items: safeParseJson(row.chunk_ids, []) };
 }
 
 /**
@@ -715,10 +719,6 @@ function makeSnippet(text, terms, radius = 80) {
   if (start > 0) snip = '…' + snip;
   if (end < text.length) snip = snip + '…';
   return escapeHtml(snip);
-}
-
-function safeParse(s, fallback) {
-  try { return JSON.parse(s); } catch { return fallback; }
 }
 
 function isCjk(ch) {

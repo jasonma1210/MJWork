@@ -27,7 +27,7 @@ function allowedRoots(server) {
     if (!s || !path.isAbsolute(s) || seen.has(s)) continue;
     try {
       if (!fs.statSync(s).isDirectory()) continue;
-    } catch { continue; } // 不存在 / 无权限：不作为根暴露
+    } catch { /* C-001：不存在 / 无权限就不作为根暴露——按「不暴露」处理是安全侧默认，不需要日志 */ continue; }
     seen.add(s);
     out.push({ uri: pathToFileURL(s).href, name: path.basename(s) || s });
   }

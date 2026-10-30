@@ -182,7 +182,7 @@ class ResourceQuotaCenter extends EventEmitter {
         // num_ctx 未显式设置时，模型上限（contextLength）不是运行时生效值 → 仍按最小档保守处理，
         // 但把上限一并发出去，便于 UI 提示「可校正到 N」（P1-12 的一键校正入口）
         return { name, numCtx: OLLAMA_NUM_CTX_FALLBACK, contextLength, source: 'fallback-4k' };
-      } catch {
+      } catch { /* C-001：探测单个模型窗口失败 ⇒ 按最小档保守处理；返回体的 source='fallback-4k' 就是给 UI 的形态 */
         return { name, numCtx: OLLAMA_NUM_CTX_FALLBACK, contextLength: 0, source: 'fallback-4k' };
       } finally {
         clearTimeout(timer);
@@ -206,7 +206,8 @@ class ResourceQuotaCenter extends EventEmitter {
         // 窗口明细放 modelWindows，逐项 { name, numCtx, contextLength, source }。
         this.localBackend = { ollama: true, models: names.length, modelWindows, checkedAt: Date.now() };
       } else { this.localBackend = { ollama: false, models: 0, modelWindows: [], checkedAt: Date.now() }; }
-    } catch {
+    } catch (e) { /* C-001：整体探测失败 ≠ 没装 Ollama；这里却会对外断言 ollama:false，UI 会显示「未检测到本机模型」 */
+      console.warn('[quota] 本机模型探测失败，本次按「未检测到」上报（不代表真的没装）:', e?.message || e);
       this.localBackend = { ollama: false, models: 0, modelWindows: [], checkedAt: Date.now() };
     }
     this.emit('change', this.snapshot());

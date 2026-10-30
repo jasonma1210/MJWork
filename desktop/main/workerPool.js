@@ -480,7 +480,7 @@ async function runWorkerTask({ group, task, runKey, controller, name, runCwd, gr
     // 必须在所有失败分支之前拦截：否则会走 abortReason → failed（把「正在合理等待」误判成「超时失败」）。
     // 判据取 store 的 waiting 状态（单一事实来源），entry.deferred 仅作运行期提示。
     const deferred = (() => {
-      try { return deps.store.getTask?.(group.group_id, task.taskId); } catch { return null; }
+      try { return deps.store.getTask?.(group.group_id, task.taskId); } catch (e) { /* 读不到 ⇒ deferred=null ⇒ 下面的 waiting 判定不成立 ⇒「合理等待」被误判成 failed，正是上面注释禁止的形态 */ console.warn('[workerPool] 读任务状态失败，defer 判定失效（本次按普通结束处理）：', task.taskId, e?.message || e); return null; }
     })();
     if (deferred?.status === 'waiting') {
       deps.emit?.({ type: 'task_update', groupId: group.group_id, taskId: task.taskId, status: 'waiting', name, waitingOn: deferred.waitingOn || [], waitDeadlineAt: deferred.waitDeadlineAt || null });

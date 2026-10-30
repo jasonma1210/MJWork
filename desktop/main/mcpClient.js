@@ -495,7 +495,7 @@ async function connectMcpServer({
           cached.ready,
           new Promise((r) => setTimeout(() => r(false), HANDSHAKE_WAIT_MS)),
         ])) === true;
-      } catch { ready = false; }
+      } catch { /* C-001：握手 Promise 被拒——紧接的 console.warn 会说明「转重连」，此处不重复记 */ ready = false; }
       if (ready && cached.transport && cached.transport.alive()) {
         return { ok: true, server: name, toolCount: cached.tools.length, tools: cached.tools, cached: true };
       }

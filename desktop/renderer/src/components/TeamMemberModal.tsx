@@ -212,7 +212,10 @@ export default function MemberModal(props: {
     try {
       const list = (await window.mjcode?.mcpListServers?.()) as Array<{ name?: string }> | undefined;
       setMcpServers(Array.isArray(list) ? list.map((s) => String(s?.name || '')).filter(Boolean) : []);
-    } catch {
+    } catch (e) {
+      // 不阻塞编辑是对的（用户仍能存 all/none），但面板会显示「尚未连接任何 MCP 服务」——
+      // 若不记录，用户会以为真的没连服务、进而误选 none 把成员的能力静默关掉。
+      console.error('[TeamMemberModal] mcpListServers failed:', e);
       setMcpServers([]);
     }
   }

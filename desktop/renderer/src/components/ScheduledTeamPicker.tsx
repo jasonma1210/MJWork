@@ -29,7 +29,12 @@ function loadTeams(): Promise<TeamOption[]> {
     try {
       const r = (await window.mjcode?.teamsList?.({})) as { ok?: boolean; teams?: TeamOption[] } | undefined;
       cache = (r?.teams || []).filter((x) => !x.archivedAt);
-    } catch {
+    } catch (e) {
+      // 已知缺陷（C-001 摘静默时暴露，**本次不改行为**）：失败也把 cache 赋成 []，
+      // 而 loadTeams 首行 `if (cache) return` 把空数组当成「已加载」⇒ 一次失败会让
+      // 「用哪支军团跑」永远显示空列表，直到用户重开窗口。留痕供定位；是否改成「失败不缓存」
+      // 属行为变更，待产品裁决（已记入 CHANGELOG 已知问题）。
+      console.error('[ScheduledTeamPicker] loadTeams failed (empty list cached):', e);
       cache = [];
     } finally {
       inflight = null;

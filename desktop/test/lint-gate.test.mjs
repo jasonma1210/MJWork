@@ -10,7 +10,10 @@
 // 本用例把 lint 纳入测试面：跑与 npm 脚本**同一范围**、**同一份配置**，断言 0 error。
 // 注意：
 //   · 用 `--quiet`（只报 error）——0 error 是硬门禁；用 `--max-warnings=0` 会被存量 warning 常年判红；
-//   · 环境里没有 eslint（离线 clone / 未装依赖）时打印 ⚠ 并跳过，不误报（同 untracked-deps 的处理）；
+//   · **环境里没有 eslint 时判红（fail-closed）**，不跳过。2026-10-30 改：
+//     原实现打印 [SKIP] 并 exit 0，等于把「判定不了」记账成「通过」——离线 clone / 依赖装歪时
+//     整个 lint 门禁静默失效，而这正是 CI 卡点最需要它工作的时候。判定不了就是不知道，
+//     不知道不能算通过。
 //   · 直接 spawn 本地 node_modules/.bin/eslint，避免 npx 在缺依赖时联网下载。
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -39,16 +42,26 @@ function resolveEslintBin() {
   return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
-const bin = resolveEslintBin();
+// 探针模式：父进程用它反向验证「缺二进制时真的 exit 1」。走的是**同一份**判定代码，
+// 不是另写一个 if 假装通过——否则自测证明的是副本，不是被测机制。
+const PROBE_MISSING = process.argv.includes('--probe-missing-bin');
+const bin = PROBE_MISSING ? null : resolveEslintBin();
 
 if (!bin) {
-  // 非「装了依赖」的环境：门禁无法判定，跳过而非误报（同时把原因打出来，避免静默失效）
+  // fail-closed：判定不了 ≠ 通过。
   //
   // ⚠ 别只给 resolveEslintBin 加 `statSync(p).isFile()`：目录冒充 eslint 时 existsSync
-  // 为 true，加了类型校验会让它返回 null → 落到这里 → **SKIP + exit 0（该红变绿）**；
-  // 当前行为是 spawnSync 报 EACCES → exit 1（fail-closed）。要加类型校验，必须连带把
-  // 「路径存在但不是常规文件」单独判红，别只加那半行。
-  console.log('[SKIP] ⚠ 未找到本地 eslint（node_modules/.bin/eslint），跳过 lint 门禁');
+  // 为 true，加了类型校验会让它返回 null → 落到这里 → 判红（这是对的）；
+  // 但反过来，「路径存在但不是常规文件」若只靠这里兜，报错信息会误导成「没装依赖」。
+  // 要加类型校验，必须连带把「路径存在但不是常规文件」单独判红并说明成因。
+  check('eslint 二进制必须可用（缺依赖时判红，不再 SKIP）', () => {
+    throw new Error(
+      '未找到本地 eslint（node_modules/.bin/eslint 与 ../node_modules/.bin/eslint 均不存在）。\n'
+      + '  本门禁采用 fail-closed：判定不了就不算通过，避免离线/依赖缺失时静默失效。\n'
+      + `  修复：在 ${DESKTOP} 下执行 npm install（或 npm ci --ignore-scripts）。\n`
+      + '  若确认当前环境确实无法安装依赖，请显式跳过本套件并记录原因，不要指望它自动变绿。',
+    );
+  });
 } else {
   const res = spawnSync(bin, LINT_ARGS, {
     cwd: DESKTOP,
@@ -98,6 +111,20 @@ if (!bin) {
       `eslint 退出码 ${status}：${why}\n(${errors.length} 条 error)\n`
       + (errors.length ? errors.slice(0, 30).join('\n') : stdout.slice(0, 4000)),
     );
+  });
+  // ── 自测：反向验证「缺二进制 ⇒ exit 1」真的成立 ──────────────────────────────
+  // 为什么必须真起子进程：只断言「某个函数返回 false」证明的是函数，不是门禁的退出码。
+  // 2026-10-30 之前这里就是 fail-open，而全套件一直绿——因为没有任何断言看过退出码。
+  check('自测：缺 eslint 时本门禁必须 exit 1（fail-closed 生效）', () => {
+    const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--probe-missing-bin'], {
+      cwd: DESKTOP,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    const out = `${r.stdout || ''}${r.stderr || ''}`;
+    // 断言两件事：退出码 + 失败形态（是 [FAIL] 报错，不是崩溃/语法错误蒙混）
+    if (r.status !== 1) throw new Error(`期望 exit 1，实际 ${r.status}\n${out.slice(0, 800)}`);
+    if (!/\[FAIL\]/.test(out)) throw new Error(`退出码对但不是判定失败形态（[FAIL] 缺失，疑似崩溃）\n${out.slice(0, 800)}`);
   });
 }
 

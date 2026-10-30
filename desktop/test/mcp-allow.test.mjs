@@ -151,7 +151,9 @@ check('11. teamStore 写路径：INSERT 列/参数 + UPDATE 列映射 + 读回�
   assert.ok(insert.includes('mcp_allow_json'), 'INSERT 列清单缺 mcp_allow_json（会永远存默认值）');
   assert.ok(/JSON\.stringify\(m\.mcpAllow\)/.test(insert), 'INSERT 参数缺 mcpAllow');
   assert.ok(/mcpAllow:\s*'mcp_allow_json'/.test(s), 'UPDATE 列映射缺 mcpAllow');
-  assert.ok(/mcpAllow:\s*safeParse\(r\.mcp_allow_json\)/.test(s), 'rowToMember 没读回 mcp_allow_json');
+  // 解析函数名不锁死（C-004 已把 5 处本地 safeParse 收敛成 lib 里的 safeParseJson）——
+  // 锁的是「读回映射确实读了 mcp_allow_json 这一列」这个意图；把列名或映射删掉仍然会红。
+  assert.ok(/mcpAllow:\s*[A-Za-z_$][\w$.]*\(r\.mcp_allow_json\)/.test(s), 'rowToMember 没读回 mcp_allow_json');
   // 占位符计数：缺一个 ? 就是运行期绑定错位（比“存空”更隐蔽）。
   // 只截到 VALUES 子句末尾的反引号——否则 `.run()` 参数里的三元 `?` 会被算进来（假红）。
   const valuesClause = insert.slice(insert.indexOf('VALUES'), insert.indexOf('`'));

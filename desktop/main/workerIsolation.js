@@ -98,7 +98,9 @@ async function archiveIsolated({ iso }) {
 /** 失败/中止路径：显式丢弃 worktree（调用方确认无产物时使用） */
 async function discardIsolated({ iso }) {
   if (!iso?.worktreePath) return false;
-  try { await wt.removeWorktree(iso.worktreePath, true); } catch { return false; }
+  // 返回 false 同时代表「本来就没有 worktree」和「删不掉」两种事实（调用方无法区分）；
+  // 更麻烦的是下一行仍会删分支 ⇒ 留下没有分支归属的孤儿目录。这条必须出声。
+  try { await wt.removeWorktree(iso.worktreePath, true); } catch (e) { console.warn('[workerIso] 丢弃隔离 worktree 失败（目录可能残留，分支仍会被删）：', iso.worktreePath, e?.message || e); return false; }
   try { await wt.git(iso.repoRoot, ['branch', '-D', iso.branch]); } catch { /* 尽力而为 */ }
   return true;
 }

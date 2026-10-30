@@ -105,7 +105,11 @@ export default function TeamDispatchPanel({
     try {
       const r = (await window.mjcode?.ecosystemEmployees?.({})) as { ok?: boolean; employees?: Employee[] } | undefined;
       setEmployees(r?.ok ? (r.employees || []) : []);
-    } catch { setEmployees([]); }
+    } catch (e) {
+      // 空数组的语义是「没有数字员工」，而这里是「没取到」——不记录会让目录故障表现成「生态中心是空的」
+      console.error('[TeamDispatchPanel] loadEmployees failed:', e);
+      setEmployees([]);
+    }
     finally { setEmpLoading(false); }
   };
 

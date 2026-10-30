@@ -25,12 +25,15 @@ async function connect() {
   // 必须重判一次，否则后到者会覆盖正在握手/已连通的 socket，旧 socket 的 onclose 还会把新连接误清掉。
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
   let socket;
-  try { socket = new WebSocket(url); } catch { scheduleReconnect(); return; }
+  try { socket = new WebSocket(url); } catch (e) { /* C-001：建连失败会无限重连，不留痕就永远看不出「URL 就是错的」 */
+    console.warn('[relay] WebSocket 建连失败，安排重连:', url, e?.message || e);
+    scheduleReconnect(); return;
+  }
   ws = socket; // 单次发布：本函数此后只操作局部 socket，不再回读全局 ws
   socket.onopen = () => { reconnectDelay = 2000; };
   socket.onmessage = async (ev) => {
     let msg;
-    try { msg = JSON.parse(String(ev.data)); } catch { return; }
+    try { msg = JSON.parse(String(ev.data)); } catch { /* C-001：中继协议由本产品自建，坏消息=服务端/协议 bug；丢弃但必须可见 */ console.warn('[relay] 收到非 JSON 消息，已丢弃'); return; }
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 'hello') {
       helloNonce = String(msg.nonce || '');

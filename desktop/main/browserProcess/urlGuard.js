@@ -58,7 +58,9 @@ function assertHttpUrl(url) {
  */
 function isPrivateUrl(url) {
   let parsed;
-  try { parsed = new URL(String(url || '')); } catch { return false; }
+  // 空串是**合法输入**（page.url() 在尚未导航时就是空），此时判 false 不算降级，不必出声；
+  // 但非空却解析不出来 = 无法判定是否内网，这里按「非内网」放行 ⇒ 属放宽，必须留痕供复核。
+  try { parsed = new URL(String(url || '')); } catch (e) { if (String(url || '').trim()) console.warn('[browser] 落地 URL 无法解析，按「非内网」放行（需人工复核）：', url, e?.message || e); return false; }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
   return isPrivateHost(parsed.hostname);
 }

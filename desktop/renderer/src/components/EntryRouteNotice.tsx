@@ -76,7 +76,7 @@ export default function EntryRouteNotice({
       try {
         const r = (await window.mjcode?.entryPolicy?.()) as { ok?: boolean; policy?: { new?: { autoDag?: { enabled?: boolean } } } } | undefined;
         if (alive) setAutoUpgrade(r?.policy?.new?.autoDag?.enabled === true);
-      } catch { if (alive) setAutoUpgrade(null); }
+      } catch { /* null = 「策略未知」，与 false（明确未启用）在界面上本就是两种形态，且本值只用于提示文案，不参与判定 */ if (alive) setAutoUpgrade(null); }
     })();
     return () => { alive = false; };
   }, []);

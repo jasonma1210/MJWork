@@ -27,7 +27,13 @@
 //           决策不落规则库（敏感动作必须逐次确认，不可会话/永久放行）
 // ═══════════════════════════════════════════════════════════════
 
-const { execFile } = require('child_process');
+// C-004：macOS 辅助功能外部命令超时（screencapture / osascript 同语义）。
+// 此前 3 处裸 15000；合并成一个是因为它们都由同一类系统调用决定（冷启动 + 抓屏编码），
+// 与 browserProcess 的 Playwright 交互超时**不同义**，别跨模块复用。
+// 之所以与紧随其后的 require 并作一行：本文件已贴住 800(code) 行软档上限，而
+// test/max-lines.test.js 的棘轮是「快照只能缩、涨 1 行就红」（拆薄后才允许再加）。
+// 所以本次收敛按「净增 0 行」提交——这是门禁约束，不是排版偏好。
+const { execFile } = require('child_process'); const CUA_CMD_TIMEOUT_MS = 15000;
 
 // ── 可交互角色集合（AX 前缀已归一化为小写）──
 const INTERACTIVE_ROLES = new Set([
@@ -162,7 +168,7 @@ function parseAction(llmOutput) {
     try {
       obj = JSON.parse(c.trim());
       if (obj && typeof obj === 'object') break;
-    } catch { obj = null; }
+    } catch { /* C-001：多候选逐个试，单个坏就换下一个（全坏有下面正则兜底），不是降级 */ obj = null; }
   }
   // 3) JSON 损坏：正则提取 action 字段（容忍缺失冒号/引号残缺）
   if (!obj) {
@@ -391,7 +397,7 @@ function parseVisionAction(llmOutput, screenSize = null) {
     try {
       const parsed = JSON.parse(c.trim());
       if (parsed && typeof parsed === 'object') { obj = parsed; break; }
-    } catch { obj = null; }
+    } catch { /* C-001：同上——多候选解析，单个坏就换下一个，全坏才走正则兜底 */ obj = null; }
   }
   if (!obj) {
     const m = llmOutput.match(/"action"\s*:?\s*"?([a-zA-Z_]+)"?/);
@@ -729,15 +735,13 @@ async function getScreenSize(deps = {}) {
       const out = await new Promise((resolve, reject) => {
         execFn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
           'Add-Type -AssemblyName System.Windows.Forms; $b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; Write-Output "$($b.Width),$($b.Height)"'],
-          { timeout: 15000 }, (error, stdout) => {
+          { timeout: CUA_CMD_TIMEOUT_MS }, (error, stdout) => {
             if (error) { reject(new Error(String(error.message))); return; }
             resolve(String(stdout || ''));
           });
       });
       return parseDesktopBounds(out) || { width: 0, height: 0 };
-    } catch {
-      return { width: 0, height: 0 };
-    }
+    } catch (e) { console.warn('[cua] 屏幕尺寸读取失败，坐标换算退化为 0x0（点击会全部偏到左上角）:', e?.message || e); return { width: 0, height: 0 }; }
   }
   if (platform !== 'darwin') {
     // linux：截图后从 PNG 读尺寸（避免依赖 xrandr 等 X11 专属工具，Wayland 下也能用）
@@ -807,7 +811,7 @@ function runLinuxScreenshot(file, deps = {}) {
         return;
       }
       const [cmd, args] = candidates[i];
-      execFn(cmd, args, { timeout: 15000 }, (error) => {
+      execFn(cmd, args, { timeout: CUA_CMD_TIMEOUT_MS }, (error) => {
         if (error) { tryNext(i + 1); return; }
         resolve(true);
       });
@@ -873,7 +877,7 @@ async function captureScreenDarwin(deps = {}) {
 function runScreencapture(file, deps = {}) {
   const execFn = deps.execFn || execFile;
   return new Promise((resolve, reject) => {
-    execFn('screencapture', ['-x', '-t', 'png', '-D', '1', file], { timeout: 15000 }, (error) => {
+    execFn('screencapture', ['-x', '-t', 'png', '-D', '1', file], { timeout: CUA_CMD_TIMEOUT_MS }, (error) => {
       if (error) {
         reject(new Error(`屏幕截图失败：${error.message}`));
         return;

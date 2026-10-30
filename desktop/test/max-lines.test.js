@@ -24,7 +24,7 @@
 // teamCapabilities / teamDispatchPlan 等，各自文件头写明「从 X 抽出以守 800 行软档」），
 // 拆分依据是注释密度而非职责边界。
 // codeLines 与 eslint 的一致性已实测校验（lint --rule 把 max 压到 1 让 eslint 自报实际行数）：
-//   main.js 1500 / computerUse.js 1004 / agent-core/index.js 2967 / mcp.js 535 /
+//   main.js 1500 / computerUse.js 1002 / agent-core/index.js 2967 / mcp.js 535 /
 //   workerPool.js 549 / scheduler.js 602，6/6 与 codeLines 逐一相符。
 // 注意：改口径**不改变当前任何文件的判定结果**（raw>800 的 3 个文件正是 code>800 的 3 个，
 // 无一个文件因口径切换而进出基线），所以本修正是纯口径统一，不是放宽标准。
@@ -45,7 +45,7 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', 'assets']);
 // 值取自 codeLines()，与 eslint max-lines 同一口径；改这个数字等于放宽门禁，
 // 必须在提交信息里写明理由。
 const BASELINE_800 = {
-  'main/computerUse.js': 1004,
+  'main/computerUse.js': 1002,
   'main/main.js': 1178,
   'agent-core/index.js': 2967,
 };

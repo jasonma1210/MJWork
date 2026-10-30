@@ -79,7 +79,7 @@ function offloadValue(runId, v) {
   let kind;
   if (typeof v === 'string') { serialized = v; kind = '__bigStr'; }
   else {
-    try { serialized = JSON.stringify(v); } catch { return null; }
+    try { serialized = JSON.stringify(v); } catch { /* C-001：不可序列化就无法落盘——返回 null 即「不卸载」，走上层原路径 */ return null; }
     if (serialized === undefined) return null;
     kind = '__bigJson';
   }
@@ -127,7 +127,7 @@ function offloadToolCall(runId, data) {
 }
 
 function safeJson(v) {
-  try { return JSON.stringify(v); } catch { return ''; }
+  try { return JSON.stringify(v); } catch { /* C-001：不能序列化就返回空串，调用方按「无内容」处理（仅日志/展示用途） */ return ''; }
 }
 
 // 分页拉取（渲染层展开/滚动时调用）：按字符偏移切片，UTF-8 整读后切

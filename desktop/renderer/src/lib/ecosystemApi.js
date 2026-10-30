@@ -11,7 +11,7 @@ const BASE_KEY = 'mj_eco_api_base';
 const TIMEOUT_MS = 5000;
 
 export function getEcosystemApiBase() {
-  try { return localStorage.getItem(BASE_KEY) || ''; } catch { return ''; }
+  try { return localStorage.getItem(BASE_KEY) || ''; } catch { /* C-001：localStorage 不可用（隐私模式/配额满）⇒ 空串=云端未配置，调用方回退本地资产 */ return ''; }
 }
 
 export function setEcosystemApiBase(url) {
@@ -33,7 +33,10 @@ async function getJson(path) {
     const res = await fetch(`${base}${path}`, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
     if (!res.ok) return null;
     return await res.json();
-  } catch {
+  } catch (e) { /* C-001：网络/超时/解析失败按「云端不可用」回退本地（文件头的既有契约） */
+    // 用 debug 级：每次拉取失败都会走这里，warn 会在断网时刷屏；但完全不留痕会让「云端一直连不上」无从排查。
+    // 文案用英文：本文件在 renderer/src 内且是纯 .js（不引 i18n 运行时），中文日志会被 i18n-scan 判为裸中文残留。
+    console.debug('[eco] remote endpoint unavailable, falling back to local assets:', path, e?.message || e);
     return null;
   } finally {
     clearTimeout(timer);

@@ -75,7 +75,7 @@ const result = esbuild.buildSync({
   external: ['react', 'react-dom', 'react-dom/server', 'react/jsx-runtime'],
   define: { 'process.env.NODE_ENV': '"production"' },
   format: 'cjs', platform: 'browser', jsx: 'automatic',
-  loader: { '.jsx': 'jsx', '.tsx': 'tsx', '.js': 'jsx', '.mjs': 'jsx', '.png': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
+  loader: { '.jsx': 'jsx', '.tsx': 'tsx', '.js': 'jsx', '.mjs': 'jsx', '.png': 'dataurl', '.mp3': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
   write: false, logLevel: 'silent',
   stdin: {
     contents: [

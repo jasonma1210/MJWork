@@ -7,6 +7,7 @@
 // 关键失败 → 组 paused（等待重新规划/人工处置）；非关键失败 → 降级继续（聚合附警告）。
 // 写入全部经由本模块的同步 better-sqlite3 事务（主进程单线程，天然串行，无并发写脏数据）。
 
+const { safeParseJson } = require('./jsonSafe');
 const TASK_TRANSITIONS = {
   pending: ['queued', 'skipped'],
   // T6-4（§5.1）：quota_suspend 是派发前被配额闸拦下的落点——任务退出可派发集合但**不是失败**。
@@ -83,7 +84,7 @@ class TaskStore {
   getGroup(groupId) {
     const g = this.db.prepare('SELECT * FROM task_groups WHERE group_id = ?').get(groupId);
     if (!g) return null;
-    return { ...g, dag: safeParse(g.dag_json), result: safeParse(g.result_json), tasks: this.listTasks(groupId) };
+    return { ...g, dag: safeParseJson(g.dag_json), result: safeParseJson(g.result_json), tasks: this.listTasks(groupId) };
   }
 
   listGroups({ limit = 30 } = {}) {
@@ -103,8 +104,8 @@ class TaskStore {
         totalTasks: g.total_tasks,
         doneTasks: g.done_tasks,
         failedTasks: g.failed_tasks,
-        dag: safeParse(g.dag_json),
-        result: safeParse(g.result_json),
+        dag: safeParseJson(g.dag_json),
+        result: safeParseJson(g.result_json),
       }));
   }
 
@@ -122,7 +123,7 @@ class TaskStore {
     const cap = Math.min(200, Math.max(1, Math.trunc(Number(limit) || 50)));
     return this.db.prepare('SELECT * FROM task_groups WHERE thread_id = ? ORDER BY created_at DESC LIMIT ?')
       .all(t, cap)
-      .map((g) => ({ ...g, dag: safeParse(g.dag_json), result: safeParse(g.result_json) }));
+      .map((g) => ({ ...g, dag: safeParseJson(g.dag_json), result: safeParseJson(g.result_json) }));
   }
 
   /**
@@ -147,7 +148,7 @@ class TaskStore {
       WHERE project_path = ? OR (project_path IS NULL AND cwd = ?)
       ORDER BY created_at DESC
       LIMIT ?`).all(p, p, cap)
-      .map((g) => ({ ...g, dag: safeParse(g.dag_json), result: safeParse(g.result_json) }));
+      .map((g) => ({ ...g, dag: safeParseJson(g.dag_json), result: safeParseJson(g.result_json) }));
   }
 
   // R6（2026-10-16，用户实测反馈）：删除任务组——否则终态组永远留在任务面板。
@@ -728,7 +729,7 @@ class TaskStore {
       groupId: r.group_id,
       taskId: r.task_id || null,
       type: r.type,
-      payload: safeParse(r.payload_json),
+      payload: safeParseJson(r.payload_json),
       createdAt: Number(r.created_at) || 0,
     }));
   }
@@ -757,22 +758,17 @@ function dependsTransitively(byId, task, targetId, visiting) {
 function rowToTask(r) {
   return {
     taskId: r.task_id, groupId: r.group_id, seq: r.seq, title: r.title, prompt: r.prompt,
-    dependsOn: safeParse(r.depends_on) || [], critical: !!r.critical,
+    dependsOn: safeParseJson(r.depends_on) || [], critical: !!r.critical,
     maxRetry: r.max_retry, timeoutMs: r.timeout_ms, status: r.status, retryCount: r.retry_count,
-    result: safeParse(r.result_json), error: r.error, workerId: r.worker_id,
+    result: safeParseJson(r.result_json), error: r.error, workerId: r.worker_id,
     startedAt: r.started_at, finishedAt: r.finished_at,
     // M5 / T5-3：等待态与被动认领的读取面。必须在此暴露，否则 _wouldCycle 读 t.waitingOn、
     // settleWaitingTasks 读 t.waitingOn、waitStats 读 t.waitCount 全部恒为 undefined，
     // 环检测与唤醒判定集体失真（静默失效，不报错——最危险的那种）。
     ownerMemberId: r.owner_member_id, claimedAt: r.claimed_at,
-    waitingOn: safeParse(r.waiting_on_json) || [],
+    waitingOn: safeParseJson(r.waiting_on_json) || [],
     waitDeadlineAt: r.wait_deadline_at, waitCount: r.wait_count || 0,
   };
-}
-
-function safeParse(s) {
-  if (s == null) return null;
-  try { return JSON.parse(s); } catch { return null; }
 }
 
 // M5 / T5-3：等待时长入参的边界收敛（单一事实来源）。非法/缺省一律回落 fallback，

@@ -5,10 +5,19 @@
 
 const { execFile } = require('child_process');
 
+// C-004：三档 gh 超时按语义拆开（此前 10000/15000/60000 散落，且 60000 出现 4 次）。
+// 不合并成一档：--version 是毫秒级、auth status 要读本地配置、pr create 要走网络。
+/** gh 探测（10s）：--version 属毫秒级，留足冷启动即可 */
+const GH_PROBE_TIMEOUT_MS = 10000;
+/** gh 登录态（15s）：读本地配置 + 可能的 token 校验 */
+const GH_AUTH_TIMEOUT_MS = 15000;
+/** gh 写/网络操作（60s）：pr create / comment / review 都要走 GitHub API */
+const GH_TIMEOUT_MS = 60000;
+
 // gh 是否安装（stdout 形如 "gh version 2.62.0 (2025-...)"）
 function ghAvailable(execFn = execFile) {
   return new Promise((resolve) => {
-    execFn('gh', ['--version'], { timeout: 10000 }, (error, stdout) => {
+    execFn('gh', ['--version'], { timeout: GH_PROBE_TIMEOUT_MS }, (error, stdout) => {
       resolve(!error && /gh version/i.test(stdout || ''));
     });
   });
@@ -17,7 +26,7 @@ function ghAvailable(execFn = execFile) {
 // gh 登录态（gh auth status 退出码 0 = 已登录）
 function ghAuthed(execFn = execFile) {
   return new Promise((resolve) => {
-    execFn('gh', ['auth', 'status'], { timeout: 15000 }, (error, stdout, stderr) => {
+    execFn('gh', ['auth', 'status'], { timeout: GH_AUTH_TIMEOUT_MS }, (error, stdout, stderr) => {
       resolve({ ok: !error, detail: String((error ? stderr : stdout) || '').trim().slice(0, 500) });
     });
   });
@@ -31,7 +40,7 @@ function createPullRequest({ cwd, title, body = '', base = '', draft = false }, 
     const args = ['pr', 'create', '--title', String(title), '--body', String(body || '')];
     if (base && String(base).trim()) args.push('--base', String(base).trim());
     if (draft) args.push('--draft');
-    execFn('gh', args, { cwd, timeout: 60000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+    execFn('gh', args, { cwd, timeout: GH_TIMEOUT_MS, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
       const out = String(stdout || '').trim();
       if (error) {
         resolve({ ok: false, error: String(stderr || out || error.message || '').trim().slice(0, 500) });
@@ -107,7 +116,7 @@ function prView({ cwd, number }, execFn = execFile) {
     if (!Number.isInteger(n) || n <= 0) return { ok: false, error: 'PR 编号非法' };
     const r = await ghRun(['pr', 'view', String(n), '--json',
       'number,title,body,author,state,baseRefName,headRefName,additions,deletions,changedFiles,statusCheckRollup,reviews,comments'],
-      { cwd, timeout: 60000 }, execFn);
+      { cwd, timeout: GH_TIMEOUT_MS }, execFn);
     if (!r.ok) return r;
     try {
       const p = JSON.parse(r.stdout);
@@ -197,7 +206,7 @@ function prReview({ cwd, number, event = 'comment', body = '' }, execFn = execFi
     }
     const args = ['pr', 'review', String(n), '--event', ev];
     if (text) args.push('--body', text.slice(0, 60000));
-    const r = await ghRun(args, { cwd, timeout: 60000 }, execFn);
+    const r = await ghRun(args, { cwd, timeout: GH_TIMEOUT_MS }, execFn);
     if (!r.ok) return r;
     return { ok: true, event: ev, number: n, message: `已提交 ${ev} 审查` };
   })();
@@ -212,7 +221,7 @@ function prComment({ cwd, number, body, file, line }, execFn = execFile) {
     if (!Number.isInteger(n) || n <= 0) return { ok: false, error: 'PR 编号非法' };
     if (!text) return { ok: false, error: '评论内容不能为空' };
     const args = ['pr', 'comment', String(n), '--body', text.slice(0, 20000)];
-    const r = await ghRun(args, { cwd, timeout: 60000 }, execFn);
+    const r = await ghRun(args, { cwd, timeout: GH_TIMEOUT_MS }, execFn);
     if (!r.ok) return r;
     return {
       ok: true,

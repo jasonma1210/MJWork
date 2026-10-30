@@ -59,7 +59,7 @@ export function normalizeUrl(raw) {
     u.hash = '';
     const out = u.toString();
     return out.endsWith('/') ? out.slice(0, -1) : out;
-  } catch {
+  } catch { /* C-001：不是合法 URL（模型偶发给出裸域名/描述文本）⇒ 原样返回，由下游按字符串处理 */ 
     return s;
   }
 }
@@ -67,7 +67,7 @@ export function normalizeUrl(raw) {
 export function hostOf(raw) {
   try {
     return new URL(String(raw || '')).hostname.toLowerCase();
-  } catch {
+  } catch { /* C-001：取不到 host 返回空串；调用方按「无来源站点」处理（代价是该条不参与同站去重） */ 
     return '';
   }
 }

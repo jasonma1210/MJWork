@@ -164,6 +164,7 @@ function latestUserText(messages, limit = INTENT_TEXT_LIMIT) {
 }
 
 /** 带超时的 promise 包装：到点即回落（底层连接继续在后台收敛，后续调用仍可经 connect-on-demand 命中）。 */
+// C-004：与其它模块同名但**语义不同**（返回/抛错形态不一样），别为「看起来重复」而合并。
 function withTimeout(promise, ms) {
   return Promise.race([
     promise,

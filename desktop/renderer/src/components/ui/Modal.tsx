@@ -76,9 +76,7 @@ function foreignDialogOwnsFocus(root: HTMLElement | null): boolean {
   if (root.contains(active)) return false;
   try {
     return !!active.closest('[aria-modal="true"],[role="dialog"]');
-  } catch {
-    return false;
-  }
+  } catch { /* 选择器不会变（字面量），这里只兜「元素不在文档树/已卸载」：此时判定为「无人抢占键盘」= 退回本面板自理，与改动前行为一致 */ return false; }
 }
 
 export interface ModalProps {

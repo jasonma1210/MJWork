@@ -46,7 +46,9 @@ function setArtifactStoreProvider(fn) {
 function resolveArtifactStore(explicit) {
   if (explicit) return explicit;
   if (!storeProvider) return null;
-  try { return storeProvider() || null; } catch { return null; }
+  // null 会被上层读成「本次没有 artifact store」，与「装配点没注入」同形；provider 抛错时
+  // 真因（库初始化失败）会彻底消失，故留痕。
+  try { return storeProvider() || null; } catch (e) { console.warn('[artifactProduct] artifact store provider 抛错，按未注入处理：', e?.message || e); return null; }
 }
 
 function fail(code, error, extra = {}) {

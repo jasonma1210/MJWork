@@ -13,7 +13,7 @@ const { RETRYABLE_CHANNELS } = require('./registry');
 let utilityProcess = null;
 try {
   utilityProcess = require('electron').utilityProcess || null;
-} catch { utilityProcess = null; }
+} catch { /* C-001：非 Electron 宿主（单测/纯 Node）require 不到 electron，能力探测失败=无 utilityProcess，正常 */ utilityProcess = null; }
 
 const CHILD_ENTRY = path.join(__dirname, 'childEntry.js');
 // 子进程只承载 Playwright 驱动（浏览器是它再 spawn 的独立进程），512MB 堆上限足够

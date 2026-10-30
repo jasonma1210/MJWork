@@ -54,8 +54,11 @@ check('开关回调走 onApprovalSettingsChange（与档位设置同一状态源
   /onApprovalSettingsChange\?\.\(\{\s*\.\.\.approvalSettings,\s*approval_notice/.test(settings || ''));
 
 // ── ③ 持久化同步：主进程靠 preferences 读取，渲染层必须同步 ──
-check('App.jsx 把 approval_settings 同步到主进程偏好',
-  /localSetPreference\?\.\(\{[\s\S]{0,80}approval_settings/.test(app || ''));
+// F-004：这段同步随偏好持久化搬进了 hooks/useUiPreferences.ts，判据跟到新家；
+// 同时也要求 App.jsx 真的接了这个 hook（否则 hook 内正则绿、接线已断）。
+check('App 把 approval_settings 同步到主进程偏好',
+  /localSetPreference\?\.\(\{[\s\S]{0,80}approval_settings/.test(read('hooks/useUiPreferences.ts') || '')
+  && /\} = useUiPreferences\(\)/.test(app || ''));
 
 // ── ④ 双语 key 齐备且占位一致 ──────────────────
 const KEYS = [

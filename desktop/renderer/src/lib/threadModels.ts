@@ -28,13 +28,17 @@ type AnyProvider = {
   models?: Array<Record<string, unknown>>;
 };
 
+// 读失败只告警一次：readAll 会在每次切会话/取模型时调用，坏数据会按次刷屏。
+let readAllWarned = false;
 function readAll(): Record<string, ModelRef> {
   try {
     const raw = localStorage.getItem(THREAD_MODELS_KEY);
     if (!raw) return {};
     const obj = JSON.parse(raw) as Record<string, ModelRef>;
     return obj && typeof obj === 'object' ? obj : {};
-  } catch {
+  } catch (e) {
+    // 返回 {} 的语义是「没有任何会话绑定模型」⇒ 用户之前设过的会话模型全部静默丢失并回落默认
+    if (!readAllWarned) { readAllWarned = true; console.warn('[threadModels] read per-thread model bindings failed, falling back to defaults:', e); }
     return {};
   }
 }

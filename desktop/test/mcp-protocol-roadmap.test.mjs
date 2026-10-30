@@ -12,7 +12,6 @@
 //   ③ `PROTOCOL_VERSION` 必须是支持集里最新的一版（防「提议的版本比声称支持的还旧」）；
 //   ④ 弃用能力清单必须非空且 ⊆ 当前声明能力（防清单写成空集变成空过）；
 //   ⑤ 到期日必须可解析且晚于今天（防写成过去日期后无人复核）。
-import assert from 'node:assert/strict';
 import {
   PROTOCOL_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS,

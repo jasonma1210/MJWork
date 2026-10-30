@@ -20,7 +20,6 @@
 //      头部一直写着要锁「每层配额不生效」，但此前 10 条断言里没有一条检查「每层取几条」——
 //      变异验证 M4 把 LAYER_QUOTA 全放大到 50，本套件仍 10/10 全绿（同变异下 memory-scope /
 //      memory-team 都红了）。「库房里有一条自称锁配额的门禁」是最坏的一种安全感，故补行为断言。
-import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

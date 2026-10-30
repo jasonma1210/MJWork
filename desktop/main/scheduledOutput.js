@@ -66,7 +66,11 @@ function taskWorkDir(baseDir, taskName) {
 
 // app.getPath 可能抛（容器/无 Documents 目录的环境）：取不到给空串，由调用方兜底。
 function safeAppPath(app, name) {
-  try { return String((app && app.getPath && app.getPath(name)) || ''); } catch { return ''; }
+  try { return String((app && app.getPath && app.getPath(name)) || ''); } catch {
+    // C-001：容器 / 无 Documents 目录等环境下 getPath 抛属预期。空串由调用方回落到 userData，
+    // 两处都不可用时 ensureTaskWorkDir 返回 ''，上层已有一条告警可查 —— 这里不再重复刷屏。
+    return '';
+  }
 }
 
 // 建好产出目录并返回绝对路径：优先 Documents，取不到（或被建失败）则兜底 userData。
@@ -132,6 +136,8 @@ async function appendRunRecord({ baseDir, taskName, schedule, run, at = new Date
   try {
     await fs.promises.access(file);
   } catch {
+    // C-001：access 抛 = 文件尚不存在（ENOENT），这正是「首次写入要加标题前缀」的正常分支，
+    // 不是降级。其余错误（权限等）也走同一分支：顶多多一个前缀，内容不丢。
     prefix = `# ${String(taskName || '定时任务')} · ${localDate(at)}\n\n`
       + `- 计划：\`${String(schedule || '')}\`\n\n---\n\n`;
   }
@@ -200,7 +206,11 @@ function scheduledRunContext({ app, taskName, contextCwd } = {}) {
       console.warn(`[scheduled] 任务「${String(taskName || '')}」的参考项目目录已不存在（${ctxDir}），本次按「无项目上下文」执行`);
       ctxDir = '';
     }
-  } catch { ctxDir = ''; }
+  } catch {
+    // C-001：existsSync 基本不抛（内部已吞 ENOENT/EPERM），这里的兜底是防「路径对象异常」；
+    // 后果与目录不存在同形 —— 按「无项目上下文」执行，上面那条 warn 已覆盖可观测性。
+    ctxDir = '';
+  }
   // 无条件追加（有目录就下发契约）：与会话有没有 cwd 无关 —— 那正是上一版对事故场景零生效的原因
   return { dir, appendPrompt: dir ? buildScheduledPrompt({ dir, contextCwd: ctxDir }) : '' };
 }

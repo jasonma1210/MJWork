@@ -147,7 +147,7 @@ function windowsSandboxPlan() {
 /** 受保护路径的 deny ACE：目录用 (OI)(CI)W 传导给子项，文件用裸 W。 */
 function writeDenyAce(p, user) {
   let isDir = true;
-  try { isDir = fs.statSync(p).isDirectory(); } catch { isDir = true; } // 探测不到时按目录处理（.git/.mjcode 常态为目录）
+  try { isDir = fs.statSync(p).isDirectory(); } catch { /* 探测不到按目录处理 ⇒ 用 (OI)(CI)W（更宽的 deny，方向偏安全），.git/.mjcode 常态也是目录 */ isDir = true; }
   return isDir ? `${user}:(OI)(CI)W` : `${user}:W`;
 }
 

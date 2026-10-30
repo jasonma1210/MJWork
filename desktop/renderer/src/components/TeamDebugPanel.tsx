@@ -61,9 +61,7 @@ function brief(data: unknown): string {
   try {
     const s = typeof data === 'string' ? data : JSON.stringify(data);
     return String(s ?? '').slice(0, 600);
-  } catch {
-    return '[unserializable]';
-  }
+  } catch { /* 循环引用等无法序列化：占位符本身就是给人看的结论（面板里能区分「没数据」与「无法展示」） */ return '[unserializable]'; }
 }
 
 export default function TeamDebugPanel({ open, onClose }: { open: boolean; onClose: () => void }) {

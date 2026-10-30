@@ -81,7 +81,11 @@ function redactUserDataPath(userData) {
 }
 
 function readJsonSafe(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { /* C-001：诊断导出场景下「某文件读不出/解析不了」本身就是被诊断的事实 */
+    // 静默跳过会让用户拿到的诊断包里正好缺了最能说明问题的那一项，所以留痕（导出是低频手动操作）。
+    console.warn('[diag] 诊断文件读取失败，将从导出内容中缺失:', file, e?.message || e);
+    return null;
+  }
 }
 
 // 收集诊断条目（纯函数，userData 显式传入便于测试）
@@ -157,7 +161,7 @@ function collectEntries(userData) {
 }
 
 function listFiles(dir, pred) {
-  try { return fs.readdirSync(dir).filter(pred); } catch { return []; }
+  try { return fs.readdirSync(dir).filter(pred); } catch { /* C-001：目录不存在=该功能没被用过，空列表是正常输入，不是降级 */ return []; }
 }
 
 // P0-7：导出前内容清单——让用户/UI 在打包前就能看到「将包含什么」，

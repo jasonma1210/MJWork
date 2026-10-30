@@ -12,7 +12,7 @@ function summarizeArgs(args) {
   try {
     const s = typeof args === 'string' ? args : JSON.stringify(args || {});
     return s.length > ARGS_SUMMARY_MAX ? `${s.slice(0, ARGS_SUMMARY_MAX)}…` : s;
-  } catch { return ''; }
+  } catch { /* 循环引用参数（如挂了 AbortSignal/句柄）序列化不了：这里只产出活动流展示串，空串=不展示参数，不影响工具执行本身 */ return ''; }
 }
 
 // 从 Worker 结论文本提取产物文件路径（粗提取：反引号内以 / 或 ./ 开头的路径）。

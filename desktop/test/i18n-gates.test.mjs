@@ -12,7 +12,6 @@
 //   ③ **变异验证 i18n-modcheck**：不存在的模块必须 exit 1（防它变成「读不到就跳过」）；
 //   ④ **空过防护**：两条脚本无参时都必须 exit 2（用法错误）
 //      —— 若哪天真被改成「无参也算过」，这里立刻红。
-import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';

@@ -11,7 +11,6 @@
 // 判据设计要点：篡改检测必须能用**真实篡改**触发（改内容 / 删中间行 两种），
 // 否则「链校验通过」只是因为它什么都没检。
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';

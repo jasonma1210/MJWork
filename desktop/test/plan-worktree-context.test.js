@@ -146,7 +146,10 @@ check('Composer 提供本地/隔离工作区切换', () => {
 
 check('隔离模式下实际执行目录切到 worktree 副本', () => {
   assert.match(chat, /const cwd = \(runMode === 'worktree' && worktree\?\.path\)/);
-  assert.match(runHook, /window\.mjcode\.createWorktree/);
+  // F-005（2026-10-30）：签名补类型后，桥调用改走「整桥别名」形式（const mj = window.mjcode → mj?.createWorktree?.(...)），
+  // 因为 test/bridge-parity.test.mjs 只认别名形式、看不穿函数包装。断言意图不变：**确实调用了 createWorktree 桥方法**
+  // （`\.createWorktree` + 调用括号；别名指向真桥方法由 bridge-parity 保证）。
+  assert.match(runHook, /\.createWorktree\??\.?\(/);
 });
 
 // ── D3 上下文治理 ──

@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Button from './ui/Button';
 import InlineAlert from './InlineAlert';
-import { IconBot, IconUsers, IconZap, IconPlus } from './icons';
+import { IconBot, IconUsers, IconZap } from './icons';
 import { useI18n } from '../i18n';
 import { api } from '../lib/api';
 import { REPEATS, planSummary, type RepeatId, type ValidType } from '../lib/schedulePresets';

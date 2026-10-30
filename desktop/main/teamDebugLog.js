@@ -78,7 +78,8 @@ function ensureDir() {
   try {
     fs.mkdirSync(cfg.dir, { recursive: true });
     return true;
-  } catch {
+  } catch { /* C-001：建目录失败 ⇒ 返回 false 让调用方按「本轮不落盘」处理。
+      日志设施自身故障时无处可记（记给谁都会走同一条路），因此这里只能以返回值表达，且绝不影响团队任务 */
     return false;
   }
 }
@@ -125,7 +126,8 @@ function appendLine(line) {
     }
     rotateIfNeeded(file);
     if (!fileBytes) {
-      try { fileBytes = fs.statSync(file).size; } catch { fileBytes = 0; }
+      try { fileBytes = fs.statSync(file).size; } catch { /* C-001：读不到大小按 0 计 —— 代价是本轮不触发轮转；
+          下一拍仍会重试 stat，不改写入路径，也绝不让调试日志影响团队任务 */ fileBytes = 0; }
     }
     fs.appendFileSync(file, `${line}\n`);
     fileBytes += Buffer.byteLength(line) + 1;
@@ -197,7 +199,7 @@ function status() {
   if (cfg.dir) {
     const t = fileForToday();
     file = t.file;
-    try { bytes = fs.statSync(file).size; } catch { bytes = 0; }
+    try { bytes = fs.statSync(file).size; } catch { /* C-001：同上——状态查询里的字节数取不到就报 0，纯展示 */ bytes = 0; }
   }
   return {
     ok: true,

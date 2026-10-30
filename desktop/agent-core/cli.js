@@ -17,6 +17,13 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { runAgent } from './index.js';
 
+// C-004：与 main/tools/timeouts.js 的 GIT_IMPL_TIMEOUT_MS(30000) / GREP_IMPL_TIMEOUT_MS(15000) 同值。
+// 引擎是 ESM 独立包、不得 require 宿主 main/（否则引擎就成了「离不开桌面端」的库），
+// 故保留本地副本；两边一旦漂移，表现为「引擎等得比实现侧更久/更短」的时序 bug，很难查，
+// 所以在此显式标注对账来源，改一边必须同时改另一边。
+const GIT_CMD_TIMEOUT_MS = 30000;
+const GREP_CMD_TIMEOUT_MS = 15000;
+
 const HELP_TEXT = `mj-code：MJ Code headless Agent CLI
 
 用法：
@@ -72,7 +79,7 @@ function createLocalToolHandlers(defaultCwd) {
   });
 
   const runGit = (args, c) => new Promise((resolve) => {
-    execFile('git', args, { cwd: cwdOf(c), timeout: 30000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile('git', args, { cwd: cwdOf(c), timeout: GIT_CMD_TIMEOUT_MS, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
       resolve({ stdout: (stdout || '').slice(0, 50000), stderr: (stderr || '').slice(0, 5000), exitCode: error?.code || 0, error: error ? `git ${args[0]} 失败: ${error.message}` : null });
     });
   });
@@ -128,7 +135,7 @@ function createLocalToolHandlers(defaultCwd) {
       if (include) args.push('--include', String(include));
       args.push(String(pattern), p || '.');
       return new Promise((resolve) => {
-        execFile('grep', args, { cwd: cwdOf(c), timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout) => {
+        execFile('grep', args, { cwd: cwdOf(c), timeout: GREP_CMD_TIMEOUT_MS, maxBuffer: 5 * 1024 * 1024 }, (error, stdout) => {
           resolve({ matches: (stdout || '').slice(0, 20000) });
         });
       });
@@ -320,12 +327,15 @@ async function main() {
   // 报告附上 git diff 输出（供云端任务回传审查变更）
   try {
     const d = await new Promise((resolve) => {
-      execFile('git', ['diff'], { cwd, timeout: 30000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout) => {
+      execFile('git', ['diff'], { cwd, timeout: GIT_CMD_TIMEOUT_MS, maxBuffer: 5 * 1024 * 1024 }, (error, stdout) => {
         resolve((stdout || '').slice(0, 100000));
       });
     });
     report.diff = d;
-  } catch {
+  } catch (e) {
+    // diff='' 在报告里与「本次没有任何改动」同形（云端审查据此判定「无变更」），必须留痕。
+    // 另注：内层回调刻意忽略 error（git 不可用/非仓库时 stdout 为空），故正常路径也走不到这里。
+    console.warn(`[mj-code] git diff 取不到，报告按无改动回传: ${e?.message || e}`);
     report.diff = '';
   }
 

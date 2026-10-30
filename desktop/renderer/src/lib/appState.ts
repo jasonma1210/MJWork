@@ -35,7 +35,9 @@ export function applyThemeToDocument(theme: string): void {
   let accent: string | null = null;
   try {
     accent = localStorage.getItem('mj_accent');
-  } catch {
+  } catch (e) {
+    // 读不到 ⇒ 自定义强调色回落到默认值（用户会以为「我的配色丢了」）；只在本函数调用时发生，不刷屏
+    console.warn('[appState] read accent color failed, falling back to default:', e);
     accent = null;
   }
   applyAccent(accent);

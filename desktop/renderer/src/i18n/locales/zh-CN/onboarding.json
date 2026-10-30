@@ -35,6 +35,7 @@
   "namePlaceholder": "服务名称（如 DeepSeek）",
   "urlPlaceholder": "接口地址（如 https://api.deepseek.com/v1）",
   "modelIdPlaceholder": "模型 ID（如 deepseek-chat）",
+  "apiKey": "API Key（如 sk-...）",
   "projectSub": "MJ Nexus 将在项目目录中执行命令、读写文件与 Git 操作。",
   "skipProject": "跳过，暂不创建项目",
   "firstTaskSub": "选一个建议开始，或直接进入自己输入。",

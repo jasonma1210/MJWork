@@ -28,6 +28,8 @@ function listModels() {
       .map((f) => path.join(dir, f))
       .sort((a, b) => fs.statSync(a).size - fs.statSync(b).size); // 优先小模型（更快出结果）
   } catch {
+    // C-001：目录不存在 = 用户没装 whisper 模型，属**正常状态**而非降级；
+    // 返回空列表后 UI 会走「未安装」引导，用户看得到，因此不记日志。
     return [];
   }
 }

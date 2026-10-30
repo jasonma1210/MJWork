@@ -104,8 +104,13 @@ check('面板开关快捷键已注册（⌘B / ⌘⌥B / ⌘P）', () => {
 });
 
 check('布局状态持久化（刷新后保持）', () => {
-  assert.match(app, /mj_sidebar_open/);
-  assert.match(app, /mj_pane_open/);
+  // F-004：持久化实现随布局状态外置到 hooks/usePaneLayout.ts（App.jsx 只做装配）。
+  // 判据搬到新家的同时**补一条接线断言**：只查 hook 内部是不够的——把 App.jsx 里的
+  // usePaneLayout(...) 删掉，hook 里的正则照样绿，而「刷新后保持」实际已经失效。
+  const pane = read('hooks/usePaneLayout.ts');
+  assert.match(pane, /mj_sidebar_open/);
+  assert.match(pane, /mj_pane_open/);
+  assert.match(app, /} = usePaneLayout\(\{ projectPath:/, 'App 未接线 usePaneLayout（持久化的 hook 成了孤儿）');
 });
 
 check('源码内无残留裸色（bg-black/、red-400、green-400、yellow-）', () => {

@@ -54,7 +54,10 @@ function supportedExt() {
 async function parseContent(ext, buf, ctx = {}) {
   const { filePath = null, onStage = null, shouldCancel = null } = ctx;
   const stage = (n) => { try { if (onStage) onStage(n); } catch { /* 进度回调异常不影响解析 */ } };
-  const cancelled = () => { try { return !!(shouldCancel && shouldCancel()); } catch { return false; } };
+  // 取消判定抛错 ⇒ 返回「未取消」= 用户点了取消但解析照跑（OCR/PDF 是长任务），且无痕迹。
+  // 只在首次留痕，避免逐块刷屏。
+  let cancelProbeWarned = false;
+  const cancelled = () => { try { return !!(shouldCancel && shouldCancel()); } catch (e) { if (!cancelProbeWarned) { cancelProbeWarned = true; console.warn('[kbParse] 取消判定抛错，本次解析将无法中途取消：', e?.message || e); } return false; } };
 
   if (TEXT_EXT.has(ext)) {
     // 文本类：带 BOM 的按 UTF-8 去 BOM；不做智能编码猜测（猜错比报错更坏）

@@ -395,7 +395,7 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
                         className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
                       <input placeholder={t('onboarding.urlPlaceholder')} value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })}
                         className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
-                      <input placeholder="API Key" type="password" value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                      <input placeholder={t('onboarding.apiKey')} type="password" value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })}
                         className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />
                       <input placeholder={t('onboarding.modelIdPlaceholder')} value={form.model_id} onChange={(e) => setForm({ ...form, model_id: e.target.value })}
                         className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-accent" />

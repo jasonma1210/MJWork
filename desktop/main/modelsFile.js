@@ -41,7 +41,7 @@ function serviceNamesOf(raw) {
     const list = JSON.parse(String(raw || ''));
     if (!Array.isArray(list)) return [];
     return list.map((e) => String(e?.name || e?.vendor || e?.url || e?.base_url || '')).filter(Boolean).slice(0, 20);
-  } catch { return []; }
+  } catch { /* C-001：审计辅助函数，解析失败只退化为「无服务名」，不影响主流程、也不改变上报内容 */ return []; }
 }
 
 function modelsFilePath() {

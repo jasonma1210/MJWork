@@ -230,6 +230,36 @@ for (const [key, re, label] of (CHAPTER_STYLE ? CLAIMS : [])) {
   }
 }
 
+// ── 4c) 测试快照自洽（T-002，2026-10-30）──────────────────────────────────
+// 背景：技术基线那一行写了一串指纹式数字（套件 312 / 总计 318 / 通过 315 …），其中
+// 「312 = 310 个 *.test.* + 2 个 smoke」是**人工同步**的。本轮之前只校验「N 套件」一处，
+// 已实际踩过「只改 312 不改 310」让同一行自相矛盾却照样过门禁（门禁只看了一部分输入）。
+// 这里**不引入任何环境相关数字**（通过/失败/跳过随平台变：Linux CI 的跳过数是 0，本机 darwin 是 3），
+// 只校验文档内部算术自洽 + 与现算套件数的推导关系，任何平台都成立：
+//   ① 套件数 = M 个 *.test.* + S 个 smoke
+//   ② 总计   = 套件数 + G 个前置门禁
+//   ③ 总计   = 通过 + 失败 + 跳过
+// 解析不出来时按**错误**处理而非跳过：否则改一版措辞就能让本条静默失效（fail-open）。
+if (CHAPTER_STYLE) {
+  const num = (re) => { const m = text.match(re); return m ? +m[1] : NaN; };
+  const nSuite = num(/\*{0,2}(\d+)\*{0,2}\s*套件/);
+  const nCases = num(/(\d+)\s*个\s*`?\*\.test\.\{?js,mjs\}?`?/);
+  const nSmoke = num(/(\d+)\s*个\s*smoke/);
+  const nTotal = num(/总计\s*\*{0,2}(\d+)/);
+  const nPass = num(/通过\s*\*{0,2}(\d+)/);
+  const nFail = num(/失败\s*\*{0,2}(\d+)/);
+  const nSkip = num(/跳过\s*\*{0,2}(\d+)/);
+  const nGate = num(/(\d+)\s*个前置门禁/);
+  const snapshot = { nSuite, nCases, nSmoke, nTotal, nPass, nFail, nSkip, nGate };
+  if (!Object.values(snapshot).every(Number.isFinite)) {
+    errors.push(`测试快照无法完整解析（${JSON.stringify(snapshot)}）——判据不得空过，故按错误处理（措辞改动请同步正则）`);
+  } else {
+    if (nCases + nSmoke !== nSuite) errors.push(`快照自相矛盾：${nCases} 个 *.test.* + ${nSmoke} 个 smoke ≠ ${nSuite} 套件`);
+    if (nSuite + nGate !== nTotal) errors.push(`快照自相矛盾：${nSuite} 套件 + ${nGate} 前置门禁 ≠ 总计 ${nTotal}`);
+    if (nPass + nFail + nSkip !== nTotal) errors.push(`快照自相矛盾：通过 ${nPass} + 失败 ${nFail} + 跳过 ${nSkip} ≠ 总计 ${nTotal}`);
+  }
+}
+
 // ── 5) 状态一致性：X 标「已修」，对应章级 R 必须也已回填（G2）──
 const xRows = lines
   .map((l, i) => ({ line: i + 1, text: l }))

@@ -1,4 +1,4 @@
-// @ts-nocheck -- T2-2 存量代码原样搬移（零行为变更）；渐进 TS 路线下补全类型属后续任务（T0-3 门禁只约束新文件扩展名）
+// F-005（2026-10-30）：摘除文件级类型检查豁免并补类型（正文零改动，只补签名与接口）。
 import { IconZap } from './icons';
 import InlineAlert from './InlineAlert';
 import WorktreeBar from './WorktreeBar';
@@ -20,11 +20,32 @@ import { useI18n } from '../i18n';
 //   点击语义也一并改了：从「直接发送」改为「填入输入框」—— 模板里含 {source} 这类占位，
 //   直接发出去等于把花括号当业务参数喂给模型，必须先让用户替换。
 
+export interface WelcomePageProps {
+  /** Composer 的整包接线（ChatArea 装配后整体透传）。类型直接从 Composer 自身参数派生：
+   *  Composer 补全/调整类型时本页自动跟随，不会出现「两处声明各自漂移」。
+   *  setInput 是 useState 的 setter 形态（字符串或更新函数都收），本页只按字符串用。 */
+  composerProps: Parameters<typeof Composer>[0];
+  /** 环境建议（基于项目真实状态生成），不足 4 条时用默认建议补齐 */
+  ambient: string[];
+  project: { path?: string; name?: string } | null;
+  /** 本轮是否**主动**选过项目（重启后残留的上次项目不算） */
+  projectPicked: boolean;
+  onOpenProjectPicker: () => void;
+  send: (text: string) => void;
+  modelWarning: boolean;
+  setModelWarning: (v: boolean) => void;
+  runMode: string;
+  worktree: { path?: string; branch?: string } | null;
+  setWorktree: (v: { path?: string; branch?: string } | null) => void;
+  setRunMode: (mode: string) => void;
+  setModeMsg: (msg: string) => void;
+}
+
 export default function WelcomePage({
   composerProps, ambient, project, projectPicked, onOpenProjectPicker,
   send, modelWarning, setModelWarning,
   runMode, worktree, setWorktree, setRunMode, setModeMsg,
-}) {
+}: WelcomePageProps) {
   const { t } = useI18n();
   return (
     <div className="flex-1 overflow-y-auto">
@@ -91,7 +112,7 @@ export default function WelcomePage({
       <WorktreeBar
         worktree={runMode === 'worktree' ? worktree : null}
         onClosed={() => { setWorktree(null); setRunMode('local'); }}
-        onMsg={(m) => setModeMsg(m)}
+        onMsg={(m: string) => setModeMsg(m)}
       />
       {/* P0-6（2026-10-22）：此处原本挂任务清单组件但从不传 runId。
           欢迎页属于「无会话」态，按定义不存在在役 run，组件首行 `if (!runId) return`

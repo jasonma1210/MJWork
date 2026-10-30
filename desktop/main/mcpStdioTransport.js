@@ -43,7 +43,7 @@ function createStdioTransport({ command, args = [], env, onLog, dispatch }) {
     for (const line of lines) {
       if (!line.trim()) continue;
       try { dispatch(transport.serverRef, JSON.parse(line)); }
-      catch { if (onLog) onLog(`非 JSON 输出: ${line.slice(0, 120)}`); }
+      catch { /* C-001：不是静默——下面立刻经 onLog 把该行首段报给 UI 日志（子进程往 stdout 打非协议内容） */ if (onLog) onLog(`非 JSON 输出: ${line.slice(0, 120)}`); }
     }
   });
   child.stderr.on('data', (d) => {

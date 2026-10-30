@@ -87,12 +87,12 @@ export function parseKeyValueLines(text: unknown, sep: '=' | ':'): { map: Record
 export function isHttpUrl(url: unknown): boolean {
   const s = String(url ?? '').trim();
   if (!/^https?:\/\//i.test(s)) return false;
+  // 解析失败 ⇒ 判「不可交主进程」，这是**校验器**的正确输出：调用方会把它变成用户可见的
+  // 「URL 不合法」条目，并非静默失败，故不另记日志（记了也只是重复一条表单错误）。
   try {
     const u = new URL(s);
     return !!u.hostname;
-  } catch {
-    return false;
-  }
+  } catch { /* 见上：校验器的失败结论会以 issues 形式回到界面 */ return false; }
 }
 
 /**

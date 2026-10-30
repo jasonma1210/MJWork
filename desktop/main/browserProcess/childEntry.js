@@ -36,14 +36,14 @@ function resolveLaunch(chromium) {
     try {
       chromium.executablePath({ channel });
       return { channel, label: channel === 'chrome' ? 'Google Chrome' : 'Microsoft Edge' };
-    } catch {
+    } catch { /* C-001：该渠道没装 ⇒ 记入 tried 继续下一个，属正常探测循环（全部失败会在末尾 throw 汇总） */
       tried.push(channel);
     }
   }
   try {
     chromium.executablePath();
     return { label: 'Playwright Chromium' };
-  } catch {
+  } catch { /* C-001：自带 Chromium 也没有 ⇒ 下面立刻 throw 并列出 tried，失败最终可见，不是静默降级 */
     tried.push('chromium');
   }
   throw new Error(
@@ -66,7 +66,7 @@ function clearLaunching(token) { if (launching === token) launching = null; }
 async function launchBrowser() {
   const chromium = loadPlaywright();
   const launchOpts = resolveLaunch(chromium);
-  const browser = await chromium.launch({ headless: true, ...launchOpts, timeout: 30000 });
+  const browser = await chromium.launch({ headless: true, ...launchOpts, timeout: LAUNCH_TIMEOUT_MS });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     locale: 'zh-CN',
@@ -116,6 +116,16 @@ async function assertLandedUrlPublic(page) {
 const EXTRACT_DEFAULT_LIMIT = 15000;
 const EXTRACT_MAX_LIMIT = 40000;
 
+// C-004：超时按**语义**分档（此前一律写裸 15000/30000，且与上面的「字符数 15000」同值不同义——
+// 那种巧合正是魔法数字最危险的地方：改一个数会连带另一个毫不相关的量）。
+// 三者不可合并：启动要等进程+协议握手，导航要等整页加载，交互只等元素可点/可填。
+/** Playwright 浏览器启动（30s）：冷启动 + CDP 握手 + 首个 context */
+const LAUNCH_TIMEOUT_MS = 30000;
+/** 页面导航（30s）：等 load/DOMContentLoaded，含首屏资源 */
+const NAVIGATE_TIMEOUT_MS = 30000;
+/** 交互动作（15s）：click / fill / selectOption / screenshot / innerText 只等目标就绪 */
+const ACTION_TIMEOUT_MS = 15000;
+
 const IMPL = {
   // probe：只解析不启动（测试与能力探测用）——返回 playwright 可用性与浏览器解析结果
   async probe() {
@@ -136,7 +146,7 @@ const IMPL = {
     // ② resolve-then-validate：堵「字面量过检、解析结果变内网」的 DNS rebinding 缝隙
     await assertResolvedPublic(parsed.hostname);
     const page = await ensurePage();
-    await page.goto(parsed.toString(), { waitUntil: ['load', 'domcontentloaded', 'networkidle'].includes(waitUntil) ? waitUntil : 'domcontentloaded', timeout: 30000 });
+    await page.goto(parsed.toString(), { waitUntil: ['load', 'domcontentloaded', 'networkidle'].includes(waitUntil) ? waitUntil : 'domcontentloaded', timeout: NAVIGATE_TIMEOUT_MS });
     // ③ 跳转落地复检（30x 由 Chromium 自动跟随，入口处看不到最终目标）
     await assertLandedUrlPublic(page);
     return { url: page.url(), title: await page.title() };
@@ -145,7 +155,7 @@ const IMPL = {
   async click({ selector } = {}) {
     if (!selector) throw new Error('selector 不能为空');
     const page = await ensurePage();
-    await page.click(String(selector), { timeout: 15000 });
+    await page.click(String(selector), { timeout: ACTION_TIMEOUT_MS });
     // 点击可能触发导航：等一小段时间让页面稳定再回传现状
     await page.waitForTimeout(500);
     // 点击触发的导航同样要过私网复检——否则「点页面里的链接」就是一条绕过通道
@@ -156,7 +166,7 @@ const IMPL = {
   async fill({ selector, value = '' } = {}) {
     if (!selector) throw new Error('selector 不能为空');
     const page = await ensurePage();
-    await page.fill(String(selector), String(value), { timeout: 15000 });
+    await page.fill(String(selector), String(value), { timeout: ACTION_TIMEOUT_MS });
     // 表单提交可能触发导航（搜索框/登录框），同样复检
     await page.waitForLoadState('domcontentloaded').catch(() => {});
     await assertLandedUrlPublic(page);
@@ -167,7 +177,7 @@ const IMPL = {
     if (!selector) throw new Error('selector 不能为空');
     const page = await ensurePage();
     const vals = Array.isArray(value) ? value.map(String) : [String(value)];
-    await page.selectOption(String(selector), vals, { timeout: 15000 });
+    await page.selectOption(String(selector), vals, { timeout: ACTION_TIMEOUT_MS });
     // 联动下拉可能触发导航，同样复检
     await assertLandedUrlPublic(page);
     return { ok: true, selector: String(selector), value: vals };
@@ -178,7 +188,7 @@ const IMPL = {
     const page = await ensurePage();
     // 内网页面的截图同样是把内网内容带出来，读取前必须过私网复检
     await assertLandedUrlPublic(page);
-    await page.screenshot({ path: String(outPath), fullPage: !!fullPage, timeout: 15000 });
+    await page.screenshot({ path: String(outPath), fullPage: !!fullPage, timeout: ACTION_TIMEOUT_MS });
     const { statSync } = require('fs');
     return { path: String(outPath), bytes: statSync(outPath).size };
   },
@@ -191,7 +201,7 @@ const IMPL = {
     const max = Math.min(Math.max(Number(limit) || EXTRACT_DEFAULT_LIMIT, 1), EXTRACT_MAX_LIMIT);
     let text;
     if (selector) {
-      text = await page.locator(String(selector)).innerText({ timeout: 15000 });
+      text = await page.locator(String(selector)).innerText({ timeout: ACTION_TIMEOUT_MS });
     } else {
       text = await page.evaluate(() => {
         // 此回调在浏览器页面上下文执行，document 属于页面而非 Node

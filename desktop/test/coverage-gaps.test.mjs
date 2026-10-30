@@ -2,8 +2,6 @@
 // 下列模块此前**不被任何测试引用**，合计 405 行，其中包含「数据库不可用如何上报」
 // 「编辑失败如何给模型可行动信息」「detached 是否真的自成进程组」「语音缺失是否 fail-closed」
 // 这些一旦错了就直接影响用户可见行为的判断。一个文件覆盖四个模块，避免套件数膨胀。
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 

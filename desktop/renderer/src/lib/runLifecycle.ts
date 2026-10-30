@@ -9,16 +9,20 @@
 //     「（已停止）」会让同一轮出现两条 assistant，其中一条是假的。
 //  · onSuspended —— 引擎主动暂停（token 触顶 / 轮次上限 / 模型超时 / 整任务墙钟）。
 //     这是**正常状态**，不是错误：标记为 suspended，用户可「继续」。
+import type { RunState, RunSummary } from './runRegistry';
+
 export interface RunLifecycleDeps {
   /** makeRunState 产出的运行快照（就地写入 suspended 字段） */
-  rs: any;
+  rs: RunState;
   threadKey: string;
   abortRef: { current: AbortController | null };
-  activeThreadIdRef: { current: string | null };
+  /** 会话 id 在渲染层是「库里读出来是数字、事件标签里是字符串」两种形态，
+   *  这里必须两者都收——写成 string 会把按数字 id 的调用方挡在门外（真机上 thread.id 就是数字）。 */
+  activeThreadIdRef: { current: string | number | null };
   setLoading: (v: boolean) => void;
   setStreamingText: (v: string) => void;
   setReasoningText: (v: string) => void;
-  setRunSummary: (v: any) => void;
+  setRunSummary: (v: RunSummary | null) => void;
   modelId?: string;
 }
 

@@ -56,7 +56,8 @@ function extractJson(content) {
   const start = s.indexOf('{');
   const end = s.lastIndexOf('}');
   if (start === -1 || end <= start) return null;
-  try { return JSON.parse(s.slice(start, end + 1)); } catch { return null; }
+  // 解析失败留痕：调用方只报「草案解析失败」，真因（围栏没闭合/输出截断/模型说人话）只有这里看得到；截 160 字防爆量
+  try { return JSON.parse(s.slice(start, end + 1)); } catch (e) { console.warn('[teamsDraft] extractJson parse failed:', e.message, 'len=', s.length, 'head=', s.slice(0, 160)); return null; }
 }
 
 /** 只保留白名单里的抽象工具别名（未知别名丢弃，与 ecosystem 写通道同纪律）。 */

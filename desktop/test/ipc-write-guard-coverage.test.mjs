@@ -215,5 +215,38 @@ check('剔除名单里的通道确实仍存在于源码（防清单腐化）', (
   if (missing.length) throw new Error(`剔除名单中的通道已不存在：${missing.join(', ')}`);
 });
 
+// ── C-001 失败可观测性：写通道的 catch 不得再「只回错误、不留痕」────────────────
+// 2026-10-30 全量核查 C-001：`main/ipc/*.js` 大量 `catch (e) { return { ok:false, error: e.message } }`，
+// 渲染层能看到一句话，主进程什么都不留 —— 用户报「创建项目失败」时无法定位是哪一步。
+// 第一批已在 `ipc/project.js` 收敛为 `fail(scope, e)`（落 logger.warn 后返回同一形状）。
+// 这里守两件事：① 该文件里每个 catch 都必须走统一落点（结构断言，不数常量，新增 handler 自动纳入）；
+// ② `fail` 自身必须真的调用 logger.warn（防有人把它改成恒静默的壳，让上面那条全绿却毫无意义）。
+const OBSERVABILITY_FILES = ['main/ipc/project.js'];
+
+for (const rel of OBSERVABILITY_FILES) {
+  check(`${rel}：每个 catch 都经统一落点记录（不再裸 return 错误）`, () => {
+    const src = fs.readFileSync(path.join(DESKTOP, rel), 'utf8');
+    const lines = src.split('\n');
+    const bad = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!/catch\s*\(\w+\)\s*\{/.test(lines[i])) continue;
+      // catch 之后的第一个**非注释非空**行（跨最多 4 行找）必须是落点。
+      // 只看 1 行会误判「catch 后先写一行注释、再打日志」的形态；把注释当语句则会把
+      // 「注释里写着 logger.warn」判成已落日志 —— 两种错法都会让门禁骗人，故显式跳过注释。
+      const next = lines.slice(i + 1, i + 5).find((l) => l.trim() !== '' && !/^\s*\/\//.test(l)) || '';
+      if (!/\bfail\(|logger\.(warn|error|info)|console\.(warn|error)/.test(next)) bad.push(`第 ${i + 1} 行 → ${next.trim().slice(0, 60)}`);
+    }
+    if (bad.length) throw new Error(`${bad.length} 处 catch 未落日志：\n     ${bad.join('\n     ')}`);
+  });
+}
+
+check('main/ipc/project.js：fail() 真的调用 logger.warn（不是恒静默的壳）', () => {
+  const src = fs.readFileSync(path.join(DESKTOP, 'main/ipc/project.js'), 'utf8');
+  const m = src.match(/function fail\(scope, e\) \{([\s\S]*?)\n\}/);
+  if (!m) throw new Error('未找到 fail(scope, e) 定义');
+  if (!/logger\.warn\(/.test(m[1])) throw new Error('fail() 体内没有 logger.warn —— 落点被改成静默壳');
+  if (!/return \{ ok: false, error:/.test(m[1])) throw new Error('fail() 未返回 { ok:false, error } 形状，调用方契约被破坏');
+});
+
 console.log(`\nipc-write-guard-coverage: ${pass}/${total} 通过`);
 process.exit(pass === total ? 0 : 1);

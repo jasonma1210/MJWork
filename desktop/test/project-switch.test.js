@@ -82,8 +82,13 @@ check('App：切换项目时清空预览标签', () => {
   // 清空动作收敛到 closeAllFiles()（两个状态必须一起清，只清一个是半吊子修复）
   assert.match(m[0], /closeAllFiles\(\)/,
     'selectProject 未清空预览标签：切项目后预览栏仍显示上一个项目的文件');
-  assert.match(app, /const closeAllFiles = \(\) => \{[\s\S]{0,160}?setOpenedFiles\(\[\]\)[\s\S]{0,80}?setActiveFilePath\(null\)/,
+  // F-004：closeAllFiles 的实现随布局状态外置到 hooks/usePaneLayout.ts。判据跟到新家，
+  // 并额外钉住「App 从 hook 里取的是它」——否则 hook 内改好、App 退回自己实现也会绿。
+  const pane = read('hooks/usePaneLayout.ts');
+  assert.match(pane, /function closeAllFiles\(\) \{[\s\S]{0,160}?setOpenedFiles\(\[\]\)[\s\S]{0,80}?setActiveFilePath\(null\)/,
     'closeAllFiles 未同时清空 openFiles 与 activeFilePath');
+  assert.match(app, /closeAllFiles,[\s\S]{0,40}\} = usePaneLayout\(/,
+    'App 未从 usePaneLayout 取 closeAllFiles（切项目清空预览栏已断线）');
 });
 
 check('App：切换项目时清空 Agent 改动文件集', () => {

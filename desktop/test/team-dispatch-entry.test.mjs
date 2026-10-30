@@ -9,7 +9,6 @@
 //   ③ useAgentRun：轮末接力经 relayRef（选中军团时入队消息也派活，闭 R-5）；
 //   ④ TaskSummaryPanel：军团 run 徽标（数据走既有 teamsListThreadRuns 桥面）。
 //   ⑤ i18n：新增 key 双语都在（行为断言，读 JSON 而不是数引号）。
-import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 

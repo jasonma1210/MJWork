@@ -30,7 +30,10 @@ async function awaitApproval(requestApproval, tool, args) {
 // 让「沙箱不可用」退化成静默裸跑（本函数上方语义第 1 条明确要求默认阻断）。故仅在未打包时接受；
 // 打包版仍保留第 2 条逃生口（单次 unconfined_exec 审批），不会把人堵死。取不到 electron 视为未打包。
 function isPackaged() {
-  try { return require('electron').app?.isPackaged === true; } catch { return false; }
+  // 取不到 electron 判为「未打包」⇒ 放行那个「开发态」环境变量逃生口（C5 收紧过的那条）。
+  // 主进程里 electron 恒可用，故正常路径不会走到；一旦走到就是「打包版被当成开发态」的方向，
+  // 必须留痕——它会让 LLM 有机会用环境变量关掉沙箱闸。
+  try { return require('electron').app?.isPackaged === true; } catch (e) { console.warn('[execFallback] 无法判定是否打包，按未打包处理（开发态逃生口可能生效）：', e?.message || e); return false; }
 }
 
 /**

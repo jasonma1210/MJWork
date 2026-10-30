@@ -95,7 +95,9 @@ const RESET_SCOPES = ['session', 'project', 'global'];
 
 function fmtTime(ts: number, locale: string) {
   if (!ts) return '';
-  try { return new Date(ts).toLocaleString(locale); } catch { return String(ts); }
+  // 时间戳极端值（NaN/超范围）时退回原始数字：信息不丢、用户仍能看出这条记录有问题，
+  // 与「格式化成功」在视觉上可区分，故不必额外记日志。
+  try { return new Date(ts).toLocaleString(locale); } catch { /* 见上：退回原始值，非静默丢信息 */ return String(ts); }
 }
 
 export default function MemorySection({ projectPath = '' }: { projectPath?: string }) {

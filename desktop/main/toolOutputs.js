@@ -70,15 +70,17 @@ function initToolOutputs({ dataDir, now = Date.now, env = process.env } = {}) {
 /**
  * 清理过期文件（按 mtime）。返回删除条数。
  *
- * 只删本模块目录下的普通文件：目录不存在/不可读一律静默返回 0——
+ * 只删本模块目录下的普通文件：目录不存在/不可读一律返回 0、不抛错——
  * 这是**维护性**动作，绝不能因为它失败把启动或运行拖垮。
+ * 但「返回 0」不等于「值得静默」：清理长期失败 ⇒ 目录只增不减（磁盘/配额慢性耗尽）。
+ * 故目录读不到时 warn 留痕（清扫 30 分钟一轮，长期失败最多 48 行/天，不会刷屏；单文件级失败仍静默跳过）。
  */
 function prune({ now = Date.now, env = process.env } = {}) {
   if (!dir) return 0;
   const cutoff = now() - ttlMs(env);
   let removed = 0;
   let names = [];
-  try { names = fs.readdirSync(dir); } catch { return 0; }
+  try { names = fs.readdirSync(dir); } catch (e) { console.warn('[toolOutputs] 过期清理读不到目录，本轮跳过（积压不会自愈）：', dir, e?.message || e); return 0; }
   for (const name of names) {
     const full = path.join(dir, name);
     try {

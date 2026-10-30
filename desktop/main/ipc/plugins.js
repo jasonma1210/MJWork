@@ -65,7 +65,9 @@ function connectorRequiresConfig(pkg) {
   const dirs = [path.join(app.getPath('userData'), 'ecosystem'), path.join(app.getAppPath(), '..', 'ecosystem')];
   for (const d of dirs) {
     let list = [];
-    try { list = ecosystemLib.loadMcpConnectors(d); } catch { continue; }
+    // continue 的后果是「跳过证据」：若所有目录都读不出来，本函数返回 null = 「不需要配置」，
+    // 于是又放行了上面注释里那种「连上却每个调用都失败」的裸安装。方向是放宽，必须留痕。
+    try { list = ecosystemLib.loadMcpConnectors(d); } catch (e) { console.warn('[plugins] 连接器目录读取失败，本目录不参与「是否需要配置」判定：', d, e?.message || e); continue; }
     if (!list.length) continue;
     const hit = list.find((c) => String(c?.install?.pkg || '') === pkg);
     if (!hit) return null;

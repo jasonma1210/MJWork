@@ -18,6 +18,7 @@ const http = require('http');
 const fs = require('fs');
 const crypto = require('crypto');
 const { writeFileDurableWithMode } = require('./data/durableWrite');
+const logger = require('./logger');
 // P1-8：协议版本单点化——此处原有一份硬编码的版本字面量副本（本文件 _discover 的 401 探测 initialize）。
 // 现与 mcpClient 共用 mcpProtocol.js（零依赖，避免 mcpAuth ↔ mcpClient 循环 require）。
 const { PROTOCOL_VERSION, CLIENT_CAPABILITIES, CLIENT_INFO } = require('./mcpProtocol');
@@ -245,7 +246,11 @@ class McpAuthManager {
   // ① 发现：探测端点取 resource_metadata（401 头优先）→ 受保护资源元数据 → AS 元数据
   async _discover(endpoint) {
     let origin;
-    try { origin = new URL(endpoint).origin; } catch { return null; }
+    try { origin = new URL(endpoint).origin; } catch (e) {
+      // C-001：此前静默 return null，用户只看到「授权失败」，无从判断是端点配错还是网络问题
+      logger.warn('[mcpAuth] 端点 URL 非法，OAuth 发现中止：', String(endpoint || ''), e && e.message);
+      return null;
+    }
     let rmUrl = `${origin}/.well-known/oauth-protected-resource`;
     try {
       const probe = await this._fetch(endpoint, {
@@ -288,7 +293,10 @@ class McpAuthManager {
   // RFC 8414：well-known 插在 host 与 path 之间；openid-configuration 兜底
   async _asMetadata(asUrl) {
     let u;
-    try { u = new URL(asUrl); } catch { return null; }
+    try { u = new URL(asUrl); } catch (e) {
+      logger.warn('[mcpAuth] 授权服务器地址非法，跳过该 AS：', String(asUrl || ''), e && e.message);
+      return null;
+    }
     const p = u.pathname.replace(/\/+$/, '');
     const cands = [
       `${u.origin}/.well-known/oauth-authorization-server${p}`,
@@ -327,7 +335,7 @@ class McpAuthManager {
       let settle = null;
       const server = http.createServer((req, res) => {
         let u;
-        try { u = new URL(req.url, 'http://127.0.0.1'); } catch { res.writeHead(400).end(); return; }
+        try { u = new URL(req.url, 'http://127.0.0.1'); } catch { /* C-001：不是静默——下面以 HTTP 400 明确拒绝该回调请求 */ res.writeHead(400).end(); return; }
         if (u.pathname !== '/callback') { res.writeHead(404).end('not found'); return; }
         const err = u.searchParams.get('error');
         const code = u.searchParams.get('code');
@@ -374,7 +382,10 @@ class McpAuthManager {
       const res = await this._fetch(url, { headers: { Accept: 'application/json' } });
       if (!res.ok) { await res.text().catch(() => {}); return null; }
       return JSON.parse(await res.text());
-    } catch { return null; }
+    } catch (e) {
+      logger.warn('[mcpAuth] 元数据获取/解析失败：', String(url || ''), e && e.message);
+      return null;
+    }
   }
 
   async _postForm(url, form) {

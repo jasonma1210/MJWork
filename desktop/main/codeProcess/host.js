@@ -12,7 +12,7 @@ const { attachHost } = require('../engineProcess/transport');
 let utilityProcess = null;
 try {
   utilityProcess = require('electron').utilityProcess || null;
-} catch { utilityProcess = null; }
+} catch { /* C-001：非 Electron 宿主（单测/纯 Node）require 不到 electron，能力探测失败=无 utilityProcess，正常 */ utilityProcess = null; }
 
 const CHILD_ENTRY = path.join(__dirname, 'childEntry.js');
 // 代码执行会话驻留用户脚本数据（数组/对象/DOM 解析结果等），1GB 堆上限

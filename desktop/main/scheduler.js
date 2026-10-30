@@ -25,7 +25,7 @@ const { judgeRun, detectUnfinished, detectExhausted } = require('./scheduledVerd
 const STORE_FILE = () => path.join(app.getPath('userData'), 'scheduled-tasks.json');
 // 归档根目录：Documents（应用外可查阅）。取不到时返回空串，归档会被跳过而不是抛。
 function documentsDir() {
-  try { return app.getPath('documents') || ''; } catch { return ''; }
+  try { return app.getPath('documents') || ''; } catch { /* C-001：容器/无 Documents 环境取不到属预期，空串=归档跳过而非抛错 */ return ''; }
 }
 const MAX_RUNS = 200;          // 全局运行历史上限
 const MAX_RUNS_PER_TASK = 50;  // 单任务保留条数
@@ -509,7 +509,12 @@ async function ingestEvent({ source, event, id } = {}) {
 }
 
 function cryptoId() {
-  try { return require('node:crypto').randomBytes(6).toString('hex'); } catch { return String(Date.now()); }
+  try { return require('node:crypto').randomBytes(6).toString('hex'); } catch (e) { /* C-001：crypto 不可用 ⇒ 退化成毫秒时间戳 */
+    // 时间戳 id 在**同毫秒内会重复**（同一拍匹配多个任务时正好会撞），事件 id 冲突会让去重/回放错乱。
+    // Node 里 crypto 恒可用，走到这里说明运行时异常，必须留痕。
+    console.warn('[scheduler] crypto 不可用，事件 id 退化为时间戳（同毫秒可能重复）:', e?.message || e);
+    return String(Date.now());
+  }
 }
 
 // ── 对外 API ──

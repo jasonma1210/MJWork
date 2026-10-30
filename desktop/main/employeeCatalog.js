@@ -69,7 +69,9 @@ function listEmployees() {
  * @returns {object|null}
  */
 function resolveEmployee(id) {
-  try { return resolveEmployeeById(id); } catch { return null; }
+  // 返回 null 同时代表「没有这个 id」和「解析器崩了」，调用方只会报「员工不存在」——
+  // 生态中心里明明有这个人却被告知不存在，就是这条静默吞掉的。必须留痕。
+  try { return resolveEmployeeById(id); } catch (e) { console.warn('[employeeCatalog] 员工解析失败，按不存在返回：', id, e?.message || e); return null; }
 }
 
 /**

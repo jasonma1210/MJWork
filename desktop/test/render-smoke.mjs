@@ -102,7 +102,7 @@ const ESBUILD_BASE = {
   jsx: 'automatic',
   // 静态资源：logo.png 等以 dataurl 内联（组件里当 img src 用），
   // 样式文件以 empty 忽略（渲染冒烟不关心样式，只要 import 不炸）
-  loader: { '.jsx': 'jsx', '.tsx': 'tsx', '.js': 'jsx', '.mjs': 'jsx', '.png': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
+  loader: { '.jsx': 'jsx', '.tsx': 'tsx', '.js': 'jsx', '.mjs': 'jsx', '.png': 'dataurl', '.mp3': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
   // themes.json 等走 esbuild 默认 json loader
   write: false,
   logLevel: 'silent',
@@ -201,6 +201,28 @@ function renderWithI18n(compRel, props) {
   try {
     const mod = loadInline(code, tmpRel);
     assert.equal(typeof mod.default, 'function', `${compRel} 的 i18n wrapper 未导出默认组件`);
+    return renderToStaticMarkup(React.createElement(mod.default, props));
+  } finally {
+    loaded.delete(tmpRel); // 只是清编译缓存，磁盘上从来没有这个文件
+  }
+}
+
+/** 具名导出版：渲染 `import { Name } from <compRel>`（同 bundle 共享 i18n 实例）。
+ *  用途：只给某个导出传特殊 props（如 RunOutputFiles 的 defaultOpen）时，
+ *  不必为了「展开分支能被渲染到」而在产品里加测试专用开关。 */
+function renderNamedWithI18n(compRel, exportName, props) {
+  const tmpRel = `__i18n_named_probe_${++probeSeq}.jsx`;
+  const importPath = './' + compRel.replace(/\\/g, '/');
+  const code = [
+    "import { LanguageProvider } from './i18n';",
+    `import { ${exportName} as Comp } from '${importPath}';`,
+    'export default function Root(props) {',
+    '  return <LanguageProvider><Comp {...props} /></LanguageProvider>;',
+    '}',
+  ].join('\n');
+  try {
+    const mod = loadInline(code, tmpRel);
+    assert.equal(typeof mod.default, 'function', `${compRel}#${exportName} 的 i18n wrapper 未导出默认组件`);
     return renderToStaticMarkup(React.createElement(mod.default, props));
   } finally {
     loaded.delete(tmpRel); // 只是清编译缓存，磁盘上从来没有这个文件
@@ -386,7 +408,7 @@ check('门禁自检：能复现跨作用域白屏（子组件引用父组件局�
 //   只有消息里出现产出文件时才走到那段 JSX，长任务收尾整页被 ErrorBoundary 接走 =
 //   用户看到「app 崩了」。真实证据：diagnostics/crash-2026-10-17.jsonl 两条 rendererError。
 // 这条用例是**唯一**能在 CI 期拦住同类漏 import 的防线：渲染期会真正执行组件函数体。
-check('渲染冒烟：消息里的「输出文件卡片」可渲染（漏 import 会在此炸出）', () => {
+check('渲染冒烟：消息里的「查看所有产物」折叠行可渲染（漏 import 会在此炸出）', () => {
   const props = {
     messages: [{ id: 'm1', role: 'assistant', content: '已完成修复，产出以下文件。' }],
     windowStart: 0,
@@ -405,8 +427,21 @@ check('渲染冒烟：消息里的「输出文件卡片」可渲染（漏 import
   };
   let html = '';
   assert.doesNotThrow(() => { html = renderWithI18n('components/MessageStream.tsx', props); },
-    'MessageStream 渲染输出文件卡片抛错（真机表现：整页被 ErrorBoundary 换成崩溃页）');
-  assert.ok(html.includes('report-fix.md'), '未渲染出产出文件名，说明 RunOutputFiles 分支没走到');
+    'MessageStream 渲染「查看所有产物」行抛错（真机表现：整页被 ErrorBoundary 换成崩溃页）');
+  // 2026-10-30（用户需求 2）：默认收起 ⇒ 静态渲染只该出现折叠行，不该看到文件名
+  assert.ok(/查看所有产物|View all artifacts/.test(html), '未渲染出「查看所有产物」折叠行，说明 RunOutputFiles 分支没走到');
+  assert.ok(!html.includes('report-fix.md'), '折叠态不应直接铺出文件名（默认收起被改回铺开了？）');
+});
+
+// 与上一条互补：折叠态不会执行卡片那段 JSX，漏 import 就只有「点开」时才炸。
+// 该文件带 @ts-nocheck，tsc 不报未定义标识符 ⇒ 必须**真渲染展开分支**才能拦住同类事故。
+check('渲染冒烟：「查看所有产物」展开后卡片可渲染（漏 import 会在此炸出）', () => {
+  let html = '';
+  assert.doesNotThrow(() => {
+    html = renderNamedWithI18n('components/MessageStream.tsx', 'RunOutputFiles',
+      { files: ['/tmp/probe-output/report-fix.md'], onOpenFile: noop, cwd: '/tmp', defaultOpen: true });
+  }, 'RunOutputFiles 展开分支渲染抛错（真机表现：点开产物面板整页崩溃）');
+  assert.ok(html.includes('report-fix.md'), '展开后未渲染出产出文件名，说明卡片分支没走到');
 });
 
 // T1（2026-10-17）：运行中必须能看到「已思考 Ns」，否则用户以为卡死会按 Esc 杀任务

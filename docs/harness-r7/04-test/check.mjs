@@ -152,6 +152,11 @@
  *        → A15b：`0.8.0-beta` → **`0.9.0-beta`**。
  *          触发：产品更名 MJ Nexus 并首次产出 macOS/Windows/Linux 三平台制品（用户可感知），故走 minor；
  *          三包版本同步由 `test/release-update.test.js` 与 `scripts/preflight-release.mjs` 的 P1 双重守护。
+ *      · 0.8.0-beta **重新发布**批（2026-10-30）—— 同一条版本钉值**回写**（总数仍 76）：
+ *        → A15b：`0.9.0-beta` → **`0.8.0-beta`**。
+ *          触发：0.9.0-beta 的 GitHub Release 已撤回（版本线回退，见 CHANGELOG 的「版本线说明」），
+ *          对外统一以 0.8.0-beta 发布；本条钉值随对外版本线走，与 package.json 实读值严格相等。
+ *          三包一致性仍由 `test/release-update.test.js` 与 `scripts/preflight-release.mjs` P1 守护。
  *      · 0.8.0-beta 发版批（2026-10-28，已提交）—— 同样一条版本钉值**原地重写**（总数仍 76）：
  *        → A15b：`0.7.0-beta` → **`0.8.0-beta`**。
  *          触发：本批含 never 档审批行为变更（用户可感知），故走 minor 而非 patch；
@@ -784,7 +789,7 @@ function httpHeaderSegments() {
   const proto = stripComments(read('desktop/main/mcpProtocol.js'));
   okTrue('A15a', "已修复：CLIENT_INFO version 不再硬编码 '1.0'（与 package.json 同源）",
     !/CLIENT_INFO\s*=\s*Object\.freeze\(\{[^}]*version:\s*'1\.0'/s.test(proto));
-  ok('A15b', 'desktop/package.json version', JSON.parse(read('desktop/package.json')).version, '0.9.0-beta');
+  ok('A15b', 'desktop/package.json version', JSON.parse(read('desktop/package.json')).version, '0.8.0-beta');
   okTrue('A15c', 'mcpClient 每次 initialize 都发 clientInfo',
     /clientInfo:\s*\{\s*\.\.\.CLIENT_INFO\s*\}/.test(stripComments(read('desktop/main/mcpClient.js'))));
 }

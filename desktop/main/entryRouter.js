@@ -267,10 +267,13 @@ function extractJson(content) {
   const start = s.indexOf('{');
   const end = s.lastIndexOf('}');
   if (start === -1 || end <= start) return null;
-  try { return JSON.parse(s.slice(start, end + 1)); } catch { return null; }
+  // 解析失败必须留痕：调用方只把 null 报成「模型层没给出合法路由类别」，
+  // 真因（围栏没闭合 / 输出被截断 / 模型压根没输出 JSON）只有这里看得到。截 160 字防日志爆量。
+  try { return JSON.parse(s.slice(start, end + 1)); } catch (e) { console.warn('[entryRouter] route JSON parse failed:', e.message, 'len=', s.length, 'head=', s.slice(0, 160)); return null; }
 }
 
 /** 超时包装：判定**不得阻塞**主链路，超时即按失败处理。 */
+// C-004：与其它模块同名但**语义不同**（返回/抛错形态不一样），别为「看起来重复」而合并。
 function withTimeout(promise, ms) {
   if (!Number.isFinite(ms) || ms <= 0) return promise;
   return new Promise((resolve, reject) => {

@@ -24,7 +24,7 @@ function getNodeFs() {
   if (_fsModule !== undefined) return _fsModule;
   try {
     _fsModule = globalThis.process?.getBuiltinModule?.('node:fs') || null;
-  } catch {
+  } catch { /* C-001：浏览器/受限环境没有 process，特性探测失败=无 fs 能力，属正常分支 */
     _fsModule = null;
   }
   return _fsModule;
@@ -34,7 +34,7 @@ async function ensureNodeFs() {
   try {
     const m = await import(/* @vite-ignore */ 'node:' + 'fs');
     _fsModule = m.default || m;
-  } catch {
+  } catch { /* C-001：同上——动态 import 兜底也失败，等于该宿主没有 fs，正常降级 */
     _fsModule = null;
   }
   return _fsModule;
@@ -1966,11 +1966,16 @@ export function resolveTaskModel(mainModel, modelOverrides, slot) {
 }
 
 // 一次纯文本规划调用（不传 tools，输出即 JSON）。调用方负责把结果交用户确认。
+// 通道解析走 resolveChannel：toolHandlers.chat 缺省时**回落 globalThis.window.mjcode.chat**
+// （渲染层就是这么跑通的——`toolHandlers:{}` 不等于「没有通道」）。两者皆无才抛错。
 export async function decomposeTask({ messages, model, toolHandlers, signal, modelOverrides }) {
-  const chatFn = (payload) => {
+  // D-805：ctx 必须一路传到宿主通道。此前本函数只收 payload、下面 `chatFn(payload, { signal })`
+  // 的第二参被静默丢弃 ⇒ 注释写着「可被取消」，实际 signal 从未离开引擎层，
+  // 只有一个 await 之后的 `signal?.aborted` 事后检查（请求本身照跑）。
+  const chatFn = (payload, ctx) => {
     const ch = resolveChannel(toolHandlers, 'chat');
-    if (!ch) throw new Error('模型调用通道不可用：请提供 toolHandlers.chat');
-    return ch(payload);
+    if (!ch) throw new Error('模型调用通道不可用：请提供 toolHandlers.chat 或 window.mjcode.chat');
+    return ch(payload, ctx);
   };
   // P1-11a：拆分可用便宜模型（缺省回落主模型）
   const taskModel = resolveTaskModel(model, modelOverrides, 'decompose');
@@ -2240,6 +2245,7 @@ export const TOOL_TIMEOUT_OVERRIDES = {
   artifact_get_diff: 60000,
 };
 
+// C-004：与其它模块同名但**语义不同**（返回/抛错形态不一样），别为「看起来重复」而合并。
 export function withTimeout(promise, ms, label) {
   if (!Number.isFinite(ms) || ms <= 0) return Promise.resolve(promise); // <=0 视为禁用
   let timer;
@@ -2458,8 +2464,8 @@ export function toolSignature(name, args) {
   let body;
   try {
     body = JSON.stringify(sortKeysDeep(args ?? {}));
-  } catch {
-    body = String(args);
+  } catch (e) { /* C-001：不可序列化（循环引用/BigInt）⇒ 签名退化成 String(args)，同参数重试判据失效 */
+    console.warn('[agent-core] toolSignature 序列化失败，同参数重试判据退化:', e?.message || e); body = String(args);
   }
   return `${name}|${String(body).slice(0, 600)}`;
 }

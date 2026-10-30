@@ -14,12 +14,21 @@ const guard = require('./payloadGuard');
 // 产出文件「另存为」的路径解析与工具层同一套语义（相对路径按项目根解析）。
 // exec.js 只是 re-export 了这个函数，直接引定义处，避免为一个 4 行 helper 拖入整个工具执行层。
 const { resolveToolPath } = require('../tools/execCwd');
+const logger = require('../logger');
 
 // X14：粘贴落盘的单文件上限（base64 字符数 ≈ 文件字节数 ×4/3）。无路径附件（粘贴图片等）
 // 只能走 IPC 传全文，不设上限等于让一次 IPC 把关不严的内存放大到渲染层与主进程两侧。
 const MAX_UPLOAD_BASE64 = 128 * 1024 * 1024;
 
 let deps = null;
+
+// C-001（2026-10-30）：这些 IPC 的失败此前只把 message 回给渲染层，主进程不留任何痕迹——
+// 用户报「创建项目失败」时只能看到一句 UI 文案，定位不到是哪一步（建目录/探测/git/快照）。
+// 统一经此处落一条 warn（只记 message，不打堆栈与参数，避免把路径/内容写进日志）。
+function fail(scope, e) {
+  logger.warn(`[project] ${scope} 失败：`, e && e.message);
+  return { ok: false, error: e && e.message };
+}
 
 // ── 项目探测（git 分支/远端/文件数/技术栈标记）──
 const LANG_MARKERS = {
@@ -53,7 +62,7 @@ function register() {
       );
       return { ok: true, root, created };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('project:workspaceInfo', e);
     }
   });
 
@@ -67,7 +76,7 @@ function register() {
       });
       return { ok: true, ...proj };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('project:create', e);
     }
   });
 
@@ -99,7 +108,7 @@ function register() {
       );
       return { ok: true, ...(await worktree.createWorktree(projectPath, taskTitle)) };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('worktree:create', e);
     }
   });
 
@@ -109,7 +118,7 @@ function register() {
       if (!root) return { ok: true, list: [], isRepo: false };
       return { ok: true, isRepo: true, list: await worktree.listWorktrees(root, root) };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('worktree:list', e);
     }
   });
 
@@ -120,7 +129,7 @@ function register() {
     try {
       return { ok: true, ...(await worktree.promoteToBranch(worktreePath)) };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('worktree:promote', e);
     }
   });
 
@@ -129,7 +138,7 @@ function register() {
     try {
       return { ok: true, ...(await worktree.syncToLocal(worktreePath)) };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('worktree:sync', e);
     }
   });
 
@@ -140,7 +149,7 @@ function register() {
       guard.assertStrings({ path: worktreePath }, { path: 4096 });
       return { ok: true, ...(await worktree.removeWorktree(worktreePath)) };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('worktree:remove', e);
     }
   });
 
@@ -175,7 +184,7 @@ function register() {
       await fsp.writeFile(path.join(dir, '.meta.json'), JSON.stringify({ cwd, files: list, createdAt: Date.now() }));
       return { ok: true, snapshotId, dir, count: snapshotted };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('backup:create', e);
     }
   });
 
@@ -199,7 +208,7 @@ function register() {
       }
       return { ok: true, restored };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('backup:restore', e);
     }
   });
 
@@ -218,7 +227,7 @@ function register() {
       await fsp.writeFile(dest, Buffer.from(String(dataBase64 || ''), 'base64'));
       return { ok: true, path: dest };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('files:saveUpload', e);
     }
   });
 
@@ -239,7 +248,7 @@ function register() {
       await fsp.copyFile(src, r.filePath);
       return { ok: true, savedPath: r.filePath };
     } catch (e) {
-      return { ok: false, error: e.message };
+      return fail('files:saveAs', e);
     }
   });
 }

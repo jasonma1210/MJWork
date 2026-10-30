@@ -17,6 +17,7 @@ const MIN_TASKS = 2;
 const {
   ORCHESTRATE_TASK_MIN_MS, ORCHESTRATE_TASK_DEFAULT_MS, ORCHESTRATE_TASK_MAX_MS,
 } = require('../tools/timeouts');
+const logger = require('../logger');
 
 function slugId(v) {
   return String(v || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
@@ -30,7 +31,7 @@ function validateDag(raw) {
     // 容忍 LLM 输出裹在 ```json 围栏或前后杂文本中：提取首个 {...} 块
     const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
     const candidate = fence ? fence[1] : raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-    try { obj = JSON.parse(candidate); } catch (e) { return { ok: false, error: `DAG JSON 解析失败：${e.message}` }; }
+    try { obj = JSON.parse(candidate); } catch (e) { logger.warn('[dag] DAG JSON 解析失败：', e.message); return { ok: false, error: `DAG JSON 解析失败：${e.message}` }; }
   }
   if (!obj || typeof obj !== 'object' || !Array.isArray(obj.tasks)) {
     return { ok: false, error: 'DAG 结构无效：缺少 tasks 数组' };

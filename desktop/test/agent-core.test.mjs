@@ -5,7 +5,7 @@ process.env.MJCODE_TOOL_AVAILABILITY = '0';
 // 覆盖：中间消息持久化 / cwd 注入 / usage 归属 / abort / 上下文压缩 /
 //       AGENTS.md 注入 / 子代理 / 预算 / session.jsonl 落盘 / CLI 冒烟
 import { runAgent, BASE_TOOLS, BUILTIN_SKILL_IDS, looksLargeTask, parsePlanResponse, chatWithRetry, isRetryableChatError, compactHistory, alignCutToRoundBoundary, truncateToolResult, AGENT_HARD_ROUND_CAP, resolveCompactPolicy, DEFAULT_COMPACT_POLICY, trimHistoryForRun } from '../agent-core/index.js';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

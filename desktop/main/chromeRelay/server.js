@@ -79,11 +79,18 @@ async function onConnection(sock) {
   sock.isAlive = true;
   sock.on('pong', () => { sock.isAlive = true; });
   const nonce = crypto.randomBytes(16).toString('hex');
-  try { sock.send(JSON.stringify({ t: 'hello', nonce })); } catch { return; }
+  try { sock.send(JSON.stringify({ t: 'hello', nonce })); } catch {
+    // C-001：socket 已关闭（扩展侧断线重连的常态竞态）。握手消息无从下发，
+    // 也没有后续可补救的动作 —— 这不是降级，是「连接在握手前就没了」。
+    return;
+  }
 
   sock.on('message', async (buf) => {
     let msg;
-    try { msg = JSON.parse(String(buf)); } catch { return closeConn(sock, 4002, 'bad-json'); }
+    try { msg = JSON.parse(String(buf)); } catch {
+      // C-001：不是静默 —— 下面立刻以 4002/bad-json 关闭连接，调用方拿到明确失败码
+      return closeConn(sock, 4002, 'bad-json');
+    }
     if (!msg || typeof msg !== 'object') return;
 
     if (sock.__state === 'pending') {
@@ -99,7 +106,10 @@ async function onConnection(sock) {
       let decision = 'deny';
       try {
         decision = await deps.requestApproval('chrome_connect', info);
-      } catch { decision = 'deny'; } // 审批通道异常按拒绝（fail-closed）
+      } catch {
+        // C-001：审批通道异常按拒绝（fail-closed）——「拒绝」本身就是安全结果，不是被吞掉的失败
+        decision = 'deny';
+      }
       if (sock.__state !== 'approving') return; // 审批期间已断开/被顶替
       if (decision === 'deny') {
         sock.__state = 'denied';

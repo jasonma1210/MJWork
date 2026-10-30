@@ -129,7 +129,9 @@ class MemoryBgScheduler {
       if (row.type === 'compress' && this._dailyQuotaExceeded()) continue; // 配额用尽：今天不再派发压缩
       this.deps.db.prepare(`UPDATE memory_bg_tasks SET status = 'running', attempts = attempts + 1, updated_at = ? WHERE id = ?`)
         .run(Date.now(), row.id);
-      return { ...row, payload: (() => { try { return JSON.parse(row.payload || '{}'); } catch { return {}; } })() };
+      // payload 坏掉时给 {} 会让任务「空参执行」，而这一行此刻已被置 running 且 attempts+1 ⇒
+      // 反复空跑 3 次后以「超过尝试上限」落 failed，错误原因与真因（数据损坏）完全不符，故必须留痕。
+      return { ...row, payload: (() => { try { return JSON.parse(row.payload || '{}'); } catch (e) { console.warn('[memoryBg] 后台任务 payload 损坏，按空参数执行：', row.id, row.type, e?.message || e); return {}; } })() };
     }
     return null;
   }

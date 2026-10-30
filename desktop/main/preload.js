@@ -85,7 +85,9 @@ contextBridge.exposeInMainWorld('mjcode', {
   probeProject: (payload) => ipcRenderer.invoke('tool:probeProject', payload),
   // A12：拖拽文件路径解析（Electron ≥32 移除 File.path，须在 preload 用 webUtils）
   getPathForFile: (file) => {
-    try { return webUtils.getPathForFile(file); } catch (e) { return ''; }
+    // C-001：取不到真实路径时返回空串，渲染层据此走「无路径文件 → saveUpload 落盘」备选分支，
+    // 属**设计好的降级**（A12 为 Electron≥32 移除 File.path 而加）：空串是契约里的合法输入，不是错误形态。
+    try { return webUtils.getPathForFile(file); } catch { /* 契约内的空值降级：调用方对空串有专门分支，故不记日志 */ return ''; }
   },
   // A5：语音本地转写（whisper.cpp）
   transcribeVoice: (payload) => ipcRenderer.invoke('voice:transcribe', payload),

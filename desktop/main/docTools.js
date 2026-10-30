@@ -33,7 +33,9 @@ const { DOC_GEN_IMPL_TIMEOUT_MS } = require('./tools/timeouts');
 const artifactProduct = require('./tools/artifactProduct');
 
 let electron = null;
-try { electron = require('electron'); } catch { electron = null; }
+// 纯 Node 宿主（全部单测/门禁套件）本来就没有 electron，这是**预期路径**而非故障；
+// 真主进程里 electron 恒可用。故不记日志（记了只会淹掉测试输出），调用方对 BrowserWindow=null 有专门分支。
+try { electron = require('electron'); } catch { /* 见上：Node 宿主的预期缺失 */ electron = null; }
 const BrowserWindow = electron?.BrowserWindow || null;
 
 let deps = null;

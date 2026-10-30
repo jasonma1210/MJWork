@@ -183,7 +183,10 @@ function register() {
     try {
       const r = await fetch(`${deps.serverBase()}/health`, { signal: AbortSignal.timeout(3000) });
       return { online: r.ok };
-    } catch {
+    } catch (e) {
+      // C-001：探测**失败**与「服务确实不可用」在这里压成了同一个 online:false，
+      // 界面据此显示离线。端口配错 / 超时 / 被沙箱拦全长得一样，不记原因等于把「配错了」当「没启动」。
+      console.warn('[localData] server health probe failed:', deps.serverBase(), e?.message || e);
       return { online: false };
     }
   });

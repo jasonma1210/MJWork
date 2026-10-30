@@ -13,7 +13,7 @@
 // 纯 Node，不起子进程（起进程验证必然 flake，且覆盖不到「两个同名条目共存」的时序）。
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { detachFrom, detachServer, retireCached } from '../main/mcpClient.js';
+import { detachFrom, retireCached } from '../main/mcpClient.js';
 
 let pass = 0;
 let fail = 0;

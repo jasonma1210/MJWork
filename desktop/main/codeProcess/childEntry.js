@@ -31,7 +31,7 @@ function safeStringify(value, indent) {
       if (typeof v === 'symbol') return String(v);
       return v;
     }, indent);
-  } catch {
+  } catch { /* C-001：不可序列化（循环引用等）⇒ 退回 String(value) 展示，控制台输出不能因格式化而丢 */ 
     return String(value);
   }
 }

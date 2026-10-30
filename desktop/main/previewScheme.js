@@ -37,7 +37,10 @@ function initPreviewScheme() {
     try {
       // net.fetch(file://) 由 Chromium 文件流实现，天然分块、不整读进内存
       return await net.fetch(`file://${encodeURI(h.file).replace(/#/g, '%23').replace(/\?/g, '%3F')}`);
-    } catch {
+    } catch (e) {
+      // 404 是明确形态（门禁不算静默），但成因被丢掉了：文件被删 / 权限不足 / 路径编码问题
+      // 在 iframe 里都只显示「文件无法读取」，而排查只能从主进程日志看。取一次上下文值一行日志。
+      console.warn('[preview] 预览文件读取失败：', h.file, e?.code || '', e?.message || e);
       return new Response('file not readable', { status: 404 });
     }
   });

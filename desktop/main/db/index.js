@@ -589,7 +589,11 @@ function probeBetterSqlite3(timeoutMs = 10000) {
     };
     try {
       let modulePath;
-      try { modulePath = require.resolve('better-sqlite3'); } catch { return done(false); }
+      // C-001：返回 false = 「本机跑不了原生模块」这一确定结论，调用方按它降级。
+      // 成因要分清：resolve 失败 = 根本没装（npm i 即好）；resolve 成功后的 SIGSEGV/超时 = ABI 不匹配（要重建）。
+      // 2026-10-30 修：原注释写「成因由子进程探测分辨」，但 resolve 失败时子进程压根不会起，
+      // 那句论证只覆盖 resolve 成功之后，故 resolve 这条必须自己留痕（否则「装了还是降级」无从排查）。
+      try { modulePath = require.resolve('better-sqlite3'); } catch (e) { console.warn('[db] better-sqlite3 不可解析（未安装/未随包分发），原生驱动不可用：', e?.message || e); return done(false); }
       fs.writeFileSync(probeFile, PROBE_SRC);
       const env = { ...process.env, MJ_PROBE_MODULE: modulePath, ELECTRON_DISABLE_SANDBOX: '1' };
       delete env.ELECTRON_RUN_AS_NODE; // 必须以真实 Electron 运行时探测（Node 模式复现不了 SIGSEGV）
@@ -600,6 +604,7 @@ function probeBetterSqlite3(timeoutMs = 10000) {
       child.on('close', (code, signal) => { clearTimeout(timer); done(code === 0 && !signal); });
       child.on('error', () => { clearTimeout(timer); done(false); });
     } catch {
+      // C-001：探测流程自身异常（临时文件不可写 / spawn 失败）——结论仍是「不可用」，与超时同路。
       done(false);
     }
   });

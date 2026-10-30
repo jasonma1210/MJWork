@@ -4,8 +4,9 @@
 // （`localThread` vs `localThreads`）能通过 tsc，运行时被 lib/ipc.js 降级成
 // capabilityUnavailable —— 代码缺陷与「平台不支持」在运行时长得一模一样。
 //
-// 完整修法是给桥面生成精确 TS 接口，但前置条件是清掉 6 个 @ts-nocheck 文件
-// （其中 3 个是核心对话链路），属独立工作。在那之前，用**静态比对**兜住最致命的一类：
+// 完整修法是给桥面生成精确 TS 接口，但前置条件是清掉渲染层的 @ts-nocheck 文件
+// （2026-10-30 F-005 已从 6 个清到 1 个：只剩 hooks/useAgentRun.ts），属独立工作。
+// 在那之前，用**静态比对**兜住最致命的一类：
 // 渲染层调用了 preload 没暴露的方法（拼错 / 漏暴露 → 功能静默不可用）。
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';

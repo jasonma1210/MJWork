@@ -25,7 +25,10 @@ function readAgentsMd(cwd) {
   if (!cwd || typeof cwd !== 'string') return '';
   const found = [];
   let dir;
-  try { dir = path.resolve(cwd); } catch { return ''; }
+  // 上面已用 typeof 拦住非字符串；resolve 只剩「路径超长 / 含 NUL」这类极端输入会抛。
+  // 此时返回空串 = 「本项目没有规范」，正是本函数的 fail-open 契约（没有规范不等于不能干活），
+  // 且调用方对空串无分支可错，故不留日志、不加噪。
+  try { dir = path.resolve(cwd); } catch { /* fail-open 契约：空串=本项目没有规范，调用方无分支可错，故不记日志 */ return ''; }
   for (let i = 0; i < MAX_DEPTH; i += 1) {
     const p = path.join(dir, 'AGENTS.md');
     try {

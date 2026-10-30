@@ -157,9 +157,7 @@ function extractImages(buf) {
         }
         const png = encodePng({ width, height, channels, pixels: inflated.subarray(0, width * height * channels) });
         images.push({ buf: png, ext: '.png', width, height, page: order });
-      } catch {
-        skipped.push({ reason: 'inflate_failed', width, height });
-      }
+      } catch { /* 解压/编码失败：原因结构化写进返回值的 skipped（调用方与 KB 导入摘要都会展示），不是丢弃 */ skipped.push({ reason: 'inflate_failed', width, height }); }
       continue;
     }
     skipped.push({ reason: `filter_unsupported:${filters.join('+') || 'none'}`, width, height });

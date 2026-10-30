@@ -94,7 +94,7 @@ function verifyAuditChain(filePath = AUDIT_LOG_FILE()) {
   let sawHashed = false;
   for (const line of lines) {
     let rec;
-    try { rec = JSON.parse(line); } catch { res.ok = false; res.reason = '存在无法解析的行（被截断或手工插入）'; return res; }
+    try { rec = JSON.parse(line); } catch { /* C-001：不是静默——下面立刻按「链已损坏」返回 ok:false + reason */ res.ok = false; res.reason = '存在无法解析的行（被截断或手工插入）'; return res; }
     if (typeof rec.hash !== 'string') {
       // 老版本行：只允许出现在链开始之前；链中间出现无 hash 行 = 有人插入/替换过内容
       if (sawHashed) { res.ok = false; res.reason = `seq=${rec.seq ?? '?'} 附近出现无 hash 的行`; res.atSeq = rec.seq ?? null; return res; }
@@ -132,7 +132,7 @@ function auditLocal(action, target, detail, approvalResult) {
     });
     const line = JSON.stringify({ ...body, prev: chainPrev, hash: chainHashOf(body, chainPrev) }) + '\n';
     if (auditLogBytes < 0) {
-      try { auditLogBytes = fs.statSync(file).size; } catch { auditLogBytes = 0; }
+      try { auditLogBytes = fs.statSync(file).size; } catch (e) { /* C-001：读大小失败按 0 计（此后靠累加不再 stat），代价是本轮不触发滚动 */ console.warn('[audit] 审计日志大小读取失败，本轮不滚动:', e?.message || e); auditLogBytes = 0; }
     }
     if (auditLogBytes + Buffer.byteLength(line) > AUDIT_LOG_MAX_BYTES) {
       // 滚动：旧文件转 .1（只保留一代），重新计数

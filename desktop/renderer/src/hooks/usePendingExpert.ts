@@ -15,7 +15,9 @@ export default function usePendingExpert(onboarded: boolean): void {
     let raw: string | null = null;
     try {
       raw = localStorage.getItem('mj_pending_expert');
-    } catch {
+    } catch (e) {
+      // 读不到 ⇒ 首启向导选的数字员工不会被注入，用户只看到「专家没生效」（隐私模式/存储被禁时必现）
+      console.warn('[app] read pending expert failed:', e);
       return undefined;
     }
     if (!raw) return undefined;

@@ -42,8 +42,11 @@ declare global {
 // 空包分支，全界面显示原始 key（2026-10-15 真机回归事故根因，构建产物可证）。
 // 正确姿势：直接调用 + try/catch。Vite 宿主：调用点已被替换为对象字面量，恒成功；
 // 非 Vite 宿主（esbuild/Node 冒烟测试）：调用保留原样，运行时抛 TypeError，兜底空表。
+// 刻意不记日志：Node/esbuild 宿主（全部门禁套件）**每次都会**走到这里，日志只会淹没测试输出；
+// 而真实 Vite 宿主下调用点已被编译期替换，正常情况下永不抛。若真抛了，症状是「全界面显示原始 key」，
+// 那是肉眼立刻可见的形态（2026-10-15 事故即此），不需要靠日志发现。
 function safeGlob(fn: () => Record<string, { default: Dict }>): Record<string, { default: Dict }> {
-  try { return fn(); } catch { return {}; }
+  try { return fn(); } catch { /* 见上：非 Vite 宿主的正常路径，空表=调用方回落到 key 原文 */ return {}; }
 }
 
 const zhModules = safeGlob(() => import.meta.glob<{ default: Dict }>('./locales/zh-CN/*.json', { eager: true }));

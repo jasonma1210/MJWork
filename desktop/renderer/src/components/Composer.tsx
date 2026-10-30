@@ -1,5 +1,9 @@
-// @ts-nocheck -- T2-2 存量代码原样搬移（零行为变更）；渐进 TS 路线下补全类型属后续任务（T0-3 门禁只约束新文件扩展名）
 import { useState, useEffect, useRef } from 'react';
+// 合成事件类型取别名：window 上挂的是原生 DragEvent，JSX 上是 React 的合成事件，两者同名不同物
+import type { DragEvent as ReactDragEvent, ClipboardEvent as ReactClipboardEvent } from 'react';
+import type {
+  ComposerProps, SlashCommand, AttachmentChipsProps, AttachmentChipProps, QueuedTasksProps,
+} from './composerTypes';
 import { IconArrowUp, IconBot, IconEdit, IconEye, IconFile, IconFolder, IconGitBranch, IconMic, IconPlug, IconPlus, IconSpinner, IconSquare, IconTrash, IconUsers, IconX, IconZap } from './icons';
 import ContextRing from './ContextRing';
 import InlineAlert from './InlineAlert';
@@ -13,10 +17,15 @@ import KnowledgeScope from './KnowledgeScope';
 // T2-2：输入区组件（自主进程 ChatArea.jsx 原样搬移，props 接口不变）。
 // 历史事故纪律（保留原文注释）：Composer 是独立 function 组件，拿不到父组件词法作用域，
 // 一切状态必须走 props——曾直接引用 decomposing/plan/cwd/lastFailed/send/thread 导致白屏。
+//
+// F-005（2026-10-30）：摘除文件级类型检查豁免并补类型（JSX 与逻辑零改动，只补声明）。
+// 接线契约（props 与相关形状）外置在同目录 composerTypes.ts：ChatArea 装配 → Composer 消费 →
+// WelcomePage 经 `Parameters<typeof Composer>[0]` 派生同一份类型，三处不会再各自漂移。
 
 // 斜杠命令表（对标 Codex /plan /review /status /compact 等）
 // i18n：顶层常量不冻结求值结果，只存 hintKey，渲染时经 t() 解析，切换语言即时生效
-const SLASH_COMMANDS = [
+
+const SLASH_COMMANDS: SlashCommand[] = [
   { key: '/plan', hintKey: 'composer.slash.plan' },
   { key: '/review', hintKey: 'composer.slash.review', pending: true }, // C8：未实现命令禁用，消除假可用性
   { key: '/compact', hintKey: 'composer.slash.compact' },
@@ -26,7 +35,7 @@ const SLASH_COMMANDS = [
 ];
 
 // token 量的紧凑展示（预算徽标用）：≥1000 折成 k，非法值回落 0
-function formatTokens(v) {
+function formatTokens(v: unknown) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return '0';
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.trunc(n));
@@ -54,13 +63,13 @@ export default function Composer({
   // 2026-10-20 需求⑤：军团选中态——`+` 菜单选中团队后在上方显示团队名徽标；
   // 发消息时由 ChatArea 的 sendOrDispatch 自动派活给该团队（本组件不感知派活细节）。
   activeTeam = null, onClearTeam, teamErr = '', onClearTeamErr, teamBusy = false, onSelectTeam,
-}) {
+}: ComposerProps) {
   const { t } = useI18n();
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashIdx, setSlashIdx] = useState(0);
   const [dragOver, setDragOver] = useState(false);   // 指针悬停在输入框上
   const [winDrag, setWinDrag] = useState(false);     // 文件拖进应用窗口（任意位置）
-  const taRef = useRef(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const expert = extras?.expert || null;
   const voiceActive = voice?.state === 'recording' || voice?.state === 'transcribing';
   // R-15（2026-10-22 产品边界）：派活态 = 输入框上方常驻「目标条」回答「这一发发给谁」——
@@ -71,15 +80,22 @@ export default function Composer({
     : 0;
   const teamBudget = activeTeam?.budget && typeof activeTeam.budget === 'object' ? activeTeam.budget : null;
   const teamBudgetLabel = teamBudget
-    ? t('composer.teamBudget', { tokens: formatTokens(teamBudget.max_tokens), rounds: teamBudget.max_rounds })
+    ? t('composer.teamBudget', { tokens: formatTokens(teamBudget.max_tokens), rounds: teamBudget.max_rounds ?? 0 })
     : t('composer.teamBudgetDefault');
   const dispatchMode = Boolean(activeTeam) && !loading;
+  // 会话级扩展的两个列表：提成局部变量，既让「是否非空」判定与下面渲染的是同一份数据，
+  // 也避免每处都写 `(extras?.skillIds || [])` 而各自发散。
+  const skillIds = extras?.skillIds || [];
+  const mcpServers = extras?.mcpServers || [];
+  // 分步报告里的「下一步」：提前取出，让嵌套在 onClick 回调里的引用也能被类型收窄
+  // （直接把 `planReport.next` 写在回调里，TS 会认为属性可能在被调用时已变）。
+  const planNext = planReport?.next || null;
   // 会话级徽标是否非空：全空时整行不渲染，避免留一条空白行把输入框往下推。
   // activeTeam 不再参与本判定——它已升级为独立目标条（见上方），否则会出现空徽标行。
   const hasTaskBadges = Boolean(
     planMode || expert
-    || (extras?.skillIds || []).length > 0
-    || (extras?.mcpServers || []).length > 0,
+    || skillIds.length > 0
+    || mcpServers.length > 0,
   );
 
   // 运行中且输入框有内容 → 发送按钮语义为「暂缓发送」（入队）；输入框为空才是红色停止。
@@ -101,7 +117,7 @@ export default function Composer({
     ? SLASH_COMMANDS.filter((c) => c.key.startsWith(input.slice(1).toLowerCase()))
     : [];
 
-  function pickSlash(cmd) {
+  function pickSlash(cmd: SlashCommand) {
     if (cmd.pending) return; // C8：未实现命令不可选
     setInput(cmd.key + ' ');
     setSlashOpen(false);
@@ -110,7 +126,7 @@ export default function Composer({
     if (cmd.key === '/plan') onPlanMode?.();
   }
 
-  async function handleDrop(e) {
+  async function handleDrop(e: ReactDragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragOver(false);
     const n = await onDropFiles?.(e.dataTransfer?.files);
@@ -127,15 +143,15 @@ export default function Composer({
   // 计数法处理 dragenter/dragleave：子元素间移动会成对触发，只按深度归零才收起蒙层
   useEffect(() => {
     let depth = 0;
-    const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
-    const onEnter = (e) => { if (!hasFiles(e)) return; depth += 1; setWinDrag(true); };
-    const onOver = (e) => { if (!hasFiles(e)) return; e.preventDefault(); };
-    const onLeave = (e) => {
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types || []).includes('Files');
+    const onEnter = (e: DragEvent) => { if (!hasFiles(e)) return; depth += 1; setWinDrag(true); };
+    const onOver = (e: DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); };
+    const onLeave = (e: DragEvent) => {
       if (!hasFiles(e)) return;
       depth = Math.max(0, depth - 1);
       if (depth === 0) setWinDrag(false);
     };
-    const onDrop = async (e) => {
+    const onDrop = async (e: DragEvent) => {
       if (!hasFiles(e)) return;
       const alreadyHandled = e.defaultPrevented; // 输入框落点先行处理过
       e.preventDefault();
@@ -161,7 +177,7 @@ export default function Composer({
     };
   }, [onDropFiles, setInput]);
 
-  async function handlePaste(e) {
+  async function handlePaste(e: ReactClipboardEvent<HTMLTextAreaElement>) {
     const files = e.clipboardData?.files;
     if (files && files.length > 0) {
       e.preventDefault();
@@ -262,33 +278,33 @@ export default function Composer({
             </button>
           </span>
         )}
-        {(extras?.skillIds || []).length > 0 && (
+        {skillIds.length > 0 && (
           <span className="text-xs px-2 py-1 rounded bg-accent-bg text-accent shrink-0 flex items-center gap-1"
             title={t('composer.skillsTip', {
-              skills: extras.skillIds.join('、'), // i18n-literal
+              skills: skillIds.join('、'), // i18n-literal
             })}>
             <IconZap size={11} />
-            {t('composer.skillsCount', { n: extras.skillIds.length })}
-            <button onClick={() => onExtrasChange?.({ ...extras, skillIds: [] })} aria-label={t('composer.removeSkills')} className="hover:opacity-70">
+            {t('composer.skillsCount', { n: skillIds.length })}
+            <button onClick={() => onExtrasChange?.({ ...(extras || {}), skillIds: [] })} aria-label={t('composer.removeSkills')} className="hover:opacity-70">
               <IconX size={10} />
             </button>
           </span>
         )}
-        {(extras?.mcpServers || []).length > 0 && (
+        {mcpServers.length > 0 && (
           <span className="text-xs px-2 py-1 rounded bg-accent-bg text-accent shrink-0 flex items-center gap-1"
             title={t('composer.connectorsTip', {
-              names: extras.mcpServers.join('、'), // i18n-literal
+              names: mcpServers.join('、'), // i18n-literal
             })}>
             <IconPlug size={11} />
-            {t('composer.connectorsCount', { n: extras.mcpServers.length })}
-            <button onClick={() => onExtrasChange?.({ ...extras, mcpServers: [] })} aria-label={t('composer.removeConnectors')} className="hover:opacity-70">
+            {t('composer.connectorsCount', { n: mcpServers.length })}
+            <button onClick={() => onExtrasChange?.({ ...(extras || {}), mcpServers: [] })} aria-label={t('composer.removeConnectors')} className="hover:opacity-70">
               <IconX size={10} />
             </button>
           </span>
         )}
         {/* AGENTS.md 属于「当前工作区」事实，同样只在会话内显示 */}
         {workspaceBound && agentsMd && (
-          <span className="truncate flex items-center gap-1 text-accent" title={t('composer.agentsMdTip', { path: agentsMd.path })}>
+          <span className="truncate flex items-center gap-1 text-accent" title={t('composer.agentsMdTip', { path: agentsMd.path || '' })}>
             <IconFile size={13} /> AGENTS.md
           </span>
         )}
@@ -388,25 +404,25 @@ export default function Composer({
       {planReport && (
         <div className="mb-2 mx-1 rounded-2xl border border-border bg-surface p-3">
           <div className="flex items-center justify-between gap-2 mb-1">
-            <span className="text-sm font-medium">{t('composer.stepDone', { n: planReport.index + 1, total: planReport.total, title: planReport.title })}</span>
+            <span className="text-sm font-medium">{t('composer.stepDone', { n: planReport.index + 1, total: planReport.total, title: planReport.title || '' })}</span>
             <span className="text-xs text-text2 shrink-0" title={t('composer.stepTokensTip')}>
               {t('composer.stepTokens', {
-                model: planReport.model,
+                model: planReport.model || '',
                 used: (planReport.tokens.in + planReport.tokens.out).toLocaleString(),
                 input: planReport.tokens.in.toLocaleString(),
                 output: planReport.tokens.out.toLocaleString(),
               })}
             </span>
           </div>
-          {planReport.next ? (
+          {planNext ? (
             <>
-              <p className="text-xs text-text2 mt-1">{t('composer.nextStep', { n: planReport.index + 2, total: planReport.total, title: planReport.next.title })}</p>
+              <p className="text-xs text-text2 mt-1">{t('composer.nextStep', { n: planReport.index + 2, total: planReport.total, title: planNext.title || '' })}</p>
               <div className="flex items-center gap-2 mt-2">
                 <Button
                   variant="primary"
                   size="sm"
                   onClick={() => {
-                    setInput(planReport.next.prompt);
+                    setInput(planNext.prompt);
                     onPlanReportChange?.(null);
                     requestAnimationFrame(() => taRef.current?.focus());
                   }}
@@ -449,7 +465,12 @@ export default function Composer({
       <div
         className={`bg-surface border rounded-2xl p-3 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20 relative ${dragOver ? 'border-accent border-dashed' : 'border-border'}`}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
+        onDragLeave={(e) => {
+          // relatedTarget 是 EventTarget：先做 instanceof Node 判型再交给 contains，
+          // 避免为了满足 Node 形参而写 as（判型同时兜住 relatedTarget 为 null 的离开场景）
+          const rt = e.relatedTarget;
+          if (!(rt instanceof Node) || !e.currentTarget.contains(rt)) setDragOver(false);
+        }}
         onDrop={handleDrop}
       >
         {dragOver && (
@@ -503,12 +524,12 @@ export default function Composer({
           }}
           onPaste={handlePaste}
           placeholder={expert
-            ? t('composer.workingWith', { name: expert.title_cn || expert.name })
+            ? t('composer.workingWith', { name: expert.title_cn || expert.name || '' })
             : (activeTeam
               ? t('composer.dispatchPlaceholder')
               : (loading ? t('composer.placeholderRunning') : t('composer.placeholderIdle')))}
           className="w-full bg-transparent outline-none text-sm resize-none"
-          rows="1"
+          rows={1}
         />
 
         {slashOpen && matches.length > 0 && (
@@ -628,7 +649,16 @@ export default function Composer({
 //  - 图片 chip：hover 弹出小图预览（previewFile 惰性取 dataUrl，首次加载后缓存）；移开即收
 //  - 文档 chip：不做悬浮预览；点击 → 右侧预览栏打开（与消息内文件 chip 同一落点）
 //  - × 移除；发送时由 useAgentRun.send 统一转为 `@路径` 上下文行（不污染输入框文本）
-function AttachmentChips({ items = [], projectPath, onRemove, onOpen }) {
+/** 桥面返回值窄化：env.d.ts 把 window.mjcode 声明为 `(...args: unknown[]) => unknown`，
+ *  直接读 r.previewUrl 会报「Property does not exist on type '{}'」（unknown 经真值判断窄化成 {}）。
+ *  这里用一次断言把 unknown 收成结果形状，调用点保持自然写法。
+ *  精确桥面接口是 F-005 之后的独立项，届时本函数可整体删除。 */
+function asBridge(r: unknown): { previewUrl?: string; dataUrl?: string; kind?: string } {
+  return (r && typeof r === 'object' ? r : {}) as { previewUrl?: string; dataUrl?: string; kind?: string };
+}
+
+
+function AttachmentChips({ items = [], projectPath, onRemove, onOpen }: AttachmentChipsProps) {
   const { t } = useI18n();
   if (!items.length) return null;
   return (
@@ -648,7 +678,8 @@ function AttachmentChips({ items = [], projectPath, onRemove, onOpen }) {
   );
 }
 
-function AttachmentChip({ item, projectPath, onRemove, onOpen, removeTitle, previewFailed }) {
+
+function AttachmentChip({ item, projectPath, onRemove, onOpen, removeTitle, previewFailed }: AttachmentChipProps) {
   const { t } = useI18n();
   const [hover, setHover] = useState(false);
   const [dataUrl, setDataUrl] = useState('');
@@ -660,9 +691,9 @@ function AttachmentChip({ item, projectPath, onRemove, onOpen, removeTitle, prev
     askedRef.current = true;
     (async () => {
       try {
-        const r = await window.mjcode?.previewFile?.({ path: item.path, cwd: projectPath || undefined });
-        const src = r?.previewUrl || r?.dataUrl || '';
-        if (r?.kind === 'image' && src) setDataUrl(src);
+        const r = asBridge(await window.mjcode?.previewFile?.({ path: item.path, cwd: projectPath || undefined }));
+        const src = r.previewUrl || r.dataUrl || '';
+        if (r.kind === 'image' && src) setDataUrl(src);
         else setFailed(true);
       } catch (err) {
         console.warn('[composer] attachment preview failed:', err);
@@ -721,7 +752,8 @@ function AttachmentChip({ item, projectPath, onRemove, onOpen, removeTitle, prev
 //   ② 编辑     = 移回输入框重编（不丢用户刚写的内容）
 //   ③ 删除     = 丢弃这条排队
 // 不再用「已排队 N」徽标 + 浮层：用户在运行中最需要确认的就是「我刚发的那条在哪」。
-function QueuedTasks({ queued = [], onRunNow, onEdit, onRemove }) {
+
+function QueuedTasks({ queued = [], onRunNow, onEdit, onRemove }: QueuedTasksProps) {
   const { t } = useI18n();
   if (!queued.length) return null;
   return (

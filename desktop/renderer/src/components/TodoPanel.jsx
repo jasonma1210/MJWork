@@ -38,7 +38,9 @@ export default function TodoPanel({ runId, compact = false }) {
         if (evt.runId && runId && evt.runId !== runId) return;
         setState({ todos: evt.data?.todos || [], doneCount: evt.data?.doneCount || 0, total: evt.data?.total || 0 });
       });
-    } catch {
+    } catch (e) {
+      // 订阅失败 ⇒ 返回 undefined ⇒ 整个待办面板永不出现（与「本次任务没有待办」同形，无提示）
+      console.error('[TodoPanel] subscribe agent events failed:', e);
       return undefined;
     }
     return typeof off === 'function' ? off : undefined;

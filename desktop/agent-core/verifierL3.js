@@ -101,9 +101,7 @@ export function parseL3Response(raw) {
   let obj;
   try {
     obj = JSON.parse(m[0]);
-  } catch {
-    return null;
-  }
+  } catch { /* null 不是终态：调用方把它变成 {verdict:'PASS', skipped:true, reason:'unparseable'}——「跳过」与「通过」在返回值里是可区分的形态 */ return null; }
   if (!obj || typeof obj !== 'object') return null;
   const verdict = obj.verdict === 'FLAG' ? 'FLAG' : (obj.verdict === 'PASS' ? 'PASS' : null);
   if (!verdict) return null;

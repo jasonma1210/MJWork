@@ -252,9 +252,12 @@ function startWaveProbe({
   clearIntervalFn = clearInterval,
 } = {}) {
   const probe = createWaveProbe({ maxMisses });
+  // 采样抛错 ⇒ 本拍直接 return：若采样器坏掉，**停滞永远不会被判定** ⇒ 团队卡死且无人撤员。
+  // 探活 5s 一拍，逐拍告警会刷爆日志，故只告警一次（含错误原文，够定位）。
+  let sampleWarned = false;
   const timer = setIntervalFn(() => {
     let r = null;
-    try { r = probe.sample(typeof sample === 'function' ? sample() : {}); } catch { return; }
+    try { r = probe.sample(typeof sample === 'function' ? sample() : {}); } catch (e) { if (!sampleWarned) { sampleWarned = true; console.warn('[teamWaves] 探活采样抛错，停滞检测失效（团队可能卡死无人撤员）：', e?.message || e); } return; }
     if (!r.stalled) return;
     probe.reset();
     try { onStall?.(r); } catch { /* 撤员失败不阻断后续探活 */ }

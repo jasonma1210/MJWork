@@ -74,7 +74,7 @@ const asObj = (v: unknown): Obj | null => (v && typeof v === 'object' && !Array.
 const asStr = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
 const parseArgs = (a: ToolTraceProps['args']): Obj => {
   if (a && typeof a === 'object') return a;
-  if (typeof a === 'string') { try { const p = JSON.parse(a); return asObj(p) || {}; } catch { return {}; } }
+  if (typeof a === 'string') { try { const p = JSON.parse(a); return asObj(p) || {}; } catch { /* C-001：args 不是 JSON（纯文本命令等）⇒ 按「无结构化参数」展示 */ return {}; } }
   return {};
 };
 
@@ -139,10 +139,11 @@ function PlainOutputBlock({ text, className, max = 500 }: { text: unknown; class
   );
 }
 
-/** 文件路径 chip（read_file/list_dir/glob/grep 等路径类工具的关键参数展示） */
+/** 关键参数：纯文本 mono 展示（2026-10-30 起不再带 chip 底色——轨迹行整体是灰字，
+ *  行内再套一层浅底方块会让「一行灰字」变成「一行方块」；详情区同样受益于更少的框线）。 */
 function PathChip({ text }: { text: string }) {
   return (
-    <span className="font-mono text-code bg-hover rounded px-2 py-1 max-w-full truncate" title={text}>{text}</span>
+    <span className="font-mono truncate" title={text}>{text}</span>
   );
 }
 
@@ -201,7 +202,7 @@ function SourceLinks({ items }: { items: unknown }) {
 function FullArgs({ args }: { args: Obj }) {
   const { t } = useI18n();
   let text = '';
-  try { text = JSON.stringify(args, null, 2); } catch { text = String(args); }
+  try { text = JSON.stringify(args, null, 2); } catch { /* C-001：不可序列化（循环引用）⇒ 退化 String，仍要能把参数摊给用户看 */ text = String(args); }
   if (!text || text === '{}') return null;
   return (
     <div className="mt-1">
@@ -296,7 +297,9 @@ function ParamSummary({ name, a }: { name: string; a: Obj }) {
 }
 
 function toolIcon(name: string, failed: boolean) {
-  const cls = failed ? 'text-danger shrink-0' : 'text-accent shrink-0';
+  // 2026-10-30：图标由 accent 改为 text2——轨迹行整体降为灰色次要信息（用户需求 1），
+  // 只有失败态保留红色（错误必须在扫读时就能看见，不藏在展开后）。
+  const cls = failed ? 'text-danger shrink-0' : 'text-text2 shrink-0';
   if (name === 'shell' || name === 'code_exec' || name === 'sandbox_code_run' || name.startsWith('mcp__')) return <IconTerminal size={13} className={cls} />;
   if (name === 'read_file' || name === 'write_file' || name === 'list_dir' || name === 'sqlite'
     || name === 'doc_create' || name === 'xlsx_create' || name === 'pptx_create' || name === 'pdf_generate'
@@ -525,31 +528,35 @@ export default function ToolTrace({ name, args, result }: ToolTraceProps) {
       'chrome_navigate', 'chrome_click', 'chrome_fill', 'chrome_screenshot', 'chrome_extract', 'chrome_tabs', 'chrome_status', 'code_exec',
       'deep_research'].includes(name);
   return (
-    <div className="bg-surface border border-border rounded-lg text-xs">
+    // 2026-10-30（用户需求 1）：由「带边框卡片」改为「一行灰字」。理由：一轮任务动辄十几次工具调用，
+    // 每次一个卡片会把正文切成碎片；灰字行只占一行、可扫读，详情点击后展开在圆角面板里。
+    <div className="text-xs">
       <button
         onClick={() => hasDetail && setOpen((v) => !v)}
         disabled={!hasDetail}
-        className={`w-full flex items-center gap-2 px-3 py-2 text-left ${hasDetail ? 'hover:bg-hover cursor-pointer' : 'cursor-default'}`}
+        className={`w-full flex items-center gap-2 py-1 text-left text-text2 ${hasDetail ? 'hover:text-text cursor-pointer' : 'cursor-default'}`}
         title={hasDetail ? (open ? t('toolTrace.collapseDetail') : t('toolTrace.expandDetail')) : undefined}
       >
+        {hasDetail
+          ? (open ? <IconChevronDown size={12} className="shrink-0" /> : <IconChevronRight size={12} className="shrink-0" />)
+          : <span className="w-3 shrink-0" />}
         {toolIcon(name, failed)}
-        <span className={failed ? 'text-danger shrink-0' : 'text-accent shrink-0'}>{toolNameCN(name)}</span>
-        <span className="text-text2 truncate flex-1 min-w-0"><ParamSummary name={name} a={a} /></span>
-        {/* 状态徽标：失败 / 退出码 / 运行中 */}
-        {failed && <span className="shrink-0 text-caption text-danger bg-danger-bg border border-danger rounded px-2 py-1">{t('toolTrace.failed')}</span>}
+        <span className={failed ? 'text-danger shrink-0' : 'shrink-0'}>{toolNameCN(name)}</span>
+        <span className="min-w-0 truncate flex-1"><ParamSummary name={name} a={a} /></span>
+        {/* 状态徽标：失败 / 退出码 / 运行中（同为灰字，只有失败与运行中带色） */}
+        {failed && <span className="shrink-0 text-caption text-danger">{t('toolTrace.failed')}</span>}
         {!failed && exitCode != null && (
-          <span className={`shrink-0 text-caption rounded px-2 py-1 border ${exitCode === 0 ? 'text-text2 border-border' : 'text-warn border-border'}`}>{t('toolTrace.exitCode', { code: exitCode })}</span>
+          <span className={`shrink-0 text-caption ${exitCode === 0 ? 'text-text2/70' : 'text-warn'}`}>{t('toolTrace.exitCode', { code: exitCode })}</span>
         )}
         {!failed && exitCode == null && (running ? (
           <span className="shrink-0 text-caption text-text2 inline-flex items-center gap-1"><IconSpinner size={10} className="animate-spin" />{t('toolTrace.running')}</span>
-        ) : res ? <span className="shrink-0 text-caption text-success">{t('toolTrace.done')}</span> : null)}
-        {hasDetail && (open ? <IconChevronDown size={12} className="text-text2 shrink-0" /> : <IconChevronRight size={12} className="text-text2 shrink-0" />)}
+        ) : res ? <span className="shrink-0 text-caption text-text2/70">{t('toolTrace.done')}</span> : null)}
       </button>
       {failed && !!res?.error && (
-        <OutputBlock className="mx-3 mb-2 text-code font-mono text-danger bg-danger-bg border border-danger p-2 rounded whitespace-pre-wrap" text={String(res.error)} />
+        <OutputBlock className="ml-4 mb-2 text-code font-mono text-danger bg-danger-bg border border-danger p-2 rounded whitespace-pre-wrap" text={String(res.error)} />
       )}
       {open && (
-        <div className="px-3 pb-2 border-t border-border pt-2">
+        <div className="ml-4 mb-2 rounded-lg border border-border bg-surface px-3 py-2">
           <DetailBody name={name} a={a} res={res} />
           <FullArgs args={a} />
           {!res && !!rawStr && (
@@ -588,7 +595,7 @@ export function ToolTraceGroup({ calls, toolResults, label, defaultOpen = false 
       const tr = toolResults.get(o?.id);
       if (tr) {
         try { result = JSON.parse(asStr(tr.content)); }
-        catch { result = { stdout: asStr(tr.content) }; }
+        catch { /* C-001：工具输出不是 JSON（大量 CLI 就是纯文本）⇒ 当 stdout 展示，是有意的形态分流 */ result = { stdout: asStr(tr.content) }; }
       }
     }
     return { key: asStr(o?.id) || `t-${i}`, name, args: o?.args ?? fn?.arguments ?? null, result };
@@ -596,23 +603,25 @@ export function ToolTraceGroup({ calls, toolResults, label, defaultOpen = false 
   const failedCount = items.filter((it) => asObj(it.result)?.error).length;
   return (
     <div className="mb-2">
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-1">
         {label && <span className="text-xs text-text2 shrink-0">{label}</span>}
         {!open ? (
           <button onClick={() => setOpen(true)}
-            className="flex items-center gap-2 text-xs text-text2 hover:text-text bg-surface border border-border rounded-lg px-3 py-2">
-            <IconWrench size={11} className="text-accent" />
+            className="flex items-center gap-2 text-xs text-text2 hover:text-text">
+            <IconChevronRight size={12} className="shrink-0" />
+            <IconWrench size={11} className="shrink-0" />
             {t('toolTrace.callCount', { n: items.length })}{failedCount > 0 ? <span className="text-danger">{t('toolTrace.failedCount', { n: failedCount })}</span> : null}
             <span className="text-text2/70">{t('toolTrace.clickExpand')}</span>
           </button>
         ) : (
-          <button onClick={() => setOpen(false)} className="text-caption text-text2 hover:text-text">
+          <button onClick={() => setOpen(false)} className="flex items-center gap-2 text-caption text-text2 hover:text-text">
+            <IconChevronDown size={12} className="shrink-0" />
             {t('toolTrace.collapseTrace')}
           </button>
         )}
       </div>
       {open && (
-        <div className="space-y-2">
+        <div className="space-y-1">
           {items.map((it) => (
             <ToolTrace key={it.key} name={it.name} args={(it.args ?? null) as Record<string, unknown> | string | null} result={it.result} />
           ))}

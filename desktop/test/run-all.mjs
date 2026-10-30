@@ -84,6 +84,10 @@ const GATES = [
   { label: 'harness-r7:check（第七轮审查判据 76 断言）', args: [path.join(REPO_ROOT, 'docs/harness-r7/04-test/check.mjs'), REPO_ROOT] },
   { label: 'i18n-scan（renderer 裸中文残留）', args: [path.join(ROOT, 'scripts/i18n-scan.mjs'), path.join(ROOT, 'renderer/src')] },
   { label: `i18n-modcheck（${i18nModules.length} 个模块双侧键集）`, args: [path.join(ROOT, 'scripts/i18n-modcheck.mjs'), ...i18nModules] },
+  // T-001（2026-10-30）：renderer 类型检查纳入前置门禁。此前渲染层 TS/TSX 不被 eslint 覆盖、
+  // npm test 也不跑 tsc，类型回归只有 CI 的 Renderer typecheck 步骤能拦，本地绕过 CI 即静默合入。
+  // 直连 renderer 本地 tsc（node 可直接执行该 .js bin），退出码与 tsc 一致（fail-closed）。
+  { label: 'typecheck（renderer tsc --noEmit）', args: [path.join(ROOT, 'renderer/node_modules/typescript/bin/tsc'), '--noEmit', '-p', path.join(ROOT, 'renderer/tsconfig.json')] },
 ];
 
 console.log(`前置门禁 ${GATES.length} 项（外部命令级，非 test/*.test.*）\n`);

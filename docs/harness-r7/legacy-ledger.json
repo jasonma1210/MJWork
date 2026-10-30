@@ -117,7 +117,7 @@
       "source": "desktop/renderer/src（排除 components/ui/ 与 styles/，口径同 test/ui-conventions.test.js）",
       "unit": "button",
       "total": 160,
-      "scannedFiles": 163,
+      "scannedFiles": 170,
       "groups": [
         {
           "file": "components/Onboarding.jsx",
@@ -230,11 +230,6 @@
           "disposition": "pending"
         },
         {
-          "file": "components/tools/ToolTrace.tsx",
-          "count": 3,
-          "disposition": "pending"
-        },
-        {
           "file": "components/WorktreeBar.jsx",
           "count": 3,
           "disposition": "pending"
@@ -261,6 +256,11 @@
         },
         {
           "file": "components/SideChatPanel.tsx",
+          "count": 2,
+          "disposition": "pending"
+        },
+        {
+          "file": "components/tools/ToolTrace.tsx",
           "count": 2,
           "disposition": "pending"
         },
@@ -296,6 +296,11 @@
         },
         {
           "file": "components/ProjectPicker.jsx",
+          "count": 1,
+          "disposition": "pending"
+        },
+        {
+          "file": "components/ReasoningPanel.tsx",
           "count": 1,
           "disposition": "pending"
         },

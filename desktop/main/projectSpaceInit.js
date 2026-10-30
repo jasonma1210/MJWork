@@ -139,7 +139,9 @@ function normalizeCwd(raw) {
   if (!cwd) return '';
   const abs = pathMod.resolve(cwd);
   let ok = false;
-  try { ok = fs.statSync(abs).isDirectory(); } catch { ok = false; }
+  // 失败即抛错（fail-closed），但对外文案一律是「不存在或不是目录」——EACCES（有目录没权限）会被误读成
+  // 「目录不见了」，用户会反复确认路径。故把 errno 留在日志里，界面不改。
+  try { ok = fs.statSync(abs).isDirectory(); } catch (e) { console.warn('[projectSpaceInit] cwd 探测失败，按不可用拒绝：', abs, e?.code || '', e?.message || e); ok = false; }
   if (!ok) throw invalid('cwd', '工作目录不存在或不是目录');
   return abs;
 }

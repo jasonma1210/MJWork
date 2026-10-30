@@ -35,6 +35,7 @@
   "namePlaceholder": "Service name (e.g. DeepSeek)",
   "urlPlaceholder": "Base URL (e.g. https://api.deepseek.com/v1)",
   "modelIdPlaceholder": "Model ID (e.g. deepseek-chat)",
+  "apiKey": "API Key (e.g. sk-...)",
   "projectSub": "MJ Nexus runs commands, reads and writes files, and performs Git operations inside the project directory.",
   "skipProject": "Skip, don't create a project yet",
   "firstTaskSub": "Pick a suggestion to get started, or just type your own.",

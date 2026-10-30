@@ -113,7 +113,12 @@ function protectedPathsFor(cwd, { existsSync = fs.existsSync, readFileSync = fs.
   for (const name of PROTECTED_SUBPATH_NAMES) {
     const p = path.join(base, name);
     let exists = false;
-    try { exists = !!existsSync(p); } catch { exists = false; }
+    // 为什么要留痕：这里抛错 ⇒ exists=false ⇒ 该保护项被跳过 ⇒ `.git` 变成可写，
+    // 即「沙箱 carve-out 静默失效」（可被改 hooks 实现持久化）。**不改成 fail-closed** 是因为
+    // 下游 Seatbelt/bwrap/Windows ACL 三个后端都按「真实存在的路径」建规则，塞进不存在的路径会
+    // 直接让沙箱构建失败、把「保护清单少一项」升级成「整个工具不可用」；existsSync 本身对
+    // 任何 IO 错误都返回 false，只有参数非法（如路径含 NUL）才抛——概率极低但必须可观测。
+    try { exists = !!existsSync(p); } catch (e) { console.warn('[writeGuard] 保护项存在性探测失败，该项本次不纳入只读 carve-out：', p, e?.message || e); exists = false; }
     if (!exists) continue;
     out.push(p);
     // 形态 ②：`.git` 是文件（读目录会抛 EISDIR，正好把两种形态区分开）

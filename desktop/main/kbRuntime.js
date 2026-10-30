@@ -11,6 +11,14 @@
 
 let getter = null;
 let flagsGetter = null;
+// C-001：getter 抛错是「装配坏了」而不是「功能没开」，但这两个函数每次知识注入/操作都会调，
+// 逐次告警会刷屏。只告警一次并说明后果：整条知识库链路会静默按「不可用」走。
+let degradedWarned = false;
+function warnDegradedOnce(where, e) {
+  if (degradedWarned) return;
+  degradedWarned = true;
+  console.warn(`[kbRuntime] ${where} 取用异常，知识库按「不可用」降级（本条只报一次）:`, e?.message || e);
+}
 
 /** @param {(() => object|null)|null} fn 返回 SQLite 连接的 getter */
 function setDb(fn) {
@@ -28,7 +36,8 @@ function enabled() {
   try {
     const f = flagsGetter();
     return !!(f && f.knowledge);
-  } catch {
+  } catch (e) { /* C-001：fail-closed 是对的（默认关闭），但装配异常会让「用户明明开了却用不了」，需留痕 */
+    warnDegradedOnce('特性开关', e);
     return false;
   }
 }
@@ -38,7 +47,8 @@ function getDb() {
   if (!getter) return null;
   try {
     return getter() || null;
-  } catch {
+  } catch (e) { /* C-001：同上——返回 null 让调用方按「不可用」处理，但异常本身要留痕 */
+    warnDegradedOnce('数据库句柄', e);
     return null;
   }
 }

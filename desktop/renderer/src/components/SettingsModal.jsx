@@ -29,6 +29,8 @@ import { applyAccent } from '../lib/color';
 import { APPROVAL_MODES, SANDBOX_MODES, migrateApprovalMode } from '../constants/approval';
 import { getLinkOpenMode, setLinkOpenMode } from '../lib/linkOpen';
 import { getOutputDisplay, setOutputDisplay } from '../lib/outputDisplay';
+// 收尾提示音开关：读取方是 lib/runSound.ts（playRunSound 每次播放前现读，无需重启）
+import { isRunSoundEnabled, setRunSoundEnabled, previewRunSound } from '../lib/runSound';
 import { useI18n } from '../i18n';
 
 // 导航分组对齐 WorkBuddy：设置 / 功能 / 账户与安全。顺序纪律：每个 id 必须在正文里有对应实现
@@ -65,6 +67,13 @@ export const LINK_OPEN_OPTIONS = [
 // 只在设置页存个值而无人读取就是假开关（读取方见 lib/outputDisplay.ts）。
 export const OUTPUT_DISPLAY_OPTIONS = [
   { id: 'inline', nameKey: 'settings.outputInline', descKey: 'settings.outputInlineDesc' }, { id: 'panel', nameKey: 'settings.outputPanel', descKey: 'settings.outputPanelDesc' },
+];
+
+// 收尾提示音（2026-10-30）：正常结束 / 异常结束 / 手动停止 三态音效的总开关。
+// 与产出展示同理——设置项必须真的改变播放行为，否则就是假开关（读取方见 lib/runSound.ts）。
+export const RUN_SOUND_OPTIONS = [
+  { id: 'on', nameKey: 'settings.runSoundOn', descKey: 'settings.runSoundOnDesc' },
+  { id: 'off', nameKey: 'settings.runSoundOff', descKey: 'settings.runSoundOffDesc' },
 ];
 
 // AI 描述粒度（2026-10-19）：任务收尾文案的详略档，纯提示词驱动。
@@ -202,7 +211,7 @@ export default function SettingsModal({
     try {
       const u = new URL(s);
       return u.protocol === 'http:' || u.protocol === 'https:';
-    } catch { return false; }
+    } catch { /* 校验器的失败结论会变成用户可见的 urlMustBeHttp 错误，不是静默失败 */ return false; }
   }
 
   async function addProvider() {
@@ -508,6 +517,7 @@ function BrowserTab({ flags, approvalSettings, onApprovalSettingsChange }) {
   const { t } = useI18n();
   const [linkMode, setLinkMode] = useState(getLinkOpenMode);
   const [outputMode, setOutputMode] = useState(getOutputDisplay);
+  const [runSound, setRunSoundMode] = useState(() => (isRunSoundEnabled() ? 'on' : 'off'));
   const [cua, setCua] = useState(null);
   // 授权/能力引导弹窗（2026-10-19）：按平台给「去哪里授权 / 为什么当前不可用」的分步说明
   const [guideOpen, setGuideOpen] = useState(false);
@@ -540,6 +550,12 @@ function BrowserTab({ flags, approvalSettings, onApprovalSettingsChange }) {
       <Section title={t('settings.outputDisplayTitle')}>
         {OUTPUT_DISPLAY_OPTIONS.map((o) => <OptionRow key={o.id} name={t(o.nameKey)} desc={t(o.descKey)}
           selected={outputMode === o.id} onSelect={() => { setOutputMode(o.id); setOutputDisplay(o.id); }} />)}
+      </Section>
+
+      <Section title={t('settings.runSoundTitle')}>
+        {RUN_SOUND_OPTIONS.map((o) => <OptionRow key={o.id} name={t(o.nameKey)} desc={t(o.descKey)}
+          selected={runSound === o.id}
+          onSelect={() => { setRunSoundMode(o.id); setRunSoundEnabled(o.id === 'on'); if (o.id === 'on') previewRunSound(); }} />)}
       </Section>
 
       <Section title={t('settings.inAppBrowsingTitle')}>
@@ -704,7 +720,7 @@ function GitTab({ projectPath }) {
         {!gh && <p className="text-text2 text-sm">{t('settings.detecting')}</p>}
         {gh && (
           <>
-            <Row label="GitHub CLI" value={gh.available ? t('settings.installed') : t('settings.ghNotInstalled')} tone={gh.available ? 'text-success' : 'text-warn'} />
+            <Row label={t('settings.githubCli')} value={gh.available ? t('settings.installed') : t('settings.ghNotInstalled')} tone={gh.available ? 'text-success' : 'text-warn'} />
             {gh.available && (
               <Row label={t('settings.loginStatus')} value={gh.authed ? t('settings.loggedIn') : t('settings.loggedOut')} tone={gh.authed ? 'text-success' : 'text-warn'} />
             )}

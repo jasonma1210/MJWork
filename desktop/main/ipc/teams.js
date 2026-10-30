@@ -122,7 +122,8 @@ function extractJson(content) {
   const start = s.indexOf('{');
   const end = s.lastIndexOf('}');
   if (start === -1 || end <= start) return null;
-  try { return JSON.parse(s.slice(start, end + 1)); } catch { return null; }
+  // 解析失败必须留痕：调用方只报「角色草稿解析失败，请重试」，真因（围栏没闭合/输出截断/模型说人话）只有这里看得到；截 160 字防日志爆量
+  try { return JSON.parse(s.slice(start, end + 1)); } catch (e) { console.warn('[teams] extractJson parse failed:', e.message, 'len=', s.length, 'head=', s.slice(0, 160)); return null; }
 }
 
 /** 能力摘要（给人审看的「能做什么」）：返回布尔位，文案由渲染层 i18n 承担。

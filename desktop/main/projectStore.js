@@ -10,6 +10,7 @@
 //     三者在 T6-9 的初始化链路里按事务顺序编排；
 //   · 一项目一 thread（UNIQUE）由数据库约束兜底，本模块把约束异常翻译成结构化错误码，
 //     不靠「先查后插」这种有竞态的写法。
+const { safeParseJson } = require('./jsonSafe');
 const crypto = require('crypto');
 
 const PROJECT_CATEGORIES = ['prd', 'tech', 'marketing', 'custom'];
@@ -45,10 +46,6 @@ function requireText(raw, code, max = 200) {
   return s;
 }
 
-function safeParse(raw, fallback) {
-  try { return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
-}
-
 function rowToProject(r) {
   if (!r) return null;
   return {
@@ -61,7 +58,7 @@ function rowToProject(r) {
     teamId: r.team_id || '',
     artifactId: r.artifact_id || '',
     status: r.status,
-    meta: safeParse(r.meta_json, {}),
+    meta: safeParseJson(r.meta_json, {}),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

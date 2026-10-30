@@ -134,8 +134,11 @@ check('设置项没有假开关（写入的键必须有人读取）', () => {
     const src = fs.readFileSync(f, 'utf8');
     for (const m of src.matchAll(/localStorage\.setItem\(\s*'([^']+)'/g)) setKeys.add(m[1]);
     for (const m of src.matchAll(/localStorage\.getItem\(\s*'([^']+)'/g)) readKeys.add(m[1]);
-    // App 的 loadJSON(key, fallback) 内部即 getItem
-    for (const m of src.matchAll(/loadJSON\(\s*'([^']+)'/g)) readKeys.add(m[1]);
+    // App 的 loadJSON(key, fallback) 内部即 getItem。
+    // F-004（2026-10-30）：抽取器必须容忍泛型实参 —— `loadJSON<ApprovalSettings>('mj_approval_settings', …)`
+    // 这种写法在 .ts hook 里是常态，而原来的 `loadJSON\(\s*'` 一条都匹配不到 ⇒ 键被误判成「假开关」。
+    // 这是抽取器的边界形态缺口（不是断言写错），所以放宽正则而不是把代码改回无泛型写法。
+    for (const m of src.matchAll(/loadJSON(?:<[^>]*>)?\(\s*['"]([^'"]+)['"]/g)) readKeys.add(m[1]);
   }
   assert.ok(setKeys.size > 5, `只找到 ${setKeys.size} 个设置键，解析逻辑可能失效`);
   const dead = [...setKeys].filter((k) => !readKeys.has(k));

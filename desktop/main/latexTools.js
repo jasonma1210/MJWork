@@ -57,7 +57,7 @@ function texBinDirs() {
       }
     } catch { /* 目录不存在 */ }
   }
-  return dirs.filter((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } });
+  return dirs.filter((d) => { try { return fs.statSync(d).isDirectory(); } catch { /* C-001：stat 失败=目录不存在=不加入候选，属正常过滤分支 */ return false; } });
 }
 
 function envForTex() {
@@ -217,7 +217,7 @@ async function toolLatexCompile(args = {}) {
   // 先看原始路径：是目录就明确拒绝——否则「缺扩展名自动补 .tex」会把目录拼成**不存在**的
   // 路径，报出误导性的「入口文件不存在」，用户拿着错误信息找半天目录问题。
   let st = null;
-  try { st = await fsp.stat(texPath); } catch { st = null; }
+  try { st = await fsp.stat(texPath); } catch { /* C-001：stat 失败=路径不存在，下面据此判「补 .tex」或报「入口文件不存在」，是正常探测 */ st = null; }
   if (st && st.isDirectory()) return { ok: false, error: `${texPath} 是目录，请指定具体的 .tex 文件` };
   // 原始路径不存在且缺扩展名：按模型常省略扩展名的习惯补 .tex 后再 stat
   if (!st && !texPath.toLowerCase().endsWith('.tex')) texPath = `${texPath}.tex`;
@@ -288,7 +288,7 @@ async function toolLatexCompile(args = {}) {
     };
   }
 
-  const bytes = (() => { try { return fs.statSync(pdfPath).size; } catch { return 0; } })();
+  const bytes = (() => { try { return fs.statSync(pdfPath).size; } catch { /* C-001：取不到大小按 0 记——审计里 0B 表示未知，不是空文件 */ return 0; } })();
   audit(TOOL_KEY, texPath, `ok ${bytes}B（${inv.label}）`, gate.asked ? 'approved' : 'recorded');
   return {
     ok: true,

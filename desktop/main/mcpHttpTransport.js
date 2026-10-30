@@ -147,7 +147,7 @@ function createHttpTransport({
       const text = await res.text();
       if (!text.trim()) return; // 通知（notifications/*）的 202 无 body：不是错误，别刷日志
       try { dispatch(transport.serverRef, JSON.parse(text)); }
-      catch { if (onLog) onLog(`非 JSON 响应: ${text.slice(0, 120)}`); }
+      catch { /* C-001：不是静默——下面立刻经 onLog 把响应首段报给 UI 日志 */ if (onLog) onLog(`非 JSON 响应: ${text.slice(0, 120)}`); }
     },
     close() { /* HTTP 无子进程；会话随进程结束（DELETE 语义属服务端可选实现，不强制） */ },
     // H-4：重新 initialize 前必须清掉旧会话 id，否则新握手仍带着已失效的会话。
@@ -256,8 +256,9 @@ function createSseTransport({
           (msg) => dispatch(transport.serverRef, msg),
           (evtName, data) => {
             if (evtName !== 'endpoint') return;
-            // data 可能是相对路径（`/messages?sessionId=xxx`）——按建流地址解析成绝对 URL
-            try { endpoint = new URL(data, base).toString(); } catch { endpoint = data; }
+            // data 可能是相对路径（`/messages?sessionId=xxx`）——按建流地址解析成绝对 URL。
+            // C-001：解析失败就按原样使用；下一行 onLog 会打出实际 endpoint，异常不会无痕。
+            try { endpoint = new URL(data, base).toString(); } catch { /* C-001：解析失败就按原样用，下一行 onLog 会打出实际 endpoint，异常不会无痕 */ endpoint = data; }
             if (onLog) onLog(`SSE endpoint: ${endpoint}`);
             readyResolve();
           },

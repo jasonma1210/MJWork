@@ -140,7 +140,7 @@ function listRecordings(deps = {}) {
   const { dir, f } = storage(deps);
   const out = [];
   let names = [];
-  try { names = f.readdirSync(dir); } catch { return out; } // 目录不存在 = 空列表
+  try { names = f.readdirSync(dir); } catch { /* C-001：目录不存在=还没录过，空列表是正常输入（行尾原注释：目录不存在 = 空列表） */ return out; }
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
     const id = name.slice(0, -5);
@@ -290,7 +290,7 @@ class ReplayLoop {
         let decision = 'deny';
         try {
           decision = await this.approval.requestApproval(summary) || 'deny';
-        } catch { decision = 'deny'; }
+        } catch { /* C-001：审批通道异常按拒绝（fail-closed）——「拒绝」本身就是安全结果，下面会 emit stopped */ decision = 'deny'; }
         if (this.stopped || decision === 'deny') {
           this.approval.audit?.(s.index, describeReplayStep(action, liveNode), 'denied');
           this.emit({ type: 'stopped', reason: this.stopped ? '用户停止' : '确认被拒绝，回放已停止' });

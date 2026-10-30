@@ -34,6 +34,7 @@ export function hasCap(name) {
 }
 
 // 超时包装：到点返回结构化错误，不抛异常
+// C-004：与其它模块同名但**语义不同**（返回/抛错形态不一样），别为「看起来重复」而合并。
 function withTimeout(promise, ms) {
   if (!ms || ms <= 0) return promise;
   return new Promise((resolve) => {

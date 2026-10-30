@@ -6,6 +6,7 @@
 //      未知 / 已超时的审批响应一律忽略（fail-closed，防串扰与重放）。
 
 // V12：合法决策枚举——未知值 fail-closed 收敛为 deny
+const { APPROVAL_WAIT_TIMEOUT_MS } = require('./tools/timeouts');
 const VALID_DECISIONS = new Set(['once', 'conversation', 'always', 'deny']);
 function normalizeDecision(decision) {
   return VALID_DECISIONS.has(decision) ? decision : 'deny';
@@ -40,7 +41,7 @@ function approvalReasonOf(approvalWait) {
 }
 
 class ApprovalChannel {
-  constructor({ timeoutMs = 120000 } = {}) {
+  constructor({ timeoutMs = APPROVAL_WAIT_TIMEOUT_MS } = {}) {
     this.timeoutMs = timeoutMs;
     this.pending = new Map(); // approvalId -> { resolve, timer }
     this.seq = 0;

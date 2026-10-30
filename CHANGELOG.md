@@ -6,7 +6,114 @@ desktop / server / renderer 三个 package.json 的 version 必须保持一致�
 
 ## [Unreleased]
 
+### 新增
+- **回复完成提示音（三态区分）**：正常结束播 `success`、运行异常播 `stop`、用户手动停止播 `pause`，
+  不盯屏幕也能分辨结果。可在「设置 → 产出展示 → 完成提示音」关闭（默认开启，关闭后运行期即时生效、
+  无需重启）。素材随包内置，经 Vite 打包为带 hash 的静态资源，离线可用。
+
+### 修复
+- **静默降级收敛第七批（58 → 0，收官）**：全仓 1160 个 catch 里**最后一处**无日志无论证的降级都清完了，
+  棘轮基线从 144 降到 **0**（`test/catch-observability.test.mjs`）。本批把剩余 58 处逐条读过，按
+  「返回值会不会让上层得出错误结论」分三类处理，其中最该修的是这十处**会让上层判错**的：
+  ① 服务健康探测失败直接断言 `online:false`（端口配错 / 超时 / 被沙箱拦与「服务没启动」长得一样）；
+  ② 插件注册表读坏后按空表进入，**任意一次 flush 会把空表原子写回 `plugins.json`** = 用读失败覆盖用户已装插件；
+  ③ 团队消息 `payload` 序列化失败（循环引用）静默变 null，消息看起来「本来就没带载荷」，队友收到空数据；
+  ④ 隔离 worktree 丢弃失败仍继续删分支，留下无归属的孤儿目录；
+  ⑤ 任务状态读取失败使 `defer` 判定失效 ⇒「正在合理等待」被误判成 failed（正是该处注释明令禁止的形态）；
+  ⑥ tesseract `--list-langs` 探测崩溃被判成「未安装任何语言包」，用户会去装错东西（tesseract 明明在）；
+  ⑦ `better-sqlite3` 无法 resolve 时走「原生驱动不可用」，与 ABI 不匹配共享同一结论但成因完全不同
+     （前者 `npm i` 即好，后者要重建）——原注释称「由子进程探测分辨」，可 resolve 失败时子进程压根不会起；
+  ⑧ KB 导入/解析的 `shouldCancel` 抛错被当成「未取消」⇒ 用户点取消但长任务照跑；
+  ⑨ MCP hook 的 `match` 正则非法时该 hook 永不触发，用户只看到「我配的 hook 没生效」；
+  ⑩ 写入保护项 `.git` 的存在性探测失败会让只读 carve-out 静默失效（可被改 hooks 实现持久化）。
+  另修一类**假收敛**：有 10 处论证注释写在 `try` 上一行或 `}` 之后（块外），门禁从来没算过它们
+  ——`jsonSafe` / `memory/index` / `modelsFile` / `preload` / `sandboxWindows` / `agentsMd` / `intentLog` /
+  `kbPdfImages` / `verifierL3` / `nativeSandbox/childEntry`，本批全部移进块内并复核计数。
+  余下按「返回值本身带形态字段，或调用方有专门分支」写块内论证（i18n 的 glob 兜底、Modal 焦点判定、
+  各类 URL/表单校验器、活动流文本摘要、调试面板占位符、日志格式化器自身防递归等）。
+  反向验证做了 2 次，均确认**被该断言本身**拦下（不是崩溃蒙混）：撤掉 `previewScheme` 的日志 → 报
+  「新增 1 处未论证的静默 catch」；只删注释不删日志（i18n `safeGlob`）→ 同样报红，证明注释确实被计入。
+- **静默降级收敛第六批（144 → 58）**：日志层 sink 建目录失败（用户以为在落盘）、深度研究两处、
+  浏览器扩展中继两处、工具轨迹面板三处、四个进程宿主（browser/code/cua/engine）的 `utilityProcess`
+  能力探测与 `codeProcess/childEntry`、生态中心云端接口回退（`debug` 级，断网时不刷屏但要留痕）。
+- **静默降级收敛第五批（144 → 74）**：三处会给出**错误结论**的降级补日志 ——① 本机模型探测整体失败时对外断言
+  `ollama:false`（UI 显示「未检测到本机模型」，而真相是探测失败）；② 定时任务事件 id 在 `crypto` 不可用时退化成
+  毫秒时间戳（同毫秒内会撞 id，去重/回放错乱）；③ 定时任务库损坏时「坏文件留档失败」意味着原件即将被覆盖而无法回溯。
+  另补：知识库运行时 getter 异常（装配坏了 ≠ 功能没开，会整链静默不可用，用一次性告警避免刷屏）、诊断导出读文件失败
+  （诊断包里正好缺了最能说明问题的那一项）。其余按「正常探测/部分损坏容忍」写块内论证：任务库低层探测（区分由上层
+  `loadStore` 负责）、CUA 录制目录不存在、浏览器渠道逐个试（全部失败会在末尾 throw 汇总）、项目上下文单条坏摘要跳过等。
+- **静默降级收敛第四批（144 → 90）**：`agent-core` 的 `toolSignature` 序列化失败会把签名退化成
+  `String(args)`（`[object Object]`）——同一参数不再得到同一签名，**「同参数重试」的熔断判据会失效**，
+  现在留痕。审计日志读不到大小时按 0 计（此后靠累加不再 stat）→ 本轮不触发滚动，也补了日志。
+  其余按「失败即正常分支」写块内论证：TeX 探测（`stat` 失败 = 路径不存在/目录不算候选）、
+  团队调试日志（设施自身故障只能以返回值表达，绝不能影响团队任务）、`agent-core` 的 `fs` 能力探测、
+  大负载不可序列化（不卸载、走上层原路径）、记忆文件的「首次写入」判据。
+- **静默降级收敛第三批（144 → 105）**：CUA 读屏幕尺寸失败此前一律返回 `0x0` 且无痕迹 —— 那会让所有点击
+  坐标偏到左上角，用户只看到「点了没反应」。现留痕。同批：`app.quit()` 失败直接强退（会丢未落盘状态）、
+  `getDefaultCwd` 读项目列表失败静默回落到 HOME（工具执行根的可写范围变大）、团队消息序号读失败恒返 0
+  （= `waveEngine` 探活的第二通道静默失效）三处补日志；MCP 传输四件套（HTTP 非 JSON 响应 / SSE endpoint
+  解析失败 / 子进程 stdout 非协议内容 / loopback 回调 URL 非法）与 `mcpServerRequests` 的路径探测补论证。
+  棘轮基线降到 105，变异验证过（退回静默即报红并指出位置）。
+- **静默降级收敛第二批（144 → 117）**：`waveEngine` 探活三通道（状态签名 / 消息序号 / 探针采样）与任务白名单
+  读取失败此前一律静默返回空值 —— 后果是「探活器失灵 ⇒ 团队卡死无人撤员」「白名单读不到 ⇒ 已撤员成员
+  重新拿到任务」。现全部留痕（探活每拍调用的两处用 verbose 级，避免存储抖动时刷屏）。同时补齐
+  `chromeRelay` 中继、定时产出目录、`scheduledGuard` 基线读取、`runTrace` 事件读取的论证或日志；
+  其中 `runTrace` 按错误码分流（ENOENT = 本轮还没写事件，属正常；其余才是追踪数据丢失）。
+  棘轮基线同步下调到 117（只降不升），并用「删掉任意一处论证注释即报红并指出文件:行」反向验证过。
+- **门禁缺失依赖时不再静默跳过**：`lint-gate` 找不到 ESLint 二进制时此前打印 `[SKIP]` 并以 0 退出，
+  等于「装错依赖 ⇒ 检查全绿」。现改为判红（fail-closed）并给出修复指引，同时新增探针模式让自测
+  能真起子进程验证这条路径（实测回旧行为会报「期望 exit 1，实际 0」）。
+- **大任务拆分：先推翻了自己的一条错结论，再修掉真缺陷**。此前 CHANGELOG 记的是「拆分在渲染层从未生效」
+  （理由是 `useAgentRun` 只传 `toolHandlers:{}`）。实测推翻了它：`resolveChannel` 在 handler 缺省时会
+  回落 `globalThis.window.mjcode.chat`，而 preload 确实暴露了该桥 ⇒ 拆分**一直是跑通的**。
+  真正的缺陷是 `decomposeTask` 只收 payload、把第二参 `ctx` 静默丢弃 ⇒ 注释写着「可被取消」，
+  实际 `signal` 从未离开引擎层，中止要等一个 await 之后才被看见（请求本身照跑），与 D-805 同型。
+  现 `chatFn = (payload, ctx) => ch(payload, ctx)` 一路透传。`test/model-override.test.mjs` 新增
+  ④（通道解析三条语义：有 handler 用 handler / 只有全局桥时回落 / 两者皆无才抛）与 ⑤ 段（`ctx.signal`
+  确实到达宿主），17 → 18/18。反向验证：删掉全局桥回落段落后，④ 段报
+  `err=模型调用通道不可用 bridgeCalls=0` —— 第一次跑出的是**进程带栈回溯崩溃**（属「崩溃蒙混」，
+  不是断言拦住），把 await 包进 try/catch 后才是真红。
+
 ### 变更
+- **F-004 状态层收敛：`App.jsx` 的偏好持久化与布局/预览标签外置（不引入 zustand）**。`App.jsx`
+  code 622 → **587**、raw 779 → **739**，为后续页面腾余量。选型三选一（zustand / 合并 reducer / 抽 hook）
+  取第三条：本文件的 30+ 个状态绝大多数只被 App 与其直接子组件使用，不存在 3 层以上 prop drilling，
+  引入全局单例要付新依赖、模块级单例在测试间串味（`runRegistry` 已有教训）、状态变得不可 grep 三项成本；
+  而剩下的状态彼此不是同一状态机的转移，塞进一个 reducer 只能换来几百行 switch 与凭空发明的 action 名
+  —— 合法的「非法组合不可表示」场景只有导航，那里已经是 `navReducer`。
+  - `hooks/useUiPreferences.ts`：`theme` / `approvalSettings` / `enabledSkills` / `autoDecompose` 与其
+    4 条持久化 effect（含 `localSetPreference` 同步与技能数组守卫）。
+  - `hooks/usePaneLayout.ts`：`sidebarOpen` / `paneOpen` / `paneTab` / `openedFiles` / `activeFilePath`
+    与 `openFileInPane` / `closeFileInPane` / `closeAllFiles`（相对路径解析基准经 `{ projectPath }` 注入）。
+  - **刻意留在 App 的两处**：`paneStateRef` 的同步 effect（与 ⌘P 快捷键分流是一个整体）、
+    「切任务 → 收起右栏 + 清空标签 + 清空 agentFiles」那个 effect（`agentFiles` 属 App 域，
+    拆成两半会让「切任务必须清空三样」这条跨任务泄漏防线看不见）。
+  - 顺手修掉一类**抽取器边界形态缺口**（不是断言写错）：`test/settings-coverage.test.js` 的
+    `loadJSON\(\s*'` 匹配不到泛型写法 `loadJSON<ApprovalSettings>('…')` ⇒ `mj_approval_settings` /
+    `mj_enabled_skills` 被误判成「假开关」，已放宽并自检（泛型/非泛型两种形态均命中）。
+    四个对 `App.jsx` 做源码字符串断言的套件把判据跟到新家，并按「接线必须数点位数」各补一条
+    「App 仍 `= useXxx()` 解构」断言——只查 hook 内部等于没查接线。三种变异（破坏两处解构字面 /
+    `closeAllFiles` 只清一半 / 去掉 `loadJSON` 读取）均被**对应那条**断言拦下。
+- **类型检查豁免文件 6 → 0（全仓不再有文件级豁免）**：`lib/runRegistry.ts`、`lib/chatHelpers.ts`、
+  `components/WelcomePage.tsx`、`components/MessageStream.tsx`、`components/Composer.tsx` 摘除文件级豁免
+  并补全类型（`Composer` 的接线类型集中外置到 `components/composerTypes.ts`，既守住 800 代码行软档，
+  也让装配方/消费方引用同一份定义）；`hooks/useAgentRun.ts`（94 处报错）随后收官，入参契约 50+ 字段外置到
+  `hooks/useAgentRunTypes.ts`，桥面返回值与 `catch (err)` 统一在 `asObj` / `errText` 两处收口。
+  `tsc --noEmit` 从 94 → 0，并用 `--listFiles` 证明该文件确在编译范围内（0 error 不是「文件被 include 排除」
+  的空证据），另注入一处类型错误反向验证检查确实生效。
+- **`useAgentRun` 的三个边界缺口被类型检查顺带修掉**：① 桥面返回值此前是 `unknown`，真值判断后被窄化成 `{}`，
+  属性访问全靠 any 蒙混 —— 现在统一 `asObj<T>()`，且**只断言是对象、不兜默认值**（否则 `!!checkpoint`
+  这类真值判断会被悄悄翻转）；② `catch (err)` 里的 `err` 是 `unknown`，文案统一走 `errText()`；
+  ③ `api.createThread()` 返回空值时会一路流到 `currentThread.id` 变成 TypeError，现在按失败处理
+  （抛错走既有 catch，用户可见、可重试，不再「点了发送什么都没发生」）。
+- **`ContextMenu` / `PlusMenu` 的入参契约改为 JSDoc 声明**：这两个 `.jsx` 此前靠解构默认值反推类型，
+  导致「可选参数被推成必填、`never[]`、`string|null` 收窄成 `null`」，所有调用方都在报与意图相反的错。
+- **思考内容默认折叠**：运行中只显示一行「正在思考中…」（附计时与已收字数，长思考不误判为卡死），
+  结束后显示「思考过程」，点击才展开正文。此前思考流默认整段展开、抢走正文注意力。
+- **工具调用改灰字单行**：修改文件、运行命令、写入文件等操作从带边框的卡片降为一行灰色文字
+  （图标 + 摘要 + 时长），点击展开详情；同类连续调用仍可分组折叠。页面观感从「一屏卡片」回到「一屏对话」。
+- **产物折叠行**：每次回复结束后在**最末行**显示「查看所有产物 (N)」，点击弹出产物卡片列表；
+  此前产物卡固定展开并挤在正文中间。
 - **代码行数门禁口径统一（软档 raw → code）**：此前 800 行软档按「含空行与注释的物理行数」判定，
   而 1500 行硬档按「去掉空行与注释的代码行数」判定，两套口径并存。后果是同一文件在两处得到不同
   结论，并产生一批「本文件剩余 0 行、任何新增都会失败」的误报（实测 `ipc/teams.js` 按代码行计
@@ -14,6 +121,12 @@ desktop / server / renderer 三个 package.json 的 version 必须保持一致�
   增加即判失败。
 - **判定结果不变**：口径切换前后，超线文件集合完全相同（3 个），本次**不放宽**任何限制，
   仅消除口径失真。ESLint 侧 1500 行硬档与其豁免清单不变。
+
+### 已知问题（未修，需产品裁决）
+- **定时任务「用哪支军团跑」的团队列表失败后会被永久缓存为空**（`components/ScheduledTeamPicker.tsx`）：
+  `loadTeams()` 在请求失败时把进程内缓存赋成 `[]`，而函数首行 `if (cache) return` 把空数组当成
+  「已加载」⇒ 一次瞬时失败即让选择器在本窗口内永远显示「暂无团队」，直到用户重开窗口。
+  已补错误日志（C-001 第七批），但「失败不缓存 / 带 TTL 重试」属行为变更，留待裁决后再改。
 
 ## [0.9.0-beta] - 2026-10-28
 
@@ -39,8 +152,12 @@ desktop / server / renderer 三个 package.json 的 version 必须保持一致�
 - 「会话消耗」排序改为**最近执行在前**（原先按消耗额排，正在跑的会话会被压到后面）。
 - 点侧栏工作区名不再跳走当前会话 / 跳到欢迎页，只做选中。
 
-## [0.8.0-beta] - 2026-10-28
+## [0.8.0-beta] - 2026-10-30
 
+> **版本线说明**：本版最初于 2026-10-28 以 `0.8.0-beta` 打 tag（安全与稳定性修复批），随后以
+> `0.9.0-beta` 发布过一次并已从 GitHub 撤回——为保持对外版本线连续，重新以 `0.8.0-beta` 发布，
+> 内容包含 10-28 的安全批与本轮（10-30）全量核查修复批。`0.9.0-beta` 一节保留在本文件内作为历史记录。
+>
 > 本版以**安全与稳定性修复**为主。唯一的用户可感知行为变更见「安全」第一条，升级前请留意。
 
 ### 安全
@@ -75,6 +192,28 @@ desktop / server / renderer 三个 package.json 的 version 必须保持一致�
 - 非 macOS 上 `npm run build` 不再因 OCR 步骤直接失败（OCR 是可选能力，不该阻断构建）。
 - 新增发布前置检查并接入 CI：版本三处一致、CHANGELOG 有条目、tag 与版本号匹配、冒烟脚本齐备等 8 项，在打包前拦截元数据类错误。
 - 修正 Windows 更新签名校验配置：原先开启了校验却没有 `publisherName`，而更新器读不到该字段会直接跳过校验 —— 等于一行校验都没执行。未签名阶段改为显式关闭；证书就位后须同时补上两个字段。
+
+### 安全（2026-10-30 全量核查修复批）
+
+- **`never`（全不询问）档不再放行不可逆动作**。此前该档仅豁免「不可记忆」的 L3 工具，`git_checkout`
+  （丢弃未提交改动，内容真的没了）、`git_apply_hunk`、`code_exec`、`sqlite` 写、非 GET `http_request`、
+  真实浏览器点击/填表等 10 个工具在 `never` 档零确认执行。现在判据改为「`REVERSIBILITY` 标记为不可逆即询问」，
+  仍保留「本对话同类」一次性授权（不可逆 ≠ 不可记忆）。
+- **`always`（全部询问）档补上非危险 shell**。此前未命中危险命令黑名单的 shell（如 `curl -d @secret https://…`）
+  在该档不询问，与「全部询问」的名不符实；现在按 shell 单独拦截，只读工具与工具链体检仍不打扰。
+- **命令黑名单补外泄原语**：`scp` / `sftp` / `rsync` / `nc` / `netcat` / `telnet` / `ftp` / `ssh` /
+  `curl -T` / `wget --post-*` 现在会被识别为危险命令（此前只拦本地破坏与提权）。
+- **Markdown 链接协议白名单**：AI 回复与文件预览里的链接不再依赖上游渲染器的默认净化——显式只放行
+  `http(s)` / `mailto`，站内相对路径与锚点原样交给文件打开逻辑，其余（`javascript:` / `data:` 等，
+  含换行/制表符/反斜杠变体）降级为纯文本；外链统一走系统浏览器。
+
+### 可观测性与门禁（2026-10-30）
+
+- **主进程统一日志门面** `main/logger.js`：级别可控（`MJCODE_LOG_LEVEL`）、凭据自动脱敏（`sk-` / `ghp_` /
+  `AKIA` / `Bearer`）、可选落盘。第一批把「解析/校验失败后静默降级」的三处 catch 补上了日志
+  （编排 DAG 解析、沙箱设置/拆除的参数边界校验）。
+- **`npm test` 前置门禁新增 renderer 类型检查**（`tsc --noEmit`），补上渲染层 TS/TSX 不在 ESLint 覆盖内的缺口。
+- 新增链接协议白名单套件：直接加载真实 `.ts` 实现（`transpileModule`）并校验 5 个 markdown 渲染面全部接线。
 
 ## [0.7.0-beta] - 2026-10-22
 

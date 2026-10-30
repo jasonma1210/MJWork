@@ -125,5 +125,69 @@ async function runWith(overrides) {
   check('decomposeTask 只发一次请求（不重复调用）', payloads.length === 1, `calls=${payloads.length}`);
 }
 
+// ── ④ decomposeTask 的通道解析语义（2026-10-30 订正一条记错的结论）──
+// 曾经有笔记断定「渲染层只传 toolHandlers:{} ⇒ 大任务拆分从未生效」。实测是**错的**：
+// resolveChannel 在 handler 缺省时会回落 `globalThis.window.mjcode[camelName]`，
+// 而 preload 确实暴露了 chat（→ model:chat）。本段把三条语义钉住，避免再被误判：
+//   ① 显式注入优先；② 缺省回落 window.mjcode.chat（渲染层实况）；③ 两者皆无才抛错（fail-open 由调用方兜）。
+// 注意：这里必须用真实全局对象而不是 window 桩，因为引擎读的是 `globalThis.window`。
+{
+  const seen = { explicit: 0, fallback: 0 };
+  const okResp = { content: '{"decompose":false,"reason":"太小","tasks":[]}' };
+  const savedWindow = globalThis.window;
+  try {
+    // ① 显式注入优先：同时存在全局桥时，仍应走显式那个
+    globalThis.window = { mjcode: { chat: async () => { seen.fallback += 1; return okResp; } } };
+    await decomposeTask({
+      messages: [{ role: 'user', content: '重构整个项目' }],
+      model: mainModel,
+      toolHandlers: { chat: async () => { seen.explicit += 1; return okResp; } },
+    });
+    check('通道解析：显式 toolHandlers.chat 优先于全局桥', seen.explicit === 1 && seen.fallback === 0,
+      `explicit=${seen.explicit} fallback=${seen.fallback}`);
+
+    // ② 缺省回落全局桥（渲染层实况：toolHandlers 是空对象）
+    // 必须包 try/catch 并把异常当**断言失败**报出：否则回落被删时这里会直接 throw，
+    // 进程以栈回溯退出——那看着也像「红」，但不是这条断言拦住的（属崩溃蒙混）。
+    let fb = 0;
+    let r2 = null;
+    let e2 = '';
+    globalThis.window = { mjcode: { chat: async () => { fb += 1; return okResp; } } };
+    try {
+      r2 = await decomposeTask({
+        messages: [{ role: 'user', content: '重构整个项目' }], model: mainModel, toolHandlers: {},
+      });
+    } catch (e) { e2 = String(e?.message || e); }
+    check('通道解析：toolHandlers:{} 时回落 window.mjcode.chat（渲染层不因此失效）',
+      !e2 && fb === 1 && r2?.decompose === false,
+      `err=${e2 || 'none'} bridgeCalls=${fb} decompose=${r2?.decompose}`);
+
+    // ③ 两者皆无 → 抛「通道不可用」（由调用方 catch 成 fail-open）
+    globalThis.window = { mjcode: {} };
+    let errMsg = '';
+    try {
+      await decomposeTask({ messages: [{ role: 'user', content: 'x' }], model: mainModel, toolHandlers: {} });
+    } catch (e) { errMsg = String(e?.message || e); }
+    check('通道解析：无 handler 且无全局桥 → 抛「模型调用通道不可用」', /模型调用通道不可用/.test(errMsg), `msg=${errMsg}`);
+  } finally {
+    if (savedWindow === undefined) delete globalThis.window; else globalThis.window = savedWindow;
+  }
+}
+
+// ── ⑤ decomposeTask 把 ctx（含 signal）真的交给宿主通道（D-805 一致性）──
+// 此前 chatFn 只声明 `(payload)`，调用处 `chatFn(payload, { signal })` 的第二参被静默丢弃：
+// 注释写着「拆分调用同样可被取消」，实际 signal 从未离开引擎层（只剩 await 之后的事后检查）。
+{
+  let gotCtx = null;
+  await decomposeTask({
+    messages: [{ role: 'user', content: '拆一下' }],
+    model: mainModel,
+    toolHandlers: { chat: async (_payload, ctx) => { gotCtx = ctx; return { content: '{"decompose":false,"reason":"x","tasks":[]}' }; } },
+    signal: { aborted: false, tag: 'probe' },
+  });
+  check('decomposeTask 把 ctx.signal 透传给通道（D-805）', gotCtx?.signal?.tag === 'probe',
+    `ctx=${JSON.stringify(gotCtx && Object.keys(gotCtx))} tag=${gotCtx?.signal?.tag}`);
+}
+
 console.log(`\nmodel-override: ${pass}/${pass + fail} 通过`);
 process.exit(fail === 0 ? 0 : 1);

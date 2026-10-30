@@ -14,6 +14,7 @@
 const { ipcMain, app, safeStorage } = require('electron');
 const guard = require('./payloadGuard');
 const windowsBackend = require('../sandboxWindows');
+const logger = require('../logger');
 
 function notSupported() {
   return {
@@ -34,11 +35,11 @@ function initSandboxIpc() {
 
   // 一次性管理员设置：写系统（建用户/改 ACL/加防火墙规则）→ 属高风险写通道，必须有边界校验。
   ipcMain.handle('sandbox:windows/setup', async (_, payload = {}) => {
-    try { guard.assertObject(payload, 'sandboxWindowsSetup'); } catch (e) { return { ok: false, error: e.message }; }
+    try { guard.assertObject(payload, 'sandboxWindowsSetup'); } catch (e) { logger.warn('[sandbox] windows/setup payload 边界校验失败：', e.message); return { ok: false, error: e.message }; }
     if (process.platform !== 'win32') return notSupported();
     // seal 仅在 DPAPI 可用时提供；缺失时 applyWindowsSandboxSetup 会在执行前如实拒绝（不落明文）。
     const seal = (() => {
-      try { return safeStorage.isEncryptionAvailable() ? (plain) => safeStorage.encryptString(plain) : null; } catch { return null; }
+      try { return safeStorage.isEncryptionAvailable() ? (plain) => safeStorage.encryptString(plain) : null; } catch (e) { logger.warn('[sandbox] safeStorage 探测失败，seal 退化为 null（setup 会在执行前如实拒绝，不落明文）：', e.message); return null; }
     })();
     return windowsBackend.applyWindowsSandboxSetup({
       seal,
@@ -48,7 +49,7 @@ function initSandboxIpc() {
   });
 
   ipcMain.handle('sandbox:windows/teardown', async (_, payload = {}) => {
-    try { guard.assertObject(payload, 'sandboxWindowsTeardown'); } catch (e) { return { ok: false, error: e.message }; }
+    try { guard.assertObject(payload, 'sandboxWindowsTeardown'); } catch (e) { logger.warn('[sandbox] windows/teardown payload 边界校验失败：', e.message); return { ok: false, error: e.message }; }
     if (process.platform !== 'win32') return notSupported();
     return windowsBackend.windowsSandboxTeardown({ storageDir: app.getPath('userData'), platform: process.platform });
   });

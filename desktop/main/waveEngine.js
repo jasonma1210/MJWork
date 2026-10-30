@@ -65,13 +65,23 @@ function createWaveEngine(host) {
   function statusSignature(groupId) {
     try {
       return (getDeps()?.store?.listTasks?.(groupId) || []).map((t) => `${t.taskId}:${t.status}`).join(',');
-    } catch { return ''; }
+    } catch (e) {
+      // C-001：这是探活**第三通道**。读失败返回 '' 会被当成「状态签名没变」= 该通道静默失效，
+      // 而探活失灵的直接后果是团队卡死无人撤员。用 verbose 级留痕：探活每拍都调，warn 会刷屏。
+      teamDebug.log('wave', 'status_signature_failed', { groupId, error: String(e?.message || e) }, { level: 'verbose' });
+      return '';
+    }
   }
 
   function sampleSignals(groupId) {
     const rt = runtimes.get(groupId);
     let messageSeq = 0;
-    try { messageSeq = Number(getDeps()?.getTeamMessageSeq?.(groupId)) || 0; } catch { messageSeq = 0; }
+    try { messageSeq = Number(getDeps()?.getTeamMessageSeq?.(groupId)) || 0; }
+    catch (e) {
+      // C-001：同第二通道。0 会让「消息增量」这一路恒判无变化，同样要靠留痕才能发现探活缺口。
+      teamDebug.log('wave', 'message_seq_failed', { groupId, error: String(e?.message || e) }, { level: 'verbose' });
+      messageSeq = 0;
+    }
     // 静止时长：距本组最后一次 task_* 事件（含工具调用）的毫秒数。
     // 无运行时（未装配）时给 0 —— 探活器只在有运行时才会被调用。
     const idleMs = rt ? Math.max(0, now() - (Number(rt.lastActivityAt) || 0)) : 0;
@@ -170,7 +180,11 @@ function createWaveEngine(host) {
       const rt = runtimes.get(gid);
       if (!rt) continue;
       let r = null;
-      try { r = rt.probe.sample(sampleSignals(gid)); } catch { continue; }
+      try { r = rt.probe.sample(sampleSignals(gid)); } catch (e) {
+        // C-001：探针自身抛错 ⇒ 该组**永久**不会被判停滞（团队卡死且无人知）。这条必须可观测。
+        console.warn('[waveEngine] 探活采样失败，本组跳过:', e?.message || e);
+        continue;
+      }
       if (!r.stalled) continue;
       teamDebug.log('wave', 'probe_stalled', { groupId: gid, waves: rt.waves?.length || 0, result: r }, { level: 'verbose' });
       rt.probe.reset(); // 先复位：撤员动作本身可能不被三通道捕捉，避免下一拍连杀
@@ -229,7 +243,12 @@ function createWaveEngine(host) {
     const rt = runtimes.get(group?.group_id);
     if (!rt) return null;
     try { return teamWaves.allowedTaskIds(rt.waves, getDeps()?.store?.listTasks?.(group.group_id) || []); }
-    catch { return null; }
+    catch (e) {
+      // C-001：返回 null 的语义是「不做任务过滤」。读失败就静默放宽限制，
+      // 等于让已撤员成员重新拿到任务（§13.4 的硬约束），所以这里必须留痕。
+      console.warn('[waveEngine] 任务白名单读取失败，本次不做过滤:', e?.message || e);
+      return null;
+    }
   }
 
   /** 批次计划的指派执行者；已被撤员的成员不再参与指派（§13.4「撤员后不得派回同一人」）。 */

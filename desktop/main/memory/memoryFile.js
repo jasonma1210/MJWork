@@ -57,8 +57,12 @@ function parseMarkdown(text) {
   return out;
 }
 
-function readFileSafe(p) { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } }
-function mtimeOf(p) { try { return fs.statSync(p).mtimeMs; } catch { return 0; } }
+// 文件不存在/不可读 → null、mtime 缺失 → 0，都是 writeIfChanged 用来判断「首次写入」的**正常输入**
+// （不是异常）。真要排查写盘问题看 writeIfChanged 的落盘失败分支，那里有日志。
+// 论证刻意写在**块体内**：catch 可观测性门禁（test/catch-observability.test.mjs）按块体判读，
+// 写在上一行会被判成「未论证」——这一点上一批我踩过。
+function readFileSafe(p) { try { return fs.readFileSync(p, 'utf8'); } catch { /* C-001：不存在/不可读 = 首次写入的正常输入 */ return null; } }
+function mtimeOf(p) { try { return fs.statSync(p).mtimeMs; } catch { /* C-001：同上，0 = 无 mtime，等价于首次写入 */ return 0; } }
 
 // 原子写（tmp + rename）；内容未变则跳过（返回原 mtime，避免无谓写入与 mtime 抖动）
 function writeIfChanged(p, content) {

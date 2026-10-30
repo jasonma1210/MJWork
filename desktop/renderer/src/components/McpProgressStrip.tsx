@@ -71,7 +71,7 @@ export default function McpProgressStrip() {
         const known = typeof r.progress === 'number' && typeof r.total === 'number' && r.total > 0;
         const pct = known ? Math.max(0, Math.min(100, Math.round((r.progress as number) / (r.total as number) * 100))) : null;
         return (
-          <div key={`${r.server}::${r.tool}`} className="min-w-[15rem] max-w-[24rem] rounded-lg border border-border bg-surface px-3 py-1.5 shadow">
+          <div key={`${r.server}::${r.tool}`} className="min-w-[15rem] max-w-[24rem] rounded-lg border border-border bg-surface px-3 py-2 shadow">
             <div className="flex items-center gap-2 text-caption text-text2">
               <span className="truncate">{t('toolTrace.mcpProgressLabel', { server: r.server, tool: r.tool })}</span>
               {/* 服务端可能只报 progress 不报 total（规范里 total 可缺省）⇒ 不显示百分比，只显示活性条 */}

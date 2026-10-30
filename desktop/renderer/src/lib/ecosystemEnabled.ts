@@ -27,6 +27,8 @@ const LEGACY_CON_KEY = 'mj_downloaded_connectors';
 const memStorage = (): StorageLike | null =>
   (typeof localStorage !== 'undefined' ? localStorage : null);
 
+// 每个 key 只告警一次：读取方在渲染路径上会被反复调用，坏值会按次刷屏。
+const readWarnedKeys = new Set<string>();
 function readJson<T>(storage: StorageLike, key: string, fallback: T): T {
   try {
     const raw = storage.getItem(key);
@@ -34,6 +36,8 @@ function readJson<T>(storage: StorageLike, key: string, fallback: T): T {
     const v = JSON.parse(raw);
     return (v == null ? fallback : v) as T;
   } catch (e) {
+    // 回落 fallback 的语义是「用户没设置过」⇒ 用户逐个点开的连接器/技能启用状态被静默重置
+    if (!readWarnedKeys.has(key)) { readWarnedKeys.add(key); console.warn('[ecosystemEnabled] read state failed, resetting to defaults:', key, e); }
     return fallback;
   }
 }

@@ -351,7 +351,7 @@ class IntentLog {
     for (const l of lines) {
       if (!l) continue;
       let rec;
-      try { rec = JSON.parse(l); } catch { skipped++; continue; } // 半行：崩溃写在追加中途
+      try { rec = JSON.parse(l); } catch { /* 半行：崩溃写在追加中途——计入返回值里的 skipped，属于可观测统计而非丢弃 */ skipped++; continue; }
       if (rec.seq <= last) { skipped++; continue; }               // 幂等去重
       apply(rec);
       last = rec.seq;

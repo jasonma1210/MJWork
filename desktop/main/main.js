@@ -74,7 +74,10 @@ function saveAlwaysRules() {
 // P1-4：approvalReasonOf/denialText——拒绝理由取回与文案（单一事实来源在 approvalChannel.js）
 // 差集 A：initDiffCommentChannel——diff 行内评论存储（挂 localStore 线程）
 const { ApprovalChannel, approvalReasonOf, denialText, initDiffCommentChannel } = require('./approvalChannel');
-const approvalChannel = new ApprovalChannel({ timeoutMs: 120000 });
+// 审批等待超时不在此处硬写：ApprovalChannel 构造器的默认值就是 tools/timeouts 的
+// APPROVAL_WAIT_TIMEOUT_MS（C-004 收敛点）。本文件已到 800(code) 行软档上限，
+// 显式传参与默认值同值、纯冗余，故不再单独 require 常量。
+const approvalChannel = new ApprovalChannel();
 // 模型形状转换（扁平形 ⇄ 嵌套形）：全项目唯一事实来源，见 modelShape.js 顶部事故背景
 const { toAgentModel, resolveModelRef } = require('./modelShape');
 
@@ -531,7 +534,7 @@ app.on('will-quit', () => {
 for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
   process.on(sig, () => {
     try { console.log(`[main] 收到 ${sig}，优雅退出（落盘后关闭）`); } catch { /* 日志尽力而为 */ }
-    try { app.quit(); } catch { process.exit(0); }
+    try { app.quit(); } catch (e) { console.error('[main] 优雅退出失败，强退（可能丢未落盘状态）:', e?.message || e); process.exit(0); }
     setTimeout(() => process.exit(0), 2000).unref(); // 兜底：2s 内必须退出
   });
 }
@@ -554,7 +557,7 @@ toolExec.initToolExec({
       const projects = localStore?.listProjects?.() || [];
       const recent = projects.find((p) => p.path && fs.existsSync(p.path));
       return recent?.path || app.getPath('home');
-    } catch { return app.getPath('home'); }
+    } catch (e) { console.warn('[main] getDefaultCwd 读项目列表失败，回落 HOME（执行根可写范围变大）:', e?.message || e); return app.getPath('home'); }
   },
   // P0-1：shell/seatbelt/bwrap/git 子进程注册到 runId（缺失即抛错由 exec.js 保证接线存在）
   registerChild: (child) => childRegistry.register(runScope.getStore()?.runId, child),
@@ -1508,7 +1511,7 @@ function setupTaskOrchestration(db) {
       // M5 / T5-12：批次探活的第二通道——团队消息序号（§13.4 三通道判据之一）。
       // 只取 O(1) 的 MAX(seq)：探活每 5 秒对每个在跑团队组各拍一次，读全表会把探活本身变成负载。
       getTeamMessageSeq: (runId) => {
-        try { return Number(teamStore?.latestSeqForRun?.(runId)) || 0; } catch { return 0; }
+        try { return Number(teamStore?.latestSeqForRun?.(runId)) || 0; } catch (e) { console.warn('[worker] 团队消息序号读取失败，探活第二通道本拍失效:', e?.message || e); return 0; }
       },
       // M5 / T5-8：成员任务的协同上下文（团队 + 本 run + 本任务 + 认领成员）。
       // 三处判据缺一不可，任一不成立就返回 null（模型看不到 team_* 工具）：

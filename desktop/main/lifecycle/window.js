@@ -84,9 +84,7 @@ function createWindow() {
       if (app.isPackaged) return u.protocol === 'file:';
       // 开发态：只放行本地 dev server（端口可能变，按 host 判断）
       return u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1');
-    } catch {
-      return false;
-    }
+    } catch { /* 解析不出来 ⇒ 必不是应用自身地址，按外链拦截=更安全的方向；openExternal 失败另在 will-navigate 里留痕，故此处不记 */ return false; }
   };
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (isInternalUrl(url)) return;

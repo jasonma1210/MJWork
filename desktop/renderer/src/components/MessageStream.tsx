@@ -1,12 +1,13 @@
-// @ts-nocheck -- T2-2 存量代码原样搬移（零行为变更）；渐进 TS 路线下补全类型属后续任务（T0-3 门禁只约束新文件扩展名）
 import { useState, useEffect, useRef, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+// S-005：markdown 链接协议白名单（不依赖 react-markdown 的上游默认值，判据在本仓 lib/safeUrl.ts）
+import { safeUrlTransform, toExternalHref } from '../lib/safeUrl';
 import { MermaidDiagram } from './MermaidDiagram';
 import { toast } from './feedback';
 import { useI18n } from '../i18n'; // T3-2：i18n
-import { IconChevronDown, IconCopy, IconCpu, IconDownload, IconExternalLink, IconFile, IconFolder, IconGitBranch, IconPlus, IconSpinner } from './icons';
+import { IconChevronDown, IconChevronRight, IconCopy, IconCpu, IconDownload, IconExternalLink, IconFile, IconFolder, IconGitBranch, IconPlus, IconSpinner } from './icons';
 import { ToolTraceGroup } from './tools/ToolTrace';
 import Button from './ui/Button';
 import Dot from './ui/Dot';
@@ -16,18 +17,93 @@ import ContextMenu from './ContextMenu';
 import { getOutputDisplay } from '../lib/outputDisplay';
 // M5 / T5-6：对话内团队协同事件流（默认折叠卡片；不新增独立群聊页）
 import TeamRunStream from './TeamRunStream';
+// 用户需求 1：思考内容折叠行（默认只显示「正在思考中…」，点击展开）
+import ReasoningPanel from './ReasoningPanel';
 
 // T2-2：消息流域（自主进程 ChatArea.jsx 原样搬移，行为不变）——
 // 窗口切片（C1）/ 智能滚底（C3）/ 轮次重放（T1-2）/ 本轮概览（T1-5）/ 运行态轨迹与思考流。
 // 滚动跟随状态经 useMessageWindow 下沉；windowStart 归 ChatArea（切会话重置在其 effects 中）。
+
+// F-005（2026-10-30）：摘除文件级类型检查豁免并补类型（渲染逻辑零改动）。
+// 两条既有事实决定了下面的形状：
+// ① 消息双轨字段（服务端 snake_case / 本机 localStore camelCase）必须都认，故字段全可选；
+// ② env.d.ts 把 window.mjcode 声明为 `(...args: unknown[]) => unknown`，桥面返回值全是 unknown，
+//    这里用一个 asBridgeResult 收口（精确桥面接口依赖本项 F-005 完成后才能做，见 bridge-parity 注释）。
+
+/** 工具调用：主进程原样透传 function 形态，兼容已展开的 name/args */
+export interface StreamToolCall {
+  id?: string;
+  name?: string;
+  args?: Record<string, unknown>;
+  function?: { name?: string; arguments?: string };
+  result?: unknown;
+}
+
+/** 一条消息（双轨字段兼容，见上方 ①） */
+export interface StreamMessage {
+  id?: string;
+  role?: string;
+  content?: string;
+  tool_calls?: StreamToolCall[];
+  toolCalls?: StreamToolCall[];
+  tool_call_id?: string;
+  toolCallId?: string;
+  model_name?: string;
+  modelName?: string;
+  tokens_input?: number;
+  tokensInput?: number;
+  tokens_output?: number;
+  tokensOutput?: number;
+  created_at?: string;
+  createdAt?: string;
+}
+
+/** 上下文用量（App 计算后传入） */
+export interface ContextUsage {
+  used: number;
+  total: number;
+  ratio: number;
+}
+
+/** 本轮概览：结束态（RunFooter 固定收尾条）。
+ *  字段全部**必填**：三处构造点（useAgentRun 成功/异常分支、lib/runLifecycle）每次都写全，
+ *  声明成可选会逼消费方到处写 `|| 0` 兜底（把契约模糊化成运行时猜测）。 */
+export interface RunSummary {
+  status: string;
+  durationMs: number;
+  tokensIn: number;
+  tokensOut: number;
+  model: string;
+  endedAt: number;
+}
+
+/** 本轮概览：运行态（每秒刷新） */
+export interface RunLive {
+  startedAt?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  contextUsage?: ContextUsage | null;
+  model?: string;
+}
+
+/** 桥面返回值的窄化读取器。
+ *  env.d.ts 把 window.mjcode 声明成 `(...args: unknown[]) => unknown`，直接 `r.ok` 在 TS 下是
+ *  「Property 'ok' does not exist on type '{}'」（unknown 被真值判断窄化成 {}）。这里用一次断言
+ *  把 unknown 收成结果形状，调用点保持 `r.ok === false` 的自然写法，不必每处散落 as。
+ *  精确桥面接口（每个方法一个签名）是 F-005 之后的独立项，届时本函数可整体删除。 */
+function asBridgeResult(r: unknown): { ok?: boolean; error?: string; canceled?: boolean } {
+  return (r && typeof r === 'object' ? r : {}) as { ok?: boolean; error?: string; canceled?: boolean };
+}
 
 // C1：窗口切片步长（条）。ChatArea 首屏初始化与 MessageStream「加载更早」共用同一口径。
 export const MSG_WINDOW = 50;
 
 // C3：智能滚底 hook——仅当用户已在底部附近（<80px）才跟随；上翻历史时不再被强制拽回，
 // 由悬浮的「回到底部」按钮接管（stickToBottomRef 在 onScroll 中维护）。
-function useMessageWindow({ messages, streamingText, toolCallsCount }) {
-  const scrollRef = useRef(null);
+function useMessageWindow(
+  { messages, streamingText, toolCallsCount }: { messages: StreamMessage[]; streamingText: string; toolCallsCount: number },
+) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const [showJumpBottom, setShowJumpBottom] = useState(false);
   function handleScroll() {
@@ -44,7 +120,10 @@ function useMessageWindow({ messages, streamingText, toolCallsCount }) {
     setShowJumpBottom(false);
   }
   useEffect(() => {
-    if (stickToBottomRef.current) scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
+    // 取局部引用：原写法 `ref.current?.scrollTo(0, ref.current.scrollHeight)` 在 TS 下第二个
+    // ref.current 不被上一行的 ?. 窄化（可能为 null）。语义不变——为空时同样整句跳过。
+    const el = scrollRef.current;
+    if (stickToBottomRef.current && el) el.scrollTo(0, el.scrollHeight);
   }, [messages, streamingText, toolCallsCount]);
   return { scrollRef, handleScroll, showJumpBottom, jumpToBottom };
 }
@@ -63,17 +142,37 @@ function useElapsedSeconds(startedAt?: number, active?: boolean) {
   return Math.max(0, Math.round((Date.now() - startedAt) / 1000));
 }
 
+export interface MessageStreamProps {
+  messages: StreamMessage[];
+  /** 窗口切片起点（ChatArea 持有，切会话时重置） */
+  windowStart: number;
+  onLoadEarlier: (from: number) => void;
+  loading: boolean;
+  toolCalls: StreamToolCall[];
+  reasoningText: string;
+  streamingText: string;
+  runSummary: RunSummary | null;
+  runUsage?: { tokensIn?: number; tokensOut?: number } | null;
+  runStartedAt?: number;
+  contextUsage?: ContextUsage | null;
+  model?: string;
+  runFiles?: Array<string | { path: string }>;
+  onOpenFile?: (p: string) => void;
+  /** 项目根目录：产出卡片右键动作把工具参数里的相对路径解析成绝对路径 */
+  cwd?: string;
+  /** 当前会话 id —— 团队事件流按 thread_id 归属过滤（不跨会话串卡） */
+  threadId?: string | null;
+}
+
 export default function MessageStream({
   messages, windowStart, onLoadEarlier,
   loading, toolCalls, reasoningText, streamingText,
   runSummary, runUsage, runStartedAt, contextUsage, model,
   runFiles = [],
   onOpenFile,
-  // 项目根目录：产出卡片的右键动作（定位/另存为）需要把工具参数里的相对路径解析成绝对路径
   cwd = '',
-  // M5 / T5-6：当前会话 id —— 团队事件流按 thread_id 归属过滤（不跨会话串卡）
   threadId = null,
-}) {
+}: MessageStreamProps) {
   const { t } = useI18n();
   // T1：让用户"看见它在动"——秒数与字数都从流式内容长度直接算，不额外走 IPC
   const elapsedSec = useElapsedSeconds(runStartedAt, loading);
@@ -116,8 +215,6 @@ export default function MessageStream({
         {/* M5 / T5-6：团队协同事件流——按 thread_id 投影为折叠卡片（派活/接手/汇报轨迹），
             排在正文之后、本轮收尾卡之前：它是「这一轮协同」的补充事实，不打断对话正文。 */}
         <TeamRunStream threadId={threadId} onOpenFile={onOpenFile} />
-        {/* 本轮产出文件：运行结束后列出本轮被写入/修改的文件（左键预览，右键定位/另存为/添加到对话框） */}
-        <RunOutputFiles files={runFiles} onOpenFile={onOpenFile} cwd={cwd} />
         {/* T1-5：本轮概览卡——运行中实时（耗时/消耗/上下文/模型），结束态转固定收尾条 */}
         <RunFooter
           summary={runSummary}
@@ -134,32 +231,18 @@ export default function MessageStream({
           // 撤回逻辑在 ChatArea（它持有基线 SHA 与会话信息），这里只负责派发
           onRevertRun={runFiles.length > 0 ? () => window.dispatchEvent(new CustomEvent('mjcode:revert-run')) : undefined}
         />
+        {/* 用户需求 2：整段回复的最末尾放「查看所有产物 (N)」，点开才是文件卡片——
+            位置放在收尾条之后，即「一句话说完、数字看完、产物要看自己点」。 */}
+        <RunOutputFiles files={runFiles} onOpenFile={onOpenFile} cwd={cwd} />
         {/* T1-1+T1-2：运行态工具轨迹已并入最后一轮块（答复正文之上），此处不再重复渲染 */}
-        {/* T1-5：推理模型思考流——Markdown 渐进渲染（与正文一致的排版），默认展开可折叠 */}
-        {loading && reasoningText && (
-          <details className="mb-3 max-w-3xl" open>
-            <summary className="text-xs text-text2 cursor-pointer select-none">
-              {t('message.thinking')}
-              {elapsedSec > 0 && <span className="ml-2 text-text2/70">{t('message.thinkingElapsed', { s: elapsedSec })}</span>}
-              {receivedChars > 0 && <span className="ml-2 text-text2/70">{t('message.receivedChars', { n: receivedChars })}</span>}
-            </summary>
-            <div className="mt-1 text-xs text-text2 max-h-40 overflow-y-auto">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{reasoningText}</ReactMarkdown>
-            </div>
-          </details>
-        )}
+        {/* 用户需求 1（2026-10-30）：思考内容默认折叠成一行灰字「正在思考中…」，点击才展开正文；
+            运行结束后仍保留该行（此前只在 loading 期间渲染，思考路径一结束就查不到了）。
+            单独成组件是为了守住本文件的行数软档，且思考折叠与工具折叠用同一套视觉语言。 */}
+        <ReasoningPanel text={reasoningText} loading={loading} elapsedSec={elapsedSec} chars={receivedChars} />
         {streamingText && (
           <div className="mb-4 max-w-3xl">
             <div className="text-xs text-text2 mb-1">MJ Nexus <span className="animate-pulse">▋</span></div>
-            <div className="msg-prose"><ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingText}</ReactMarkdown></div>
-          </div>
-        )}
-        {/* T1-5：统一加载态——spinner + 文案，与工具卡/概览卡的运行中徽标同一视觉语言 */}
-        {loading && !streamingText && !reasoningText && toolCalls.length === 0 && (
-          <div className="flex items-center gap-2 text-text2 text-sm">
-            <IconSpinner size={14} className="animate-spin" />
-            {t('message.thinking')}
-            {elapsedSec > 0 && <span className="text-text2/70">{t('message.thinkingElapsed', { s: elapsedSec })}</span>}
+            <div className="msg-prose"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={safeUrlTransform}>{streamingText}</ReactMarkdown></div>
           </div>
         )}
         </div>
@@ -178,7 +261,7 @@ export default function MessageStream({
 }
 
 // C7：消息复制（hover 显示操作条，user/assistant 均支持；无状态组件，用 toast 反馈）
-function CopyButton({ text }) {
+function CopyButton({ text }: { text?: string }) {
   const { t } = useI18n();
   return (
     <button
@@ -201,7 +284,7 @@ function CopyButton({ text }) {
 
 // P1-6：会话分支——从该条消息处 fork 出一支新会话（复制截至该消息的历史）。
 // 无状态组件：经 CustomEvent 交给 App 处理（同 mjcode:open-settings 模式，避免层层传 prop）。
-function ForkButton({ messageId }) {
+function ForkButton({ messageId }: { messageId?: string | number | null }) {
   const { t } = useI18n();
   if (messageId == null) return null;
   return (
@@ -219,7 +302,16 @@ function ForkButton({ messageId }) {
 // · live 模式（运行中）：运行中徽标 + 实时耗时 + 本轮已消耗 + 上下文用量 + 模型，每秒刷新；
 // · 结束态：状态（正常结束/任务暂停/已停止/失败）+ 耗时 + 共消耗 + 模型 + 结束时间。
 // 与单条消息的 meta 小字互补：meta 随消息滚动，此卡永远挂在最后一屏可见。
-export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRevertRun }) {
+export interface RunFooterProps {
+  summary: RunSummary | null;
+  /** 运行态数据（null = 已结束，走 summary） */
+  live?: RunLive | null;
+  changedCount?: number;
+  onOpenChanges?: () => void;
+  onRevertRun?: () => void;
+}
+
+export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRevertRun }: RunFooterProps) {
   // 组件内已有局部变量 t（定时器），i18n 译函数改名 tr 避免遮蔽
   const { t: tr } = useI18n();
   const [, tick] = useState(0);
@@ -229,7 +321,7 @@ export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRe
     return () => clearInterval(t);
   }, [live]);
   if (!summary && !live) return null;
-  const fmtDur = (ms) => {
+  const fmtDur = (ms: number) => {
     const sec = Math.max(0, Math.round(ms / 1000));
     return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${sec % 60}s`;
   };
@@ -237,6 +329,9 @@ export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRe
   // 运行中概览：实时数据流（startedAt/usage/contextUsage 由调用方每轮渲染传入最新值）
   if (live) {
     const total = (live.tokensIn || 0) + (live.tokensOut || 0);
+    // 取局部变量而不是就地 `live.startedAt > 0 && ...live.startedAt`：
+    // 后者在 TS 下 `> 0` 这一步就已经「可能为 undefined」，且比较式不会把属性窄化给后面的表达式。
+    const startedAt = live.startedAt || 0;
     return (
       <div className="mb-4 max-w-3xl">
         <div className={chip}>
@@ -244,7 +339,7 @@ export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRe
             <IconSpinner size={11} className="animate-spin" />
             {tr('message.running')}
           </span>
-          {live.startedAt > 0 && <span>{tr('message.elapsed', { dur: fmtDur(Date.now() - live.startedAt) })}</span>}
+          {startedAt > 0 && <span>{tr('message.elapsed', { dur: fmtDur(Date.now() - startedAt) })}</span>}
           {total > 0 && <span title={tr('message.tokensTitle', { in: (live.tokensIn || 0).toLocaleString(), out: (live.tokensOut || 0).toLocaleString() })}>{tr('message.roundTokens', { n: total.toLocaleString() })}</span>}
           {live.contextUsage && (
             <span title={tr('message.contextTitle', { used: live.contextUsage.used, total: live.contextUsage.total })}>
@@ -256,13 +351,16 @@ export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRe
       </div>
     );
   }
-  const STATUS = {
+  // 结束态：走到这里的必然有 summary（「无 summary 且无 live」已在上面返回，且 live 分支刚 return 掉），
+  // 这条判断只为把类型收窄给 TS——它不做「summary 为空 ⇒ live 非空」的关联推理。
+  if (!summary) return null;
+  const STATUS: Record<string, { label: string; cls: string; dot: string }> = {
     done: { label: tr('message.statusDone'), cls: 'text-success', dot: 'bg-success' },
     aborted: { label: tr('message.statusAborted'), cls: 'text-warn', dot: 'bg-warn' },
     suspended: { label: tr('message.statusSuspended'), cls: 'text-warn', dot: 'bg-warn' },
     error: { label: tr('message.statusError'), cls: 'text-danger', dot: 'bg-danger' },
   };
-  const st = STATUS[summary.status] || STATUS.done;
+  const st = (summary.status && STATUS[summary.status]) || STATUS.done;
   const total = (summary.tokensIn || 0) + (summary.tokensOut || 0);
   return (
     <div className="mb-4 max-w-3xl">
@@ -348,8 +446,8 @@ function fileActionItems(target: string, cwd: string | undefined, t: (k: string)
       id: 'reveal', label: t('message.revealInFolder'), icon: IconFolder,
       onClick: async () => {
         try {
-          const r = await window.mjcode?.revealPath?.({ path, cwd });
-          if (r && r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
+          const r = asBridgeResult(await window.mjcode?.revealPath?.({ path, cwd }));
+          if (r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
         } catch (err) { warn(err); }
       },
     },
@@ -358,8 +456,8 @@ function fileActionItems(target: string, cwd: string | undefined, t: (k: string)
       onClick: async () => {
         try {
           // 必须带 cwd：相对路径由主进程按项目根解析（与工具层同一语义），否则一律「路径不存在」
-          const r = await window.mjcode?.openPath?.({ path, cwd });
-          if (r && r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
+          const r = asBridgeResult(await window.mjcode?.openPath?.({ path, cwd }));
+          if (r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
         } catch (err) { warn(err); }
       },
     },
@@ -380,9 +478,9 @@ function fileActionItems(target: string, cwd: string | undefined, t: (k: string)
       id: 'saveAs', label: t('message.saveAs'), icon: IconDownload,
       onClick: async () => {
         try {
-          const r = await window.mjcode?.saveFileAs?.({ path, cwd });
+          const r = asBridgeResult(await window.mjcode?.saveFileAs?.({ path, cwd }));
           // 用户在系统对话框点取消不算失败，不弹错误
-          if (r && r.ok === false && !r.canceled) toast({ message: String(r.error || t('filePreview.openFailed')) });
+          if (r.ok === false && !r.canceled) toast({ message: String(r.error || t('filePreview.openFailed')) });
         } catch (err) { warn(err); }
       },
     },
@@ -400,13 +498,16 @@ function openFileEverywhere(onOpenFile: ((p: string) => void) | undefined, raw: 
   window.dispatchEvent(new CustomEvent('mjcode:open-file', { detail: { path: p } }));
 }
 
-/** 本轮产出文件：任务结束后列出本轮被写入/修改的文件（左键在右侧预览栏打开；右键出操作菜单） */
-function RunOutputFiles({ files = [], onOpenFile, cwd }: { files?: Array<string | { path: string }>; onOpenFile?: (p: string) => void; cwd?: string }) {
+/** 本轮产出文件：任务结束后列出本轮被写入/修改的文件（左键在右侧预览栏打开；右键出操作菜单）
+ *  2026-10-30：默认收起成一行「查看所有产物 (N)」，点开才铺卡片；defaultOpen 供渲染冒烟直测展开分支。 */
+export function RunOutputFiles({ files = [], onOpenFile, cwd, defaultOpen = false }: { files?: Array<string | { path: string }>; onOpenFile?: (p: string) => void; cwd?: string; defaultOpen?: boolean }) {
   const { t } = useI18n();
   const list = (files || []).map((f) => (typeof f === 'string' ? f : f?.path)).filter(Boolean);
   const first = list[0];
   // 右键菜单锚点：三张卡片共用同一个 ContextMenu，只换锚点与目标路径
   const [menu, setMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  // 展开态必须在所有 early-return 之前声明，否则违反 hooks 顺序（无产出时不渲染会让顺序漂移）
+  const [open, setOpen] = useState(defaultOpen);
   // 展示档位在渲染时现读：设置页改完回到对话区即生效（无需重启）
   const display = getOutputDisplay();
   // panel 档：首个产出自动开在右侧预览栏。按路径判重，避免每次重渲染都把预览栏拽回去。
@@ -434,31 +535,43 @@ function RunOutputFiles({ files = [], onOpenFile, cwd }: { files?: Array<string 
     );
   }
 
+  // 用户需求 2（2026-10-30）：默认收起，正文末尾只留一行「查看所有产物 (N)」，
+  // 点开才铺卡片——长任务动辄几十个文件，全铺出来会把答复正文挤到看不清。
   return (
     <div className="mb-4 max-w-3xl">
-      <div className="text-xs text-text2 mb-2">{t('message.outputFiles', { n: list.length })}</div>
-      <div className="flex flex-wrap gap-2">
-        {list.map((path) => {
-          const name = path.split('/').pop() || path;
-          const dir = path.length > name.length ? path.slice(0, path.length - name.length - 1) : '';
-          return (
-            <button
-              key={path}
-              type="button"
-              onClick={() => openFileEverywhere(onOpenFile, path)}
-              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, path }); }}
-              title={path}
-              className="group flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2 text-left hover:bg-hover hover:border-accent/40 transition-colors min-w-[190px] max-w-[280px]"
-            >
-              <span className="shrink-0 text-accent"><IconFile size={18} /></span>
-              <span className="min-w-0">
-                <span className="block text-xs text-text truncate">{name}</span>
-                <span className="block text-caption text-text2 truncate" dir="rtl">{dir || name}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 text-xs text-text2 hover:text-text select-none"
+        title={open ? t('message.hideArtifacts') : t('message.viewAllArtifacts', { n: list.length })}
+      >
+        {open ? <IconChevronDown size={12} className="shrink-0" /> : <IconChevronRight size={12} className="shrink-0" />}
+        <span>{open ? t('message.hideArtifacts') : t('message.viewAllArtifacts', { n: list.length })}</span>
+      </button>
+      {open && (
+        <div className="mt-2 flex flex-wrap gap-2 rounded-xl border border-border bg-surface p-3">
+          {list.map((path) => {
+            const name = path.split('/').pop() || path;
+            const dir = path.length > name.length ? path.slice(0, path.length - name.length - 1) : '';
+            return (
+              <button
+                key={path}
+                type="button"
+                onClick={() => openFileEverywhere(onOpenFile, path)}
+                onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY, path }); }}
+                title={path}
+                className="group flex items-center gap-3 rounded-xl border border-border bg-surface px-3 py-2 text-left hover:bg-hover hover:border-accent/40 transition-colors min-w-[190px] max-w-[280px]"
+              >
+                <span className="shrink-0 text-accent"><IconFile size={18} /></span>
+                <span className="min-w-0">
+                  <span className="block text-xs text-text truncate">{name}</span>
+                  <span className="block text-caption text-text2 truncate" dir="rtl">{dir || name}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       <ContextMenu
         open={!!menu}
         x={menu?.x || 0}
@@ -552,32 +665,54 @@ function markdownComponents(onOpenFile?: (p: string) => void, cwd?: string) {
       // 点击会在**应用窗口内整页导航**，SPA 被卸载；返回/后退时重新加载，
       // activeThread 回到初始 null，用户看到的就是"新建会话"。
       // MCP 工具返回的内容里常带授权/文档链接（鉴权类尤其），所以这个坑在 MCP 场景下高频触发。
-      if (/^(https?:|mailto:)/i.test(h)) {
+      // S-005：`//host/path` 协议相对链接也归到这一类（补成 https 后交给系统浏览器），
+      // 不再原样输出 href——那既会在应用窗口内导航，也是 XSS 兜底口。
+      const ext = toExternalHref(h);
+      if (ext) {
         return (
           <a
-            href={h}
+            href={ext}
             {...rest}
             target="_blank"
             rel="noreferrer"
             onClick={(e) => {
               e.preventDefault();
-              try { window.mjcode?.openExternal?.({ url: h }); } catch { /* 桥不可用则退回浏览器默认行为 */ }
+              try { window.mjcode?.openExternal?.({ url: ext }); } catch { /* 桥不可用则退回浏览器默认行为 */ }
             }}
           >
             {children}
           </a>
         );
       }
-      return <a href={href} {...rest}>{children}</a>;
+      // 页内锚点：不离开当前页，保留可点击
+      if (h.startsWith('#')) return <a href={h} {...rest} rel="noreferrer">{children}</a>;
+      // S-005 兜底：空 href / 未知 scheme（javascript:、data:、vbscript: …）不再产出可达 <a>，
+      // 一律降级为纯文本。此前这里是 `<a href={href}>`——上游 urlTransform 一旦放宽即成现成 sink。
+      return <span>{children}</span>;
     },
   };
 }
 
+export interface RoundBlockProps {
+  round: number;
+  user?: StreamMessage | null;
+  assistants: StreamMessage[];
+  /** tool_call_id → tool 消息（内容索引） */
+  toolResults: Map<string | undefined, StreamMessage>;
+  isLast: boolean;
+  running?: boolean;
+  suppressMeta?: boolean;
+  /** 运行态工具调用（主进程还没落库的那部分），接到消息自带 calls 之后去重合并 */
+  extraCalls?: StreamToolCall[];
+  onOpenFile?: (p: string) => void;
+  cwd?: string;
+}
+
 // 轮次块：一轮的 user 气泡 + 工具轨迹组 + assistant 回复（含 meta）。折叠状态本组件持有。
-function RoundBlock({ round, user, assistants, toolResults, isLast, running = false, suppressMeta = false, extraCalls = [], onOpenFile, cwd }) {
+function RoundBlock({ round, user, assistants, toolResults, isLast, running = false, suppressMeta = false, extraCalls = [], onOpenFile, cwd }: RoundBlockProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(isLast);
-  const calls = [];
+  const calls: StreamToolCall[] = [];
   for (const m of assistants) {
     const cs = Array.isArray(m.tool_calls) ? m.tool_calls : Array.isArray(m.toolCalls) ? m.toolCalls : [];
     for (const tc of cs) calls.push(tc);
@@ -626,7 +761,7 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
           {user && (
             <div className="mb-4 flex justify-end group">
               <div className="msg-prose bg-surface rounded-2xl px-4 py-2 max-w-2xl">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>{user.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={md} urlTransform={safeUrlTransform}>{user.content}</ReactMarkdown>
               </div>
               <div className="self-center ml-2 flex"><CopyButton text={user.content} /><ForkButton messageId={user.id} /></div>
             </div>
@@ -639,6 +774,9 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
             const modelName = m.model_name || m.modelName || '';
             const tokensIn = m.tokens_input ?? m.tokensInput ?? 0;
             const tokensOut = m.tokens_output ?? m.tokensOutput ?? 0;
+            // 时间戳取局部变量：`(a || b) && ... new Date(a || b)` 这种写法 TS 不会把括号里
+            // 的判空结果传给后面的表达式，取值到变量后既收窄了类型，也少算一次。
+            const createdAt = m.created_at || m.createdAt || '';
             return (
               <div key={m.id ?? `a-${k}`} className="mb-4 max-w-3xl group">
                 <div className="text-xs text-text2 mb-1 flex items-center gap-2">
@@ -652,22 +790,22 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
                   <ToolTraceGroup calls={calls} toolResults={toolResults} label={t('toolTrace.roundExecTrace')} defaultOpen={running && isLast} />
                 )}
                 {m.content && (
-                  <div className="msg-prose"><ReactMarkdown remarkPlugins={[remarkGfm]} components={md}>{m.content}</ReactMarkdown></div>
+                  <div className="msg-prose"><ReactMarkdown remarkPlugins={[remarkGfm]} components={md} urlTransform={safeUrlTransform}>{m.content}</ReactMarkdown></div>
                 )}
                 {/* 底部明细：模型 + token 消耗 + 时间。
                     条件放宽：任一信息存在即展示——此前 modelName 为空时整行隐藏，
                     中间消息（有 token 无模型名）与历史消息一律不可见，用户侧「结束信息全缺」。
                     suppressMeta：当轮已有底部 RunFooter（状态/耗时/共消耗/模型/时间）时隐藏本行，
                     避免同一组数字在页面上重复出现两次（用户实测反馈）。 */}
-                {!suppressMeta && (modelName || tokensIn + tokensOut > 0 || m.created_at || m.createdAt) && (
+                {!suppressMeta && (modelName || tokensIn + tokensOut > 0 || createdAt) && (
                   <div className="mt-2 flex items-center gap-2 text-xs text-text2" title={t('message.tokensTitle', { in: tokensIn.toLocaleString(), out: tokensOut.toLocaleString() })}>
                     <IconCpu size={11} className="shrink-0" />
                     {tokensIn + tokensOut > 0 && (
                       <span>{t('message.totalTokens', { n: (tokensIn + tokensOut).toLocaleString() })}</span>
                     )}
                     {modelName && <span className="truncate">· {modelName}</span>}
-                    {(m.created_at || m.createdAt) && (
-                      <span>· {new Date(m.created_at || m.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
+                    {createdAt && (
+                      <span>· {new Date(createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
                     )}
                   </div>
                 )}
@@ -687,9 +825,16 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
 // running（P0-7）：本轮是否正在跑。运行中强制展开工具组——
 // 此前 ToolTraceGroup 的 defaultOpen 恒为 false（注释写着「运行态本轮传 true」但两处调用都没传），
 // 用户发起任务后只看到一行「3 次调用 · 点击展开」，完全看不出它正在跑 shell 还是正在改文件。
-export function renderMessages(messages, suppressLastMeta = false, onOpenFile, liveCalls = [], running = false, cwd = '') {
+export function renderMessages(
+  messages: StreamMessage[],
+  suppressLastMeta = false,
+  onOpenFile?: (p: string) => void,
+  liveCalls: StreamToolCall[] = [],
+  running = false,
+  cwd = '',
+) {
   // tool_call_id -> tool 消息内容 索引
-  const toolResults = new Map();
+  const toolResults = new Map<string | undefined, StreamMessage>();
   for (const m of messages) {
     if (m.role === 'tool') toolResults.set(m.tool_call_id || m.toolCallId, m);
   }
@@ -697,8 +842,8 @@ export function renderMessages(messages, suppressLastMeta = false, onOpenFile, l
   // system 消息（如项目创建时的「目标已锁定」）不是模型回复，单独渲染为居中提示：
   // 此前它被当成 assistant 落到「MJ Coder」气泡里，还带上「共消耗 0 tokens」，
   // 用户会误读成「运行了一次但什么都没有」（真机反馈）。
-  type RoundItem = { kind: 'round'; no: number; user: any; assistants: any[] };
-  const items: Array<RoundItem | { kind: 'notice'; m: any }> = [];
+  type RoundItem = { kind: 'round'; no: number; user: StreamMessage | null; assistants: StreamMessage[] };
+  const items: Array<RoundItem | { kind: 'notice'; m: StreamMessage }> = [];
   let cur: RoundItem | null = null;
   let roundNo = 0;
   for (const m of messages) {

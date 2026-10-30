@@ -10,7 +10,7 @@ const { attachHost } = require('../engineProcess/transport');
 let utilityProcess = null;
 try {
   utilityProcess = require('electron').utilityProcess || null;
-} catch { utilityProcess = null; }
+} catch { /* C-001：非 Electron 宿主（单测/纯 Node）require 不到 electron，能力探测失败=无 utilityProcess，正常 */ utilityProcess = null; }
 
 const CHILD_ENTRY = path.join(__dirname, 'childEntry.js');
 // 原生执行子进程只做 osascript/screencapture 包装，512MB 堆上限足够（独立限额=验收②）

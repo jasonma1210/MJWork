@@ -5,7 +5,6 @@
 //   2) 免授权 stdio（真实 npm 包）：npx -y @modelcontextprotocol/server-everything
 //      （需网络；失败如实记录，不算断言失败——沙箱网络受限时由真实环境复测）；
 //   3) 授权类（remote + 401）：错误透传诚实（needsAuth/error 可读），不假成功。
-import { spawn } from 'node:child_process';
 import http from 'node:http';
 import path from 'path';
 import { pathToFileURL } from 'node:url';

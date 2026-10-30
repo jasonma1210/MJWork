@@ -6,6 +6,22 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 // 避免贴右/贴底边缘时菜单被裁掉——纯 CSS 做不到「先测量再定位」，必须量一次。
 const MENU_MIN_W = 176;
 
+/**
+ * 菜单项契约（F-005：此前 `items = []` 被 TS 推成 never[]，导致所有调用方传数组都报 TS2322）。
+ * @typedef {object} MenuItem
+ * @property {string} [id]
+ * @property {string} [label]
+ * @property {string} [title]
+ * @property {any} [icon] 线性图标组件（接收 size）
+ * @property {() => void} [onClick]
+ * @property {boolean} [separator] 为真时渲染分隔线，其余字段忽略
+ * @property {boolean} [danger]
+ * @property {boolean} [disabled]
+ */
+
+/**
+ * @param {{ open?: boolean, x?: number, y?: number, items?: MenuItem[], onClose?: () => void }} props
+ */
 export default function ContextMenu({ open, x = 0, y = 0, items = [], onClose }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: x, top: y, ready: false });

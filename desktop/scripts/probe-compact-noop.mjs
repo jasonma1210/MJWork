@@ -13,7 +13,7 @@
 // 本脚本保留为**人工诊断**用途（打印三档对照），回归门禁见 test/compact-tail-budget.test.mjs。
 //
 // 用法：node scripts/probe-compact-noop.mjs
-import { compactHistory, estimateMessagesTokens, estimateTokens } from '../agent-core/index.js';
+import { compactHistory, estimateMessagesTokens } from '../agent-core/index.js';
 
 const CTX = 128000;
 const model = { provider: { id: 'probe' }, model: { model_id: 'probe-model', context_window: CTX } };

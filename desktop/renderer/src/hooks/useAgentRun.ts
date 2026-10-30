@@ -1,5 +1,8 @@
-// @ts-nocheck -- T2-2 存量代码原样搬移（零行为变更）；渐进 TS 路线下补全类型属后续任务（T0-3 门禁只约束新文件扩展名）
+// F-005（2026-10-30）：摘除文件级类型检查豁免（全仓最后一个）。
+// 类型集中在外置的 ./useAgentRunTypes（deps 契约 50+ 字段，塞回本文件会顶破 code 行软档）；
+// 函数体保持 T2-2 搬移时的实现不变 —— 本轮只做「边界收口」，不改业务逻辑。
 import { useEffect, useRef, useState } from 'react';
+import type { UseAgentRunDeps, RunThread, RunMessage, SendOpts } from './useAgentRunTypes';
 import { runAgent, decomposeTask, looksLargeTask } from '../lib/agent';
 // P0-4：上下文压缩实现移到独立模块（窗口现算 / 运行中守卫 / 撤销带），本文件只做状态装配
 import { compactSession } from '../lib/compactSession';
@@ -8,15 +11,18 @@ import { captureBaseline } from '../lib/runBaseline';
 import { getModelOverrides, buildRunModel } from '../lib/modelConfig';
 import { api } from '../lib/api';
 import { toast } from '../components/feedback';
-import { runRegistry, runIndex, makeRunState } from '../lib/runRegistry';
+import { runRegistry, makeRunState } from '../lib/runRegistry';
 import { abortGroupsForThread } from '../lib/stopThreadWork';
 import { arrayBufferToBase64, buildExpertPrompt, agentFilesOf } from '../lib/chatHelpers';
+import type { ToolCallForFiles } from '../lib/chatHelpers';
 // G1：附件图片 → vision 内容部件（纯函数，独立模块——护住本文件 800 行 God File 门禁）
 import { buildVisionParts } from '../lib/visionInput';
 import { tGlobal } from '../i18n';
 // A4：恢复决策（状态驱动）——纯函数，跨宿主共享（shared/resumeIntent.mjs），有单测覆盖
 import { resumeDecision } from '../../../shared/resumeIntent.mjs';
 import { pendingKnowledgePlanPayload } from '../lib/knowledgePlan';
+// 收尾提示音（2026-10-30）：三态各一音效，开关见设置页 / lib/runSound.ts
+import { playRunSound } from '../lib/runSound';
 
 // T2-2：Agent 运行流程 hook（自主进程 ChatArea.jsx 原样搬移，行为不变）——
 // 发送/中止/引导/排队/清空/规划模式/运行模式/上下文压缩 + 快捷键监听。
@@ -35,7 +41,60 @@ async function autoCaptureEnabled() {
   }
 }
 
-export default function useAgentRun(d) {
+// ── 边界收口（F-005）─────────────────────────────────────────────────────────
+// 摘豁免后暴露的 94 处错误几乎全来自三处「类型真空」，全部在这里收口，业务代码保持原样：
+//  ① env.d.ts 把桥方法声明为 (...args: unknown[]) => unknown ⇒ 返回值是 unknown，
+//     经真值判断后又被窄化成 `{}`（属性一个都不存在）；
+//  ② catch (err) 是 unknown，此前读 `.message` 全靠 any 蒙过去；
+//  ③ 部分调用点没写 `?.`，而 window.mjcode 声明为可选。
+//
+// 注意（踩过一次）：桥调用**不要**再包一层 `function bridge() { return window.mjcode }`。
+// test/bridge-parity.test.mjs 按「整桥别名」统计引用（`const mj = window.mjcode` → `mj.xxx`），
+// 看不穿函数包装，包一层立刻让被包的方法变成「死方法」（实测 createWorktree/saveUpload 双双误报）。
+// 所以桥面一律就地取别名再调用。
+
+/** 桥面返回值收口：只断言「它是不是对象」，**不兜默认值**。
+ *  非对象一律返回 null —— 调用点既有的 `r?.ok` 因此保持原语义（undefined 仍是 undefined）。
+ *  反过来，若这里改成返回 `{}`，`!!cp`（断点存在性）这类真值测试会被悄悄翻转成 true。 */
+function asObj<T>(v: unknown): T | null {
+  return v && typeof v === 'object' ? (v as T) : null;
+}
+
+/** catch 里拿到的是 unknown：取文案统一走这里（此前直读 `.message` 靠 any 蒙混）。 */
+function errText(e: unknown): string {
+  if (e && typeof e === 'object' && 'message' in e) {
+    return String((e as { message?: unknown }).message ?? e);
+  }
+  return String(e);
+}
+
+/** 断点快照（主进程 checkpointGet 的返回；kind 缺省按 token 预算触顶解读） */
+interface Checkpoint {
+  kind?: string;
+  summary?: string;
+  rescues?: number;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+}
+
+/** onDone 的持久化元信息：主进程模式恒带 mainPersisted，进程内回退模式没有该字段 */
+interface DoneMeta {
+  mainPersisted?: boolean;
+  persistState?: string;
+  [k: string]: unknown;
+}
+
+/** 一轮用量（引擎口径：prompt/completion 是累计，last* 是收尾轮那次调用） */
+interface TurnUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  lastPromptTokens?: number;
+  lastCompletionTokens?: number;
+}
+
+/** Electron 在 File 上额外挂了 path（lib.dom 的 File 没有），Web 标准下不存在 —— 如实声明为可选 */
+type DroppedFile = File & { path?: string };
+
+export default function useAgentRun(d: UseAgentRunDeps) {
   const {
     input, loading, selectedModel, project, projectPicked, thread, cwd, mcpTools, enabledSkills,
     fileSkills, memories, agentsMd, approvalSettings, planMode, runMode, worktree, sessionExtras,
@@ -70,7 +129,8 @@ export default function useAgentRun(d) {
     // 不再静默无反应（真机问题：编排组在跑、父 run 已收尾，点击完全无反馈）。
     const rid = activeRunIdRef.current;
     if (rid) {
-      Promise.resolve(window.mjcode?.agentAbort?.(rid)).then((r) => {
+      Promise.resolve(window.mjcode?.agentAbort?.(rid)).then((raw) => {
+        const r = asObj<{ ok?: boolean }>(raw);
         if (!r?.ok) console.warn('[stop] no such run in main (already finished?), cancelling task groups instead');
       }).catch(() => { /* 中止失败不影响下面的组取消 */ });
     }
@@ -86,10 +146,10 @@ export default function useAgentRun(d) {
   //   · 输入框/文本域里的 Esc 属于「取消输入」，不该停任务。
   useEffect(() => {
     if (!loading) return;
-    const onKey = (e) => {
+    const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (e.defaultPrevented) return;
-      const el = e.target;
+      const el = e.target as HTMLElement | null;
       const editing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
       if (editing) return;
       stop();
@@ -100,8 +160,9 @@ export default function useAgentRun(d) {
 
   // 文件树点击文件 → 插入路径引用到输入框
   useEffect(() => {
-    const onInsert = (e) => {
-      const p = e.detail;
+    const onInsert = (e: Event) => {
+      // detail 就是路径字符串本身（派发方 FileTree.jsx：detail: selected），不是 {detail} 包一层
+      const p = (e as CustomEvent<string | undefined>).detail;
       if (!p) return;
       setInput((prev) => (prev ? `${prev}\n@${p}` : `@${p}`));
     };
@@ -113,8 +174,8 @@ export default function useAgentRun(d) {
   // 此处复用 send 通路触发下一轮模型调用：空闲即发；运行中入队（下一轮第一条消息，
   // 经 finalizeRun 的 setQueued 接力）。skipDecompose：反馈消息不过大任务拆分闸门。
   useEffect(() => {
-    const onDiffComment = (e) => {
-      const text = e.detail?.text;
+    const onDiffComment = (e: Event) => {
+      const text = (e as CustomEvent<{ text?: string } | undefined>).detail?.text;
       if (!text) return;
       if (loading) queueNext(text);
       else send(text, undefined, { skipDecompose: true });
@@ -129,7 +190,7 @@ export default function useAgentRun(d) {
   // 附件 chips（对标 WorkBuddy）：拖入/粘贴/「添加到对话框」的文件以 chip 呈现，
   // 发送时统一转为 `@路径` 上下文行（AI 经 read_file 读取的既有约定），不让裸路径污染输入框文本。
   const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
-  function addPaths(paths) {
+  function addPaths(paths: string[]) {
     const list = (paths || []).map(String).filter(Boolean);
     if (!list.length) return 0;
     setAttachments((prev) => {
@@ -147,23 +208,30 @@ export default function useAgentRun(d) {
   // 「添加到对话框」（消息内文件 chip / 右栏预览）：与 mjcode:insert-path 同款事件总线约定，
   // 避免从 App→RightPane→FilesPanel→FileViewerPane 四层钻 props
   useEffect(() => {
-    const onAdd = (e) => { if (e.detail?.path) addPaths([String(e.detail.path)]); };
+    const onAdd = (e: Event) => {
+      const p = (e as CustomEvent<{ path?: string } | undefined>).detail?.path;
+      if (p) addPaths([String(p)]);
+    };
     window.addEventListener('mjcode:add-attachment', onAdd);
     return () => window.removeEventListener('mjcode:add-attachment', onAdd);
     // addPaths 只用 setState 函数式更新，空依赖安全
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function ingestFiles(fileList) {
-    const paths = [];
-    for (const f of Array.from(fileList || [])) {
-      const p = window.mjcode?.getPathForFile?.(f) || f.path || '';
+  async function ingestFiles(fileList: FileList | File[] | null | undefined) {
+    const mj = window.mjcode;
+    const paths: string[] = [];
+    for (const f of Array.from(fileList || []) as DroppedFile[]) {
+      // 桥面返回 unknown：只接受字符串（真机上就是绝对路径），其余回落到 File.path
+      const raw = mj?.getPathForFile?.(f);
+      const p = typeof raw === 'string' && raw ? raw : (f.path || '');
       if (p) { paths.push(p); continue; }
       // 无路径（粘贴图片等）：经主进程落盘到 userData/uploads
       try {
         const buf = await f.arrayBuffer();
-        const r = await window.mjcode.saveUpload?.({ name: f.name || `image-${Date.now()}.png`, dataBase64: arrayBufferToBase64(buf) });
-        if (r?.ok) paths.push(r.path);
+        const r = asObj<{ ok?: boolean; path?: string }>(await mj?.saveUpload?.({ name: f.name || `image-${Date.now()}.png`, dataBase64: arrayBufferToBase64(buf) }));
+        if (r?.ok && r.path) paths.push(r.path);
+        else if (!mj?.saveUpload) console.warn('[chat] file write failed: saveUpload bridge unavailable');
       } catch (err) {
         console.warn('[chat] file write failed:', err);
       }
@@ -174,13 +242,13 @@ export default function useAgentRun(d) {
   // Ctrl+M 按住说话（对标 Codex）：按下开始、松开结束
   // 注意只用 Ctrl：Cmd+M 是 macOS 最小化窗口的系统快捷键，不可劫持
   useEffect(() => {
-    const onKey = (e) => {
+    const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'm') {
         e.preventDefault();
         if (!e.repeat && voice.state === 'idle') voice.start();
       }
     };
-    const onKeyUp = (e) => {
+    const onKeyUp = (e: KeyboardEvent) => {
       if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'm') {
         e.preventDefault();
         if (voice.state === 'recording') voice.stop();
@@ -197,10 +265,16 @@ export default function useAgentRun(d) {
   }, [voice.start, voice.stop]);
 
   async function pickFiles() {
-    try { const r = await window.mjcode.pickFiles(); if (r.ok && r.paths?.length) addPaths(r.paths); } catch (err) { console.warn('[chat] file pick failed:', err); }
+    const mj = window.mjcode;
+    try {
+      const r = asObj<{ ok?: boolean; paths?: string[] }>(await mj?.pickFiles?.());
+      if (r?.ok && r.paths?.length) addPaths(r.paths);
+      // 桥不可用时用户点了「添加文件」却毫无反应 —— 至少留一条可排查的痕迹
+      else if (!mj?.pickFiles) console.warn('[chat] file pick failed: pickFiles bridge unavailable');
+    } catch (err) { console.warn('[chat] file pick failed:', err); }
   }
 
-  async function doSend(text, forcedThread, opts = {}) {
+  async function doSend(text: string | undefined, forcedThread: RunThread | null | undefined, opts: SendOpts = {}) {
     const raw = text || input;
     // 附件 chips → `@路径` 上下文行（AI 经 read_file 读取的既有约定）；/mem 指令按原始输入判定
     let content = raw;
@@ -229,7 +303,7 @@ export default function useAgentRun(d) {
         toast({ message: tGlobal('runtime.memSaved') });
       } catch (err) {
         console.warn('[chat] explicit memory write failed:', err);
-        toast({ message: tGlobal('runtime.memSaveFailed', { error: String(err?.message || err) }) });
+        toast({ message: tGlobal('runtime.memSaveFailed', { error: errText(err) }) });
       }
       return;
     }
@@ -247,11 +321,23 @@ export default function useAgentRun(d) {
     if (!opts.skipDecompose && !plan
         && localStorage.getItem('mj_auto_decompose') !== '0'
         && looksLargeTask(content)) {
+      // 2026-10-30 订正一条记错的结论：此前这里写着「只传 toolHandlers:{} ⇒ 大任务拆分在渲染层
+      // 从未生效」。那是**错的** —— resolveChannel 在 handler 缺省时会回落
+      // `globalThis.window.mjcode.chat`（agent-core 的 resolveChannel 第二段），而 preload 确实
+      // 暴露了 chat（→ model:chat 通道），实测拆分一直是跑通的（见 test/model-override.test.mjs 第 ④ 段）。
+      // 现改为显式注入：不再依赖隐式全局回落，且引擎若将来搬进无 window 的 utilityProcess 也成立。
+      // 桥缺失时传空对象，decomposeTask 抛「通道不可用」→ 下面的 catch 按原样执行（fail-open 不变）。
+      // signal 仍传 undefined：abortRef.current 此刻可能还是上一轮的 controller，
+      // 传进去会让「上一轮被中止」变成「这一轮一开始就已 aborted」而静默关掉拆分。
+      const bridgeChat = window.mjcode?.chat;
       setDecomposing(true);
       try {
         const r = await decomposeTask({
           messages: [...messages, { role: 'user', content }],
           model: selectedModel,
+          toolHandlers: bridgeChat ? { chat: bridgeChat } : {},
+          signal: undefined,
+          modelOverrides: undefined,
         });
         if (r?.decompose && r.tasks.length >= 2) {
           setPlan({ tasks: r.tasks, reason: r.reason || '' });
@@ -281,7 +367,7 @@ export default function useAgentRun(d) {
       // 写进上一个任务的工作区（真机事故）。现在给出可行动错误并直接终止。
       let dirError = '';
       try {
-        const r = await window.mjcode?.createProject?.({ name: '' });
+        const r = asObj<{ ok?: boolean; path?: string; name?: string; error?: string }>(await window.mjcode?.createProject?.({ name: '' }));
         if (r?.ok && r.path) {
           effectiveProject = {
             id: r.path,
@@ -295,7 +381,7 @@ export default function useAgentRun(d) {
           dirError = String(r?.error || tGlobal('runtime.unknownError'));
         }
       } catch (err) {
-        dirError = String(err?.message || err);
+        dirError = errText(err);
       }
       if (dirError) {
         console.error('[chat] auto task dir creation failed, run blocked:', dirError);
@@ -319,7 +405,10 @@ export default function useAgentRun(d) {
       // 异常直穿 → loading 永久卡死，用户再也发不出消息（此处 rs 尚未注册、abortRef 可能还是上一轮的
       // 旧 controller，所以不能用 abort 兜底，只能就地复位）。
       try {
-        currentThread = await api.createThread({
+        // lib/api.js 未标注返回类型：这里显式收成 RunThread | null，空返回按**失败**处理——
+        // 此前它会一路流到 `currentThread.id` 变成 "Cannot read properties of null"，
+        // 用户侧看到的是「点了发送什么都没发生」（静默降级）。抛错走下面既有的 catch，可见且可重试。
+        const created = (await api.createThread({
           provider_id: selectedModel.provider?.id,
           model_id: selectedModel.model?.id,
           provider_name: selectedModel.provider?.name,
@@ -327,12 +416,14 @@ export default function useAgentRun(d) {
           cwd: executionRoot,
           project_path: effectiveProject?.path || '',
           title: content.slice(0, 50),
-        });
+        })) as RunThread | null;
+        if (!created) throw new Error('createThread returned empty thread');
+        currentThread = created;
       } catch (err) {
         console.error('[chat] create thread failed, run blocked:', err);
         setLoading(false);
         setLastFailed({ text: content });
-        toast({ message: tGlobal('runtime.threadCreateFailed', { error: String(err?.message || err) }) });
+        toast({ message: tGlobal('runtime.threadCreateFailed', { error: errText(err) }) });
         return;
       }
       onNewMessage();
@@ -360,7 +451,7 @@ export default function useAgentRun(d) {
       setLoading(false);
       onThreadStatus?.('idle');
       setLastFailed({ text: content });
-      toast({ message: tGlobal('runtime.messageSendFailed', { error: String(err?.message || err) }) });
+      toast({ message: tGlobal('runtime.messageSendFailed', { error: errText(err) }) });
       return;
     }
 
@@ -386,7 +477,7 @@ export default function useAgentRun(d) {
     let resumeContext = '';
     const checkpointKey = String(currentThread.id || 'local');
     try {
-      const cp = await window.mjcode?.checkpointGet?.(checkpointKey);
+      const cp = asObj<Checkpoint>(await window.mjcode?.checkpointGet?.(checkpointKey));
       const decision = resumeDecision({ hasCheckpoint: !!cp, messageText: content });
       if (decision.resume && cp) {
         if (cp.kind === 'engine-exit') {
@@ -439,7 +530,7 @@ export default function useAgentRun(d) {
     // 运行保活：完成时用户可能已切到其他会话（wasActive=false）。
     // 持久化/状态收敛/记忆留存线程无关照做；仅「仍在本会话」才直接动可见 UI，
     // 否则完成消息会打进别的会话的消息区（串显根因之二）。
-    const finalizeRun = async (finalText, usage, aborted, meta = {}) => {
+    const finalizeRun = async (finalText: string, usage: TurnUsage | null | undefined, aborted: boolean, meta: DoneMeta = {}) => {
       const wasActive = activeThreadIdRef.current === threadKey;
       // Bugfix：即时中止收尾时 finalText 为空串（引擎真实结果尚未返回），
       // 不再拼出 "\n\n（已停止）" 的空尾消息，直接显示「（已停止）」
@@ -467,7 +558,7 @@ export default function useAgentRun(d) {
       const assistantMsg = {
         role: 'assistant',
         content,
-        model_name: selectedModel.model.model_id,
+        model_name: selectedModel.model?.model_id || '',
         // 底部 token 明细：口径=**收尾轮**用量（与主进程落库同源）；用 run 累计会让同一条消息「刚跑完」与「刷新后」显示两个数
         tokens_input: Number(usage?.lastPromptTokens) || 0,
         tokens_output: Number(usage?.lastCompletionTokens) || 0,
@@ -483,12 +574,15 @@ export default function useAgentRun(d) {
         durationMs: rs.startedAt ? Date.now() - rs.startedAt : 0,
         tokensIn: usage?.prompt_tokens || 0,
         tokensOut: usage?.completion_tokens || 0,
-        // 渲染层上下文圆环优先用引擎真实「上一轮 prompt 体积」，而非本地对瘦消息数组的低估重估
-        contextTokens: Number.isFinite(usage?.lastPromptTokens) ? usage.lastPromptTokens : null,
+        // 渲染层上下文圆环优先用引擎真实「上一轮 prompt 体积」，而非本地对瘦消息数组的低估重估。
+        // 只多写一个 `?.`：`Number.isFinite(usage?.x)` 不会把 usage 本身窄化给后面（同 MessageStream 先例）。
+        contextTokens: Number.isFinite(usage?.lastPromptTokens) ? (usage?.lastPromptTokens ?? null) : null,
         model: selectedModel?.model?.model_id || '',
         endedAt: Date.now(),
       };
       if (activeRunIdRef.current === rs.runId) { activeRunIdRef.current = null; setActiveRunId(null); }
+      // 收尾音效：正常结束（含「断点已保存」的挂起）与用户手动停止分开——不看屏幕也能分辨结果
+      playRunSound(aborted ? 'stopped' : 'success');
       // 2026-10-18 真机修复：UI 复位必须在**同步段**完成。
       // 此前复位在函数末尾（`stillActive` 那段），而它前面有若干 await（落库/记忆/排队接力）。
       // 点「停止」后 agent.js 会立刻本地 settle 回调这里，可只要落库慢一拍，用户就盯着
@@ -554,7 +648,7 @@ export default function useAgentRun(d) {
             total: ps.total,
             next: ps.tasks[ps.index + 1] || null,
             tokens: { in: usage?.prompt_tokens || 0, out: usage?.completion_tokens || 0 },
-            model: selectedModel.model.model_id,
+            model: selectedModel.model?.model_id || '',
           });
         }
         // queue：排队指令本轮结束后自动接力（对标 Codex Tab 排队）；R-15/R-5：经 relayRef（ChatArea 的 sendOrDispatch）分流，选中军团时入队消息也派活，未注入则与从前一致
@@ -614,7 +708,7 @@ export default function useAgentRun(d) {
         conversationId: threadKey, candidateTeamId: sessionExtras?.candidateRoster?.teamId ? String(sessionExtras.candidateRoster.teamId) : undefined, // 双入口：候选编制透传（只传 id；临时编制不传）
         // Phase 3-1：断点摘要注入（仅「继续」且有已保存断点时非空）
         resumeContext,
-        onMessage: async (msg) => {
+        onMessage: async (msg: RunMessage) => {
           // T1-5：运行中实时消耗累计（中间轮 usage 逐条累加，供「本轮概览」卡展示）
           if (msg.tokens_input || msg.tokens_output) {
             setRunUsage((prev) => ({
@@ -641,20 +735,20 @@ export default function useAgentRun(d) {
           rs.streaming = ''; rs.reasoning = '';
           if (activeThreadIdRef.current === threadKey) { setStreamingText(''); setReasoningText(''); }
         },
-        onToolCall: (tc) => {
+        onToolCall: (tc: ToolCallForFiles) => {
           rs.toolCalls = [...rs.toolCalls, tc];
           if (activeThreadIdRef.current === threadKey) setToolCalls((prev) => [...prev, tc]);
           for (const f of agentFilesOf(tc)) agentFilesRef.current.add(f);
         },
         // T1-3/T1-4：子代理与编排事件上抛（threadId 由本闭包携带，后台会话不错桶）
-        onSubagentEvent: (evt) => { onSubagentEvent?.(threadKey, evt); },
+        onSubagentEvent: (evt: unknown) => { onSubagentEvent?.(threadKey, evt); },
         // P0-2 / P0-3：中止收敛与挂起上报（实现见 lib/runLifecycle，含两条语义边界说明）
         ...createRunLifecycleCallbacks({
           rs, threadKey, abortRef, activeThreadIdRef,
           setLoading, setStreamingText, setReasoningText, setRunSummary,
           modelId: selectedModel?.model?.model_id || '',
         }),
-        onDone: async (finalText, usage, aborted, meta = {}) => {
+        onDone: async (finalText: string, usage: TurnUsage | null | undefined, aborted: boolean, meta: DoneMeta = {}) => {
           // V20：完成回调全程 try/catch——此前回调内异常（如 setPlanReport 缺失的
           // ReferenceError）会成为 unhandled rejection 被静默吞掉，收尾状态无声丢失。
           // 失败时 console.error + 消息区追加用户可见的错误提示，不假装无事发生。
@@ -665,7 +759,7 @@ export default function useAgentRun(d) {
             if (activeThreadIdRef.current === threadKey) {
               setMessages((m) => [...m, {
                 role: 'assistant',
-                content: tGlobal('runtime.errorPrefix', { msg: String(err?.message || err) }),
+                content: tGlobal('runtime.errorPrefix', { msg: errText(err) }),
                 model_name: selectedModel?.model?.model_id || '',
                 created_at: Date.now(),
               }]);
@@ -674,9 +768,8 @@ export default function useAgentRun(d) {
         },
       });
     } catch (err) {
-      const msg = String(err.message || '').startsWith('KEY_MISSING')
-        ? tGlobal('runtime.keyMissing')
-        : err.message;
+      const errMsg = errText(err);
+      const msg = errMsg.startsWith('KEY_MISSING') ? tGlobal('runtime.keyMissing') : errMsg;
       // 运行保活：出错时用户可能已切走——错误只打进「仍是本会话」的可见消息区
       const errActive = activeThreadIdRef.current === threadKey;
       rs.inFlight = false;
@@ -689,6 +782,8 @@ export default function useAgentRun(d) {
         model: selectedModel?.model?.model_id || '',
         endedAt: Date.now(),
       };
+      // 异常收尾：与 success 音效区分（含引擎报错、网络失败、工具链异常）
+      playRunSound('error');
       if (activeRunIdRef.current === rs.runId) { activeRunIdRef.current = null; setActiveRunId(null); }
       if (errActive) {
         // 此前错误消息不带 model_name → meta 行整体隐藏，用户侧三样全缺（模型/耗时/token）无从判断
@@ -716,7 +811,7 @@ export default function useAgentRun(d) {
 
   // B-P0-4：同步闩锁防重复提交（连按两次 Enter 会建两个会话 + 双花 token）。必须在第一个 await 之前置位；.finally 覆盖所有 return 分支；steer 的 force 补发由 setTimeout 排队，不受影响。
   const sendingRef = useRef(false);
-  async function send(text, forcedThread, opts = {}) {
+  async function send(text: string | undefined, forcedThread: RunThread | null | undefined, opts: SendOpts = {}) {
     if (!opts.force && sendingRef.current) return;
     sendingRef.current = true;
     return doSend(text, forcedThread, opts).finally(() => sendingRef.current = false);
@@ -726,7 +821,7 @@ export default function useAgentRun(d) {
   // 价值：方向偏了立即纠偏，比等它跑完再重来便宜得多。
   // 补发改由 send 结束路径执行（steerPendingRef）——此处 loading 仍为 true，
   // 直接 send 会被 `if (loading && !opts.force) return` 静默吞掉，引导看似点了没反应。
-  function steer(text) {
+  function steer(text: string | null | undefined) {
     const t = String(text || '').trim();
     if (!t) return;
     stop(); // 仅中止当前查看会话的运行（不再全局 abortChat，避免误杀后台运行）
@@ -735,7 +830,7 @@ export default function useAgentRun(d) {
   }
 
   // queue（对标 Codex 运行中按 Tab）：排队到下一轮，不打断当前轮
-  function queueNext(text) { const t = String(text || '').trim(); if (t) setQueued((q) => [...q, t]); }
+  function queueNext(text: string | null | undefined) { const t = String(text || '').trim(); if (t) setQueued((q) => [...q, t]); }
 
   // /clear：清空当前对话上下文
   function clearContext() {
@@ -754,7 +849,7 @@ export default function useAgentRun(d) {
   }
 
   // 切换运行模式：进入隔离工作区时按需创建 worktree 副本
-  async function switchMode(next) {
+  async function switchMode(next: string) {
     if (next === runMode) return;
     setModeMsg('');
     if (next !== 'worktree') { setRunMode('local'); return; }
@@ -763,15 +858,16 @@ export default function useAgentRun(d) {
     if (worktree?.path) return;
     setModeMsg(tGlobal('runtime.creatingWorktree'));
     try {
-      const r = await window.mjcode.createWorktree({
+      const mj = window.mjcode;
+      const r = asObj<{ ok?: boolean; path?: string; branch?: string; error?: string }>(await mj?.createWorktree?.({
         path: project.path,
         taskTitle: thread?.title || project.name,
-      });
+      }));
       if (!r?.ok) { setModeMsg(r?.error || tGlobal('runtime.worktreeCreateFailed')); setRunMode('local'); return; }
       setWorktree({ path: r.path, branch: r.branch });
-      setModeMsg(tGlobal('runtime.worktreeCreated', { branch: r.branch }));
+      setModeMsg(tGlobal('runtime.worktreeCreated', { branch: r.branch || '' }));
     } catch (err) {
-      setModeMsg(tGlobal('runtime.worktreeCreateFailedDetail', { error: err.message }));
+      setModeMsg(tGlobal('runtime.worktreeCreateFailedDetail', { error: errText(err) }));
       setRunMode('local');
     }
   }
@@ -781,12 +877,15 @@ export default function useAgentRun(d) {
     if (compacting) return;
     setCompacting(true);
     try {
+      const chatBridge = window.mjcode?.chat;
       await compactSession({
         messages, model: selectedModel, loading,
         threadId: thread?.id,
         // 桥缺失时兜底为可拒绝函数，由 compactSession 内既有 catch 转 toast（不静默）。
-        chat: window.mjcode?.chat ?? (() => Promise.reject(new Error('bridge-missing'))),
-        replaceMessages: api.replaceMessages,
+        // F-005：桥面返回值是 unknown、env.d.ts 又把桥声明成可选 —— 有桥就把同步返回值包成
+        // Promise（await 语义不变），无桥维持「拒绝」而非静默成功：这条兜底的本意就是不许假装压缩过。
+        chat: chatBridge ? (payload: unknown) => Promise.resolve(chatBridge(payload)) : () => Promise.reject(new Error('bridge-missing')),
+        replaceMessages: (id: unknown, list: unknown[]) => Promise.resolve(api.replaceMessages(id, list)),
         setMessages, setWindowStart, toast, t: tGlobal,
       });
     } finally {
