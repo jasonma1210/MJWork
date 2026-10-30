@@ -13,7 +13,9 @@
 //   ErrorBoundary → G2 红；把 String(task?.prompt) 改回 task.prompt.slice → G1 红。
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC = path.join(ROOT, 'renderer', 'src');
@@ -93,6 +95,59 @@ check('G5 发送路径有同步闩锁，且在 finally 释放（覆盖所有 ret
     '闩锁未在 .finally 释放（提前 return 会永久锁死发送）');
   // 判据必须在 doSend 之前：闩锁包住的调用不得是 doSend 自身之外的旁路
   assert.ok(/doSend\s*\(/.test(src), 'send 未委托给 doSend（闩锁包裹关系断裂）');
+});
+
+// ── G6（审计 #16/#18）TSX/JSX 专项守卫 ──────────────────────────────────────
+// 背景（本次审计最实的一条）：eslint.config.mjs 的渲染层规则只写了
+// `renderer/**/*.{js,jsx}`，实测 `npx eslint renderer/src/components/BrowserPanel.tsx`
+// 输出「File ignored because no matching configuration was supplied」——
+// 即 **122 个渲染层文件里的 TS/TSX 完全不在 ESLint 覆盖内**，react-hooks/rules-of-hooks、
+// react/jsx-key、no-eval 对它一律不生效。仓库没有 typescript-eslint，短期换不了 parser，
+// 故用已装的 typescript 编译器 API 写 scripts/tsx-guard.mjs 兜住高危规则。
+//
+// 本断言必须**双向**验：真仓 0 违规（不能是「一律报红」），且每类违规样本都要 exit 1
+// （不能是「跑了但抓不住」）。两种失败模态分开报，避免把「更严」当成「更安全」。
+check('G6 tsx-guard：真仓 0 违规，且 5 类样本逐条报红、合规样本不误报', () => {
+  const run = (args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'tsx-guard.mjs'), ...args], {
+    cwd: ROOT, encoding: 'utf8', timeout: 120_000,
+  });
+  // ① 真仓：0 违规
+  const real = run([SRC]);
+  assert.equal(real.status, 0, `真仓存在违规：\n${`${real.stdout}${real.stderr}`.trim()}`);
+  assert.match(real.stdout, /0 违规/, '输出未给出 0 违规结论');
+  assert.match(real.stdout, /\d+ 个文件/, '输出未给文件数（空跑也是 0 违规，必须能看到扫了几个）');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-tsxg-'));
+  const write = (name, body) => { const p = path.join(tmp, name); fs.writeFileSync(p, body, 'utf8'); return p; };
+  const cases = [
+    ['hooks 在 if 内', 'bad1.tsx', 'import { useState } from \'react\';\nexport default function A({ on }: { on: boolean }) {\n  if (on) { const [x] = useState(0); void x; }\n  return <div />;\n}\n', /G1/],
+    ['hooks 在 useMemo 回调内', 'bad2.tsx', 'import { useMemo, useState } from \'react\';\nexport default function B() {\n  const v = useMemo(() => { const [y] = useState(1); return y; }, []);\n  return <div>{v}</div>;\n}\n', /G1/],
+    ['map 返回 JSX 缺 key', 'bad3.tsx', 'export default function C({ list }: { list: string[] }) {\n  return <ul>{list.map((x) => <li>{x}</li>)}</ul>;\n}\n', /G2/],
+    ['eval + 未登记的危险注入', 'bad4.tsx', 'export default function D({ html }: { html: string }) {\n  const r = eval(\'1+1\');\n  return <div dangerouslySetInnerHTML={{ __html: html }} data-x={String(r)} />;\n}\n', /G3[\s\S]*G4/],
+    ['动态 key 前缀不存在', 'bad5.tsx', 'import { useI18n } from \'./i18n\';\nexport default function E() {\n  const { t } = useI18n();\n  return <div>{t(`no.such.module_${\'x\'}`)}</div>;\n}\n', /G5/],
+  ];
+  for (const [label, name, body, pat] of cases) {
+    const r = run([write(name, body)]);
+    assert.equal(r.status, 1, `样本「${label}」未报红（exit=${r.status}）`);
+    assert.match(`${r.stdout}${r.stderr}`, pat, `样本「${label}」报红但没有命中对应规则`);
+  }
+  // ③ 合规样本：key、顶层 hook、静态 t() 均不该被报（防「更严 ⇒ 全拒」）
+  const good = write('good.tsx', 'import { useMemo, useState } from \'react\';\n'
+    + 'import { useI18n } from \'./i18n\';\n'
+    + 'export default function F({ list }: { list: string[] }) {\n'
+    + '  const { t } = useI18n();\n'
+    + '  const [n] = useState(0);\n'
+    + '  const d = useMemo(() => n * 2, [n]);\n'
+    + '  return <ul>{list.map((x) => <li key={x}>{x} {t(\'app.save\')}</li>)}<span>{String(d)}</span></ul>;\n'
+    + '}\n');
+  const goodRun = run([good]);
+  assert.equal(goodRun.status, 0, `合规样本被误报：\n${`${goodRun.stdout}${goodRun.stderr}`.trim()}`);
+
+  // ④ 空过防护：无参 / 空目录都必须 exit 2
+  assert.equal(run([]).status, 2, '无参未按用法错误退出（会被当成「检查过了」）');
+  const emptyDir = path.join(tmp, 'empty');
+  fs.mkdirSync(emptyDir);
+  assert.equal(run([emptyDir]).status, 2, '空目录未判错（空跑不能算过）');
 });
 
 console.log(`\nrenderer-guards: ${pass}/${pass + fail} 通过`);
