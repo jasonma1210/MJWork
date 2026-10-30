@@ -298,5 +298,97 @@ await check('registry：stopCurrent 停当前占用者并如实报出是哪一�
   assert.equal(registry.hasRunning(), false);
 });
 
+// ── 9. cuaHandlers 工厂：通道注册 + 窗口 getter 语义（行为测试）──
+// 为什么必须有这条：抽取把「同名模块级变量 mainWindow」换成「注入的 getter」，这是本次
+// 拆分最脆弱的一处——传值也能启动、静态断言也看得过去，但窗口关闭重建后会拿着旧窗口
+// 快照往已销毁的对象投递：表现为「CUA 进度不再显示」，而且**没有任何报错**。
+// 这里用 Module._load 拦截 require，在纯 node 环境里把工厂装配起来（生产由 Electron 提供）。
+await check('createCuaHandlers：通道齐全 + 窗口每次现取 + 销毁后不投递', () => {
+  const ModuleCjs = require('node:module');
+  const origLoad = ModuleCjs._load;
+  const channels = [];
+  const stub = () => {};
+  ModuleCjs._load = function (request, ...rest) {
+    if (request === 'electron') {
+      return {
+        ipcMain: { handle: (ch) => channels.push(ch), on: (ch) => channels.push(ch) },
+        app: { getPath: () => os.tmpdir() },
+        BrowserWindow: class {},
+        shell: { openExternal: stub },
+      };
+    }
+    if (request === './computerUse') {
+      return {
+        isAccessibilityGranted: async () => true,
+        collectAxTree: async () => ({}),
+        performAction: async () => ({}),
+        captureScreen: async () => ({}),
+        ComputerUseLoop: class { run() { return Promise.resolve(); } stop() {} },
+      };
+    }
+    if (request === './cuaProcess/host') {
+      return { initCuaProcess: stub, isAvailable: () => false, createSession: () => null };
+    }
+    if (request === './cuaRecorder') {
+      return { loadRecording: stub, listRecordings: () => [], deleteRecording: stub, ReplayLoop: class { run() { return Promise.resolve(); } } };
+    }
+    return origLoad.call(this, request, ...rest);
+  };
+  const target = require.resolve(path.join(DESKTOP, 'main', 'cuaHandlers.js'));
+  delete require.cache[target];
+  let createCuaHandlers;
+  try {
+    createCuaHandlers = require(target);
+  } finally {
+    ModuleCjs._load = origLoad; // 无论成败都要还原，否则污染同进程后续套件
+  }
+
+  // ① 入参守卫：getMainWindow 必须是函数（传 mainWindow 的值即此类错误）
+  assert.throws(() => createCuaHandlers({}), /getMainWindow 必须是函数/,
+    '工厂必须拒绝「不是函数」的 getMainWindow');
+
+  // ② 装配：通道注册齐全
+  const mkWin = () => {
+    const w = { destroyed: false, sent: [] };
+    w.isDestroyed = () => w.destroyed;
+    w.webContents = { send: (...a) => w.sent.push(a) };
+    return w;
+  };
+  const winA = mkWin();
+  const winB = mkWin();
+  let current = winA;
+  const api = createCuaHandlers({
+    getMainWindow: () => current,
+    guard: { assertStrings: stub },
+    agentRunner: { stricterApproval: (a) => a },
+    approvalSettings: { getUserApprovalMode: () => 'on-request' },
+    audit: stub,
+    requestApproval: stub,
+    resolveSecret: async () => ({}),
+    ApprovalChannel: class { nextId() { return 'test-id'; } wait() { return Promise.resolve('deny'); } disposeAll() {} },
+  });
+  for (const ch of ['cua:status', 'cua:permission-help', 'cua:run', 'cua:stop', 'cua:replay',
+    'cua:recordings:list', 'cua:recordings:delete', 'cua:approval-response']) {
+    assert.ok(channels.includes(ch), '通道未注册: ' + ch);
+  }
+
+  // ③ 核心不变量：换窗口后必须投到新窗口（传值实现在这一步会红）
+  assert.equal(api.sendToWindow('cua:event', { step: 1 }), true);
+  assert.equal(winA.sent.length, 1, '首次应投给当前窗口');
+  current = winB;
+  assert.equal(api.sendToWindow('cua:event', { step: 2 }), true);
+  assert.equal(winB.sent.length, 1, '窗口重建后必须投给新窗口');
+  assert.equal(winA.sent.length, 1, '不得继续投给旧窗口');
+
+  // ④ 窗口已销毁：返回 false 且不抛（调用点据此判断，不该把主进程打断）
+  winB.destroyed = true;
+  assert.equal(api.sendToWindow('cua:event', { step: 3 }), false, '销毁后应返回 false');
+  assert.equal(winB.sent.length, 1, '销毁后不应再投递');
+
+  // ⑤ 清理出口存在（退出路径依赖它，缺了会让挂起的审批卡在内存里）
+  assert.equal(typeof api.disposeCuaApprovals, 'function');
+  assert.doesNotThrow(() => api.disposeCuaApprovals());
+});
+
 console.log(`\ncua-recorder: ${pass}/${total} 通过`);
 process.exit(pass === total ? 0 : 1);

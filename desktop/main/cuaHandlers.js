@@ -457,5 +457,9 @@ ipcMain.handle('cua:recordings:delete', async (_, { recordingId } = {}) => {
   return {
     toolComputerUse,
     disposeCuaApprovals: () => { try { cuaApprovalChannel.disposeAll(); } catch (e) { console.warn('[cuaApproval] 清理异常:', e.message); } },
+    // 仅为可测性导出：cua-recorder 第 9 节用它验证「每次现取窗口」的 getter 语义
+    // （传值 vs getter 的差别在静态断言里看不出来，坏掉也不报错——只是事件投到旧窗口）。
+    // 生产代码只用上面两个出口。
+    sendToWindow,
   };
 };
