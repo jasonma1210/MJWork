@@ -188,54 +188,77 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
   check('预算耗尽标记 budget_exhausted', budgetResult?.budget_exhausted === true);
   check('预算耗尽仍返回部分结论', typeof budgetResult?.result === 'string');
 
-  // ── 测试 N：token 预算闸——压缩救援后必须开启全新预算窗口；最多救援 TOKEN_RESCUE_MAX(3) 次后才熔断 ──
-  // （回归 1：原实现累计口径不清零，救援形同虚设；回归 2：单次救援对文件密集型长任务不够，真机两次 470k 熔断）
+  // ── 测试 N：token 预算闸——窗口预算耗尽后**续期**（不中途停任务）；真终点是累计撞总上限 ──
+  // 2026-10-30 语义变更：旧实现「救援 3 次用尽 + 超预算」即熔断收尾，用户必须手发「继续」。
+  // 实测长途任务必然多次撞窗口级预算（每轮重发上下文），把它当终点等于把任务废在半路。
+  // 现在窗口级耗尽 → budgetDecision 返回 'renew'（重置窗口继续跑），
+  // 只有**累计**消耗撞到 TASK_TOTAL_TOKEN_CAP 才挂起（runOpts.totalTokenCap 可注入）。
+  // 两段都测：只测续期会放过「总上限失效 ⇒ 跑飞任务无限烧」，只测熔断会放过「又变回中途停」。
   reset();
-  // 每轮消耗 70（60 in + 10 out），预算 100，救援上限 3：
-  //   轮1 窗口70；轮2 140→救援1清零；轮3 70；轮4 140→救援2；轮5 70；轮6 140→救援3；
-  //   轮7 70；轮8 140→救援已用满 3 次 → 熔断收尾。
-  // 注意：救援 2/3 的强制压缩会真实调用摘要 chat（convo body > keepTail=6 时），
-  // 摘要请求同样消耗脚本条目但不计入轮次 usage——因此脚本用完全相同的条目，
-  // 轮次断言按「是否带 tools」过滤（摘要请求无 tools），与摘要触发次数解耦。
-  chatScript = Array.from({ length: 20 }, (_, i) => ({
+  // 每轮消耗 70（60 in + 10 out），预算 100：轮1 70 → 轮2 140 触发救援 … 每 2 轮续期一次。
+  // 8 条带工具的脚本 + 第 9 条无工具收尾；总上限远大于实际消耗（不熔断）。
+  chatScript = Array.from({ length: 8 }, (_, i) => ({
     content: `干活（第 ${i + 1} 条脚本）`,
     tool_calls: [{ id: `b${i + 1}`, function: { name: 'git_status', arguments: '{}' } }],
     usage: { prompt_tokens: 60, completion_tokens: 10 },
-  }));
-  let budgetDone = null;
-  let suspendedInfo = null;
-  const budgetReports = [];
+  })).concat([{ content: '收尾：任务做完了', usage: { prompt_tokens: 60, completion_tokens: 10 } }]);
+  let renewDone = null;
+  let renewSuspended = null;
+  const renewReports = [];
   await runAgent({
     messages: [{ role: 'user', content: '长任务' }],
     model,
     cwd: '/tmp/project',
     tokenBudget: 100,
+    totalTokenCap: 1_000_000,
     onMessage: () => {},
-    // Phase 3-1/3-4：挂起与逐轮用量钩子
-    onSuspend: (info) => { suspendedInfo = { ...info }; return true; },
-    onBudget: (s) => budgetReports.push(s),
-    onDone: (text, usage, aborted) => { budgetDone = { text, usage }; },
+    onSuspend: (info) => { renewSuspended = { ...info }; return true; },
+    onBudget: (s) => renewReports.push(s),
+    onDone: (text, usage) => { renewDone = { text, usage }; },
   });
-  const roundCalls = chatCalls.filter((c) => Array.isArray(c.tools) && c.tools.length > 0);
-  check('多次压缩救援全部生效（跑满 8 轮而非第 2 次触闸即收尾）', roundCalls.length === 8, `模型轮次 ${roundCalls.length} 次（含摘要调用共 ${chatCalls.length} 次）`);
-  check('预算收尾文案含「token 预算已用尽」与救援次数说明', budgetDone?.text?.includes('token 预算已用尽') === true
-    && budgetDone?.text?.includes('防失控上限') === true
-    && budgetDone?.text?.includes('自动压缩续跑 3 次') === true);
-  check('usage 全程累计如实上报（8×70=560，摘要调用不计入）', budgetDone?.usage?.prompt_tokens === 480 && budgetDone?.usage?.completion_tokens === 80,
-    `in=${budgetDone?.usage?.prompt_tokens} out=${budgetDone?.usage?.completion_tokens}`);
+  const renewRoundCalls = chatCalls.filter((c) => Array.isArray(c.tools) && c.tools.length > 0);
+  // 9 次 = 8 轮工具调用 + 1 次收尾请求。收尾请求同样带 tools 参数（请求级注入），
+  // 所以不能像旧版那样靠「有无 tools」区分摘要调用——旧版能区分是因为触发过强制压缩，
+  // 而续期路径（'renew'）刻意**不压缩**（重置窗口即可），本场景不会产生摘要请求。
+  check('窗口预算耗尽后继续跑满 8 轮工具调用 + 收尾（不再中途熔断）', renewRoundCalls.length === 9,
+    `模型请求 ${renewRoundCalls.length} 次（含收尾；摘要 0 次）`);
+  check('续期路径不触发挂起（onSuspend 未被调用）', renewSuspended === null, JSON.stringify(renewSuspended));
+  check('未撞总上限时收尾文案正常结束、不含预算告警',
+    renewDone?.text === '收尾：任务做完了' && !String(renewDone?.text).includes('预算'));
+  check('usage 全程累计如实上报（9×70=630，摘要调用不计入）',
+    renewDone?.usage?.prompt_tokens === 540 && renewDone?.usage?.completion_tokens === 90,
+    `in=${renewDone?.usage?.prompt_tokens} out=${renewDone?.usage?.completion_tokens}`);
+  check('onBudget 逐轮上报（≥8 条运行中 + 1 条收尾定格）',
+    renewReports.filter((r) => r.running === true).length >= 8
+    && renewReports[renewReports.length - 1]?.running === false,
+    `共 ${renewReports.length} 条`);
 
-  // ── Phase 3-1：熔断挂起钩子——onSuspend 触发 + 收尾文案标注断点已保存 ──
-  check('熔断时触发 onSuspend（kind=tokens，带用量与轮数）', suspendedInfo?.kind === 'tokens'
-    && suspendedInfo?.roundsUsed === 8 && suspendedInfo?.usage?.prompt_tokens === 480,
-    `kind=${suspendedInfo?.kind} rounds=${suspendedInfo?.roundsUsed}`);
-  check('收尾文案标注「断点已保存」', budgetDone?.text?.includes('断点已保存') === true);
-
-  // ── Phase 3-4：逐轮用量上报——每轮一条 + 收尾 running=false 定格 ──
-  check('onBudget 逐轮上报（≥8 条运行中 + 1 条收尾）',
-    budgetReports.filter((r) => r.running === true).length >= 8
-    && budgetReports[budgetReports.length - 1]?.running === false
-    && budgetReports[budgetReports.length - 1]?.promptTokens === 480,
-    `共 ${budgetReports.length} 条`);
+  // ── 测试 N2：累计撞总上限 → 真挂起（防失控的最后一道线）──
+  reset();
+  chatScript = Array.from({ length: 20 }, (_, i) => ({
+    content: `干活（第 ${i + 1} 条脚本）`,
+    tool_calls: [{ id: `c${i + 1}`, function: { name: 'git_status', arguments: '{}' } }],
+    usage: { prompt_tokens: 60, completion_tokens: 10 },
+  }));
+  let capDone = null;
+  let capSuspended = null;
+  await runAgent({
+    messages: [{ role: 'user', content: '跑飞任务' }],
+    model,
+    cwd: '/tmp/project',
+    tokenBudget: 100,
+    totalTokenCap: 200,
+    onMessage: () => {},
+    onSuspend: (info) => { capSuspended = { ...info }; return true; },
+    onDone: (text) => { capDone = { text }; },
+  });
+  check('累计消耗撞总上限时挂起（kind=tokens，带用量与轮数）',
+    capSuspended?.kind === 'tokens' && capSuspended?.roundsUsed >= 3 && capSuspended?.usage?.prompt_tokens >= 180,
+    `kind=${capSuspended?.kind} rounds=${capSuspended?.roundsUsed} in=${capSuspended?.usage?.prompt_tokens}`);
+  check('总上限收尾文案说「累计消耗已达防失控总上限」并标注断点',
+    String(capDone?.text).includes('防失控总上限') === true
+    && String(capDone?.text).includes('断点已保存') === true,
+    String(capDone?.text).slice(-160));
 
   // ── 测试 O：断点恢复注入——resumeContext 进 system 消息（不进持久化历史）──
   reset();

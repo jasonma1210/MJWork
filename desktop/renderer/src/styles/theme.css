@@ -378,6 +378,18 @@ h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); font-weight: 600; }
   color: var(--theme-text);
   overflow-wrap: anywhere;
 }
+/* 次要正文：思考过程 / 工具输出等「过程性内容」，必须与正式答复在视觉上分层
+ * （用户需求 2026-10-30）：字号降一档 15 → 13px，颜色由 --theme-text 降到 --theme-text-secondary（浅灰）。
+ * 标题同样整体降档，否则思考里出现 `## xxx` 时会比答复标题还大，分层立刻失效。 */
+.msg-prose-quiet {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--theme-text-secondary);
+}
+.msg-prose-quiet h1 { font-size: 16px; }
+.msg-prose-quiet h2 { font-size: 15px; }
+.msg-prose-quiet h3 { font-size: 14px; }
+.msg-prose-quiet h1, .msg-prose-quiet h2, .msg-prose-quiet h3 { margin: 10px 0 4px; }
 .msg-prose > :first-child { margin-top: 0; }
 .msg-prose > :last-child { margin-bottom: 0; }
 .msg-prose p { margin: 6px 0; }

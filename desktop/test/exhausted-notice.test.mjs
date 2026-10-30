@@ -43,7 +43,8 @@ const usage = { prompt_tokens: 48000, completion_tokens: 2097 }; // 用户实测
 // ③ 真的是预算耗尽（非压不动）+ 无人值守
 {
   const t = buildExhaustedNotice({ budgetKind: 'tokens', contextStuck: false, unattended: true, usage, tokenRescues: 2 });
-  check('预算耗尽分支仍明说「token 预算已用尽」', /token 预算已用尽/.test(t));
+  // 2026-10-30：窗口级预算耗尽改为续期（不再挂起），这条分支只剩「累计撞总上限」一种来源。
+  check('总上限分支明说「累计消耗已达防失控总上限」', /累计消耗已达防失控总上限/.test(t));
   check('预算耗尽 + 无人值守：不出现「发送继续」', !/发送「继续」/.test(t));
   check('预算耗尽 + 无人值守：给出缩小范围/调高预算', /缩小任务范围/.test(t));
 }
@@ -89,8 +90,8 @@ const usage = { prompt_tokens: 48000, completion_tokens: 2097 }; // 用户实测
     (many.match(/^- t\d+/gm) || []).length === 20, `${(many.match(/^- t\d+/gm) || []).length} 条`);
 }
 {
-  const t = buildExhaustedNotice({ budgetKind: 'tokens', contextStuck: true, unattended: true, usage, autoRestarts: 2 });
-  check('续跑额度用尽时如实说「已自动续跑 2 次仍不够」（而不是说压不动）', /已自动换新窗口续跑 2 次/.test(t));
+  const t = buildExhaustedNotice({ budgetKind: 'tokens', contextStuck: true, unattended: true, usage, autoRestarts: 4 });
+  check('续跑额度用尽时如实说「已自动续跑 4 次仍不够」（而不是说压不动）', /已自动换新窗口续跑 4 次/.test(t));
 }
 
 console.log(`\nexhausted-notice: ${pass}/${pass + fail} 通过`);
@@ -116,9 +117,9 @@ if (fail) process.exitCode = 1;
   });
   const restarts = traces.filter((e) => e.type === 'auto_restart');
   check('窗口压不动时自动续跑，且有次数上限（不会无限重启）',
-    restarts.length === 2, `restarts=${restarts.length}`);
+    restarts.length === 4, `restarts=${restarts.length}`);
   check('每次续跑都留 trace（可观测，便于事后判断"它偷偷重启了"）',
     restarts.every((e) => typeof e.n === 'number' && e.n >= 1));
   check('续跑额度用尽后如实收尾，不提「发送继续」（无人值守）',
-    /自动换新窗口续跑 2 次/.test(doneText) && !/发送「继续」/.test(doneText), doneText.slice(0, 80));
+    /自动换新窗口续跑 4 次/.test(doneText) && !/发送「继续」/.test(doneText), doneText.slice(0, 80));
 }

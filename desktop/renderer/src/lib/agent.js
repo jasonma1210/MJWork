@@ -18,16 +18,18 @@ const t = (key, params) => (typeof globalThis.__MJ_T__ === 'function' ? globalTh
 
 export { BASE_TOOLS, BUILTIN_SKILL_IDS, decomposeTask, looksLargeTask, parsePlanResponse };
 
-// P0-5：前台会话默认 token 预算（成本闸）。此前渲染层从不传 tokenBudget（引擎默认 0=不限），
-// 前台消耗仅靠 120 轮硬顶兜底，单会话成本不可控。预算超限时引擎会先自动压缩上下文续跑
-// （最多 3 次救援，见 agent-core runAgent 的 P1-I 预算闸），仍超限才优雅收尾，不会硬切断对话。
-// 真机复盘：200k 对文件密集型审查任务太紧（每轮重复读取上下文，窗口很快打满，
-// 用户两次看到 470k 熔断文案）→ 放宽到 600k；配合 3 次救援，单任务累计上限 ≈ 2.4M。
+// P0-5：前台会话默认 token 预算（成本节流阀，**不是任务终点**）。
+// 2026-10-30 语义变更（与 agent-core/budgetDecision.js 的 'renew' 配套）：
+// 窗口级预算耗尽不再挂起让用户「发送继续」，而是自动续期继续跑；任务真正的终点只剩
+// 引擎的累计总上限（TASK_TOTAL_TOKEN_CAP = 20M）。因此这里可以放心把档位放大——
+// 它的作用变成「每跑多久回头压一次上下文 / 记一次成本」，而不是「跑多少就停」。
+// 真机复盘：600k 对文件密集型长任务太紧（用户跑到 198 万 tokens 被硬停、期间已续跑 3 次）。
+// options.tokenBudget 显式传值（含 0=关闭）仍优先。
 // 分层预算（复盘文档 P1-1 采纳）：looksLargeTask 命中的大任务（审查/批量/重构类，零成本
 // 本地启发式）自动升档到 LARGE_TASK_TOKEN_BUDGET——大任务拆子块的滚动压缩属 Phase 3，
-// 当前以「更大单窗口 + 多次救援」过渡；调用方显式传入 tokenBudget（含 0=关闭）始终优先。
-export const FRONTEND_TOKEN_BUDGET = 600000;
-export const LARGE_TASK_TOKEN_BUDGET = 1000000;
+// 当前以「更大单窗口 + 多次续期」过渡。
+export const FRONTEND_TOKEN_BUDGET = 2000000;
+export const LARGE_TASK_TOKEN_BUDGET = 4000000;
 
 // 从 options.messages 取最后一条 user 消息文本（分层预算的档位判定输入）
 function lastUserText(options) {

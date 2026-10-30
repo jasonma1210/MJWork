@@ -15,6 +15,11 @@ import { narrowToolsByMcpAllow, mcpAllowMatches } from '../shared/mcpAllow.mjs';
 import { filterUnavailableTools } from './toolAvailability.js';
 // P1-8 / 讨论方案：工具三档分层 + 窗口自适应裁剪（纯常量 + 纯函数）
 import { selectToolsForWindow, buildToolCatalogText, toolsOfGroups, groupInfo } from './toolTiers.js';
+// 预算/上下文闸的阈值与判定（纯函数）。2026-10-30 从本文件外置：判据搬家既能改行为
+// （预算窗口耗尽改为续期 'renew'），又不必给自己开 code 行棘轮基线。外部既有调用方
+// 仍然可以从本文件拿到这些符号——下面原样 re-export。
+import { budgetDecision, TOKEN_COMPACTION_TRIGGER, TOKEN_COMPACT_MIN_RATIO, TASK_TOTAL_TOKEN_CAP, DEFAULT_CONTEXT_WINDOW_FALLBACK } from './budgetDecision.js';
+export { budgetDecision, TOKEN_COMPACTION_TRIGGER, TOKEN_COMPACT_MIN_RATIO, TASK_TOTAL_TOKEN_CAP, DEFAULT_CONTEXT_WINDOW_FALLBACK };
 
 // ── node:fs 惰性获取（仅 sessionDir 落盘时需要）──
 // 渲染层经 Vite 打包：这里不写静态 import，用 process.getBuiltinModule 同步获取，
@@ -1058,25 +1063,12 @@ const TOKEN_RESCUE_MAX = 3;
 // 上下文压不动时「自动换新窗口续跑」的次数上限。
 // 为什么需要：压缩与硬截断都无处下手时，旧实现直接挂起并让用户「发送继续」——
 // 定时任务没人能发，任务就报废了。改成自动用台账交接、换新窗口继续跑。
-// 上限 2 次：每次重启都要重新读一遍任务上下文，再多就是在为一个跑不完的任务烧钱。
-const MAX_AUTO_RESTARTS = 2;
-// 预判式触发比例（复盘文档 P1-2 采纳）：上下文达模型窗口 70% 即压缩。
-// 2026-10-17 语义修正：这个比例**只作用于上下文体积**，不再作用于「累计花费」——
-// 拿花费判"上下文过长"会导致小上下文被强制压缩（详见 budgetDecision 注释）。
-const TOKEN_COMPACTION_TRIGGER = 0.7;
+// 2026-10-30 由 2 提到 4：用户实测长途审查任务连续撞两次上限后仍被拦在半路。
+const MAX_AUTO_RESTARTS = 4;
+// 预算闸的阈值与判定已外置到 ./budgetDecision.js（含 TASK_TOTAL_TOKEN_CAP / 三个比例常量），
+// 原因见该文件头：index.js 已到 code 行棘轮基线，判据搬家既能改行为又不给自己开基线。
 
-// 闸门判定（纯函数，单测直调）。
-//
-// 2026-10-17 事故与修正：用户跑「取 10 条最新新闻」，5 轮累计 143k（每轮重发 ~27k 上下文），
-// 旧逻辑拿累计花费判「上下文过长」，把 27k 上下文 force 压成 376 tokens 摘要 → 新闻原文被抹掉
-// → 模型只能重搜 → 再撞闸再压，表现为「后台一直在压缩、还没有任何输出」。
-//
-// 修正原则（不删救援机制，只改判据）：
-//   · 上下文真的接近窗口上限 → 压缩（这是压缩唯一能解决的问题）；
-//   · 预算压力 + 上下文够大（≥ 窗口 35%，压缩确实能省下可观重发成本）→ 压缩；
-//   · 预算压力 + 上下文很小 → **只开新预算窗口、不压缩**（小上下文压缩纯亏）；
-//   · 窗口用尽且救援用尽 → 暂停（断点续跑）。
-export const TOKEN_COMPACT_MIN_RATIO = 0.35;
+// 闸门判定的阈值与语义见 ./budgetDecision.js（2026-10-30 外置，含 'renew' 续期语义）。
 
 // ── 2026-10-21 P0：上下文策略参数化（DS Bot 式「两套策略可开关、可配置」）──
 // 此前阈值全是散落常量（0.7 / 0.8 / 0.25 / 0.15 / 0.45 / keepRecent 3），
@@ -1113,16 +1105,7 @@ export function resolveCompactPolicy(input) {
   };
 }
 
-// ── P0-1⑤：上下文窗口兜底单点（此前 :724 / :820 / :1667 各写一个数，彼此不一致）──
-//
-// 为什么是 4096 而不是 128000（H-1 事实修正单）：
-//   · Ollama 的上下文窗口**不是固定值**——`OLLAMA_CONTEXT_LENGTH` 代码默认 0 = 未指定，
-//     运行时按显存自适应 4k/32k/256k（一手：ollama/envconfig/config.go）。禁止在此写死任何档位；
-//     真实值必须由宿主探测后经 model.model.context_window 下发。
-//   · 两侧错配的代价极不对称：**高估 = 击穿**（prompt 超窗 → provider 400，且压缩阈值永不触发，
-//     上下文一路涨到服务端拒绝）；**低估 = 浪费**（早压掉细节，可恢复）。
-//     因此「宿主没下发」时只能取最小安全档 4096，绝不能取 128000。
-export const DEFAULT_CONTEXT_WINDOW_FALLBACK = 4096;
+// ── P0-1⑤：上下文窗口兜底单点（4096 的理由见 ./budgetDecision.js 的同名常量注释）──
 
 // ── P0-2：用 provider 真实回传的 prompt_tokens 反推窗口 ──
 // 语义（单向可信下界）：prompt_tokens 被服务端**接受**过 ⇒ 真实窗口 ≥ 该值。
@@ -1138,27 +1121,6 @@ export function effectiveWindowOf(declared, lastPromptTokens) {
   if (seen <= base * WINDOW_OVERSHOOT_RATIO) return base;
   const inferred = Math.ceil(seen / WINDOW_BACKOFF_DIVISOR);
   return Math.min(Math.max(base, inferred), base * 4);
-}
-
-export function budgetDecision({
-  // ⚠️ 窗口校准**只能在这里的上游做一次**（runAgent 已用 effectiveWindowOf 反推并按 4× 封顶）。
-  // 本函数内绝不能再对 ctxWindow 二次反推：已抬高的窗口配同一个 lastPromptTokens 会再算一遍，
-  // 4× 封顶被绕过（实测 declared=32768/seen=200000 → 上游 131072 → 这里 285715 ≈ 8.7×），
-  // 压力闸从此永久失敏，最终以 400 硬失败代替挂起。
-  // lastPromptTokens 仍接收但**不参与判定**，仅为兼容既有调用方与测试签名。
-  ctxEst = 0, ctxWindow = DEFAULT_CONTEXT_WINDOW_FALLBACK, lastPromptTokens = null,
-  spent = 0, budget = 0, rescues = 0, rescueMax = 3,
-} = {}) {
-  void lastPromptTokens; // 见上：保留参数只为签名兼容，禁止用于二次反推
-  const win = ctxWindow;
-  const ctxHot = win > 0 && ctxEst > win * TOKEN_COMPACTION_TRIGGER;
-  if (ctxHot) return rescues < rescueMax ? 'compact' : 'suspend-context';
-  if (budget > 0 && spent > budget * TOKEN_COMPACTION_TRIGGER) {
-    if (rescues >= rescueMax) return spent > budget ? 'suspend-tokens' : 'ok';
-    // 上下文够大才值得压缩（压缩省下的是「每轮重发量」）
-    return ctxEst >= win * TOKEN_COMPACT_MIN_RATIO ? 'compact' : 'new-window';
-  }
-  return 'ok';
 }
 
 // 熔断/预算耗尽的收尾文案（纯函数，可单测）。
@@ -1196,9 +1158,10 @@ export function buildExhaustedNotice({
     return `${head}\n\n${tail}`.trim();
   }
   if (budgetKind === 'tokens') {
-    return `${head}\n\n（单任务 token 预算已用尽（含每轮重复读取上下文的消耗，累计 ${total} tokens，`
-      + `期间已自动压缩续跑 ${tokenRescues} 次；这是防失控上限，不是上下文放不下），任务未完全完成。`
-      + `${unattended ? '下次运行请缩小任务范围或调高预算。' : '发送「继续」让我接着执行。'}）`.trim();
+    // 2026-10-30：窗口级预算耗尽已改为「续期」（budgetDecision 的 'renew'），这条文案现在只对应
+    // **累计消耗撞到总上限**（TASK_TOTAL_TOKEN_CAP）这一种真实终点，不再说「预算 600k 用完了」。
+    const tail = unattended ? '下次运行请缩小任务范围，或把这个任务拆成几个小任务。' : '发送「继续」我会带着已有成果接着做。';
+    return `${head}\n\n（单任务累计消耗已达防失控总上限（累计 ${total} tokens，期间已自动续期 ${tokenRescues} 次；这是防止跑飞任务烧穿额度的最后一道线，不是上下文放不下），任务未完全完成。${tail}）`.trim();
   }
   return `${head}\n\n（单任务执行轮次预算已用尽，任务未完全完成。`
     + `${unattended ? '下次运行请缩小任务范围或调高轮次上限。' : '发送「继续」让我接着执行。'}）`.trim();
@@ -2560,7 +2523,7 @@ export async function runAgent({
   rolePreset,
   sandboxPolicy, memories = [], chatRetryBaseMs = 1000,
   toolHandlers, sessionDir, planMode = false,
-  maxTotalRounds = AGENT_HARD_ROUND_CAP, tokenBudget = 0,
+  maxTotalRounds = AGENT_HARD_ROUND_CAP, tokenBudget = 0, totalTokenCap = TASK_TOTAL_TOKEN_CAP,
   // 无人值守通道（定时任务/Worker）：收尾文案里不能出现「发送继续」——那边没有人能发。
   unattended = false,
   resumeContext = '',
@@ -3554,6 +3517,7 @@ export async function runAgent({
     let gate = budgetDecision({
       ctxEst, ctxWindow, spent: tokenWindowSpent, budget: tokenBudget,
       rescues: tokenRescues, rescueMax: TOKEN_RESCUE_MAX,
+      totalSpent: Number(usage.prompt_tokens) + Number(usage.completion_tokens), totalCap: totalTokenCap,
     });
     // 抬高后的窗口下 0.7 阈值恰好等于 lastPromptTokens（取整可能差不到 1 token），
     // 这里显式补一次「已确认低估 → 立刻压」的判定；只做一次，避免每轮都压。
@@ -3624,16 +3588,24 @@ export async function runAgent({
       }
       break;
     }
-    if (gate === 'new-window') {
+    if (gate === 'new-window' || gate === 'renew') {
       // 预算压力但上下文很小：只换窗口，**不压缩**——否则会把模型还需要的内容压成摘要，
       // 逼它重新取一遍（事故现场：27k → 376 tokens，新闻正文全丢）。
+      // 'renew'（2026-10-30）：预算窗口救援用尽后**继续续期**，与 new-window 语义相同
+      // （重置窗口计数、不动上下文），差别只在日志措辞——它代表「已续过 rescueMax 次，这是又一期」。
       // 不 continue：本轮结果照常消费，避免白白丢掉一次模型响应。
       tokenRescues += 1;
-      console.warn(`[agent] 预算窗口用至 ${Math.round((tokenWindowSpent / tokenBudget) * 100)}%（${tokenWindowSpent}/${tokenBudget}），但上下文仅 ${ctxEst} tokens（< 窗口 ${ctxWindow} 的 ${TOKEN_COMPACT_MIN_RATIO * 100}%）——只开新窗口、不压缩（第 ${tokenRescues}/${TOKEN_RESCUE_MAX} 次）`);
+      const tot = Number(usage.prompt_tokens) + Number(usage.completion_tokens);
+      if (gate === 'renew') trace({ type: 'budget_renew', n: tokenRescues, roundsUsed, totalSpent: tot });
+      console.warn(gate === 'renew'
+        ? `[agent] 预算窗口用尽（${tokenWindowSpent}/${tokenBudget}，已续 ${tokenRescues - 1} 次）→ 继续续期；累计 ${tot} tokens，总上限 ${totalTokenCap}`
+        : `[agent] 预算窗口用至 ${Math.round((tokenWindowSpent / tokenBudget) * 100)}%（${tokenWindowSpent}/${tokenBudget}），但上下文仅 ${ctxEst} tokens（< 窗口 ${ctxWindow} 的 ${TOKEN_COMPACT_MIN_RATIO * 100}%）——只开新窗口、不压缩（第 ${tokenRescues}/${TOKEN_RESCUE_MAX} 次）`);
       tokenWindowSpent = 0;
     } else if (gate === 'suspend-context' || gate === 'suspend-tokens') {
-      // 压缩救援用尽且上下文仍过大（continue 必然被端点拒），或累计花费用满预算：
-      // 都走「暂停而非失败」——挂起钩子落断点，收尾文案引导「继续」走断点恢复。
+      // 两个来源：① 上下文已到窗口且压不动（continue 必然被端点拒）；
+      // ② 2026-10-30 起，'suspend-tokens' 只剩「累计消耗撞到 TASK_TOTAL_TOKEN_CAP」一种情况
+      // （窗口级预算耗尽已改为 'renew' 续期，不再停任务）。
+      // 两者都走「暂停而非失败」——挂起钩子落断点，收尾文案引导「继续」走断点恢复。
       commitBudget({ exhausted: true });
       try {
         suspendNoticed = await noticeSuspend({

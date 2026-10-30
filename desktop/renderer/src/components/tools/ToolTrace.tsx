@@ -300,18 +300,18 @@ function toolIcon(name: string, failed: boolean) {
   // 2026-10-30：图标由 accent 改为 text2——轨迹行整体降为灰色次要信息（用户需求 1），
   // 只有失败态保留红色（错误必须在扫读时就能看见，不藏在展开后）。
   const cls = failed ? 'text-danger shrink-0' : 'text-text2 shrink-0';
-  if (name === 'shell' || name === 'code_exec' || name === 'sandbox_code_run' || name.startsWith('mcp__')) return <IconTerminal size={13} className={cls} />;
+  if (name === 'shell' || name === 'code_exec' || name === 'sandbox_code_run' || name.startsWith('mcp__')) return <IconTerminal size={12} className={cls} />;
   if (name === 'read_file' || name === 'write_file' || name === 'list_dir' || name === 'sqlite'
     || name === 'doc_create' || name === 'xlsx_create' || name === 'pptx_create' || name === 'pdf_generate'
-    || name === 'latex_compile' || name === 'artifact_index' || name === 'artifact_get_section') return <IconFile size={13} className={cls} />;
+    || name === 'latex_compile' || name === 'artifact_index' || name === 'artifact_get_section') return <IconFile size={12} className={cls} />;
   if (name === 'edit_file' || name === 'apply_patch'
-    || name === 'artifact_patch_section' || name === 'artifact_get_diff') return <IconFileDiff size={13} className={cls} />;
-  if (name === 'grep' || name === 'glob' || name === 'web_search' || name === 'deep_research') return <IconSearch size={13} className={cls} />;
-  if (name === 'web_fetch' || name === 'http_request' || name.startsWith('browser_') || name.startsWith('chrome_')) return <IconGlobe size={13} className={cls} />;
-  if (name.startsWith('git_')) return <IconEdit size={13} className={cls} />;
-  if (name === 'spawn_subagent') return <IconBot size={13} className={cls} />;
-  if (name === 'todo_write') return <IconCheck size={13} className={cls} />;
-  return <IconPlug size={13} className={cls} />;
+    || name === 'artifact_patch_section' || name === 'artifact_get_diff') return <IconFileDiff size={12} className={cls} />;
+  if (name === 'grep' || name === 'glob' || name === 'web_search' || name === 'deep_research') return <IconSearch size={12} className={cls} />;
+  if (name === 'web_fetch' || name === 'http_request' || name.startsWith('browser_') || name.startsWith('chrome_')) return <IconGlobe size={12} className={cls} />;
+  if (name.startsWith('git_')) return <IconEdit size={12} className={cls} />;
+  if (name === 'spawn_subagent') return <IconBot size={12} className={cls} />;
+  if (name === 'todo_write') return <IconCheck size={12} className={cls} />;
+  return <IconPlug size={12} className={cls} />;
 }
 
 // ── 类型特定详情区（展开后显示）──
@@ -530,16 +530,15 @@ export default function ToolTrace({ name, args, result }: ToolTraceProps) {
   return (
     // 2026-10-30（用户需求 1）：由「带边框卡片」改为「一行灰字」。理由：一轮任务动辄十几次工具调用，
     // 每次一个卡片会把正文切成碎片；灰字行只占一行、可扫读，详情点击后展开在圆角面板里。
-    <div className="text-xs">
+    // 2026-10-30（用户需求 2）：整块字号再降一档到 12px（text-code），与正式答复 15px 拉开层级——
+    // 命令行/工具输出属于「过程性内容」，用户只看进不进度，不需要阅读字号。
+    <div className="text-code">
       <button
         onClick={() => hasDetail && setOpen((v) => !v)}
         disabled={!hasDetail}
         className={`w-full flex items-center gap-2 py-1 text-left text-text2 ${hasDetail ? 'hover:text-text cursor-pointer' : 'cursor-default'}`}
         title={hasDetail ? (open ? t('toolTrace.collapseDetail') : t('toolTrace.expandDetail')) : undefined}
       >
-        {hasDetail
-          ? (open ? <IconChevronDown size={12} className="shrink-0" /> : <IconChevronRight size={12} className="shrink-0" />)
-          : <span className="w-3 shrink-0" />}
         {toolIcon(name, failed)}
         <span className={failed ? 'text-danger shrink-0' : 'shrink-0'}>{toolNameCN(name)}</span>
         <span className="min-w-0 truncate flex-1"><ParamSummary name={name} a={a} /></span>
@@ -551,6 +550,10 @@ export default function ToolTrace({ name, args, result }: ToolTraceProps) {
         {!failed && exitCode == null && (running ? (
           <span className="shrink-0 text-caption text-text2 inline-flex items-center gap-1"><IconSpinner size={10} className="animate-spin" />{t('toolTrace.running')}</span>
         ) : res ? <span className="shrink-0 text-caption text-text2/70">{t('toolTrace.done')}</span> : null)}
+        {/* chevron 收在行尾（与思考折叠行同构）：行首位置留给类型图标，扫读时左对齐的是图标而不是箭头 */}
+        {hasDetail && (open
+          ? <IconChevronDown size={11} className="shrink-0 opacity-70" />
+          : <IconChevronRight size={11} className="shrink-0 opacity-70" />)}
       </button>
       {failed && !!res?.error && (
         <OutputBlock className="ml-4 mb-2 text-code font-mono text-danger bg-danger-bg border border-danger p-2 rounded whitespace-pre-wrap" text={String(res.error)} />
@@ -604,19 +607,20 @@ export function ToolTraceGroup({ calls, toolResults, label, defaultOpen = false 
   return (
     <div className="mb-2">
       <div className="flex items-center gap-2 mb-1">
-        {label && <span className="text-xs text-text2 shrink-0">{label}</span>}
+        {label && <span className="text-code text-text2 shrink-0">{label}</span>}
         {!open ? (
           <button onClick={() => setOpen(true)}
-            className="flex items-center gap-2 text-xs text-text2 hover:text-text">
-            <IconChevronRight size={12} className="shrink-0" />
+            className="flex items-center gap-2 text-code text-text2 hover:text-text">
             <IconWrench size={11} className="shrink-0" />
             {t('toolTrace.callCount', { n: items.length })}{failedCount > 0 ? <span className="text-danger">{t('toolTrace.failedCount', { n: failedCount })}</span> : null}
             <span className="text-text2/70">{t('toolTrace.clickExpand')}</span>
+            <IconChevronRight size={11} className="shrink-0 opacity-70" />
           </button>
         ) : (
-          <button onClick={() => setOpen(false)} className="flex items-center gap-2 text-caption text-text2 hover:text-text">
-            <IconChevronDown size={12} className="shrink-0" />
+          <button onClick={() => setOpen(false)} className="flex items-center gap-2 text-code text-text2 hover:text-text">
+            <IconWrench size={11} className="shrink-0" />
             {t('toolTrace.collapseTrace')}
+            <IconChevronDown size={11} className="shrink-0 opacity-70" />
           </button>
         )}
       </div>

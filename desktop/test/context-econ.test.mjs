@@ -330,8 +330,17 @@ function buildLongConvo(rounds = 30) {
     budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, rescues: 0 }) === 'compact');
   check('压缩救援用尽且上下文仍过大 → 暂停（不再无限压缩）',
     budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, rescues: 3 }) === 'suspend-context');
-  check('救援用尽且已超预算 → 暂停（断点续跑）',
-    budgetDecision({ ctxEst: 27071, ctxWindow: 128000, spent: 210000, budget: 200000, rescues: 3 }) === 'suspend-tokens');
+  // 2026-10-30 语义变更：窗口级预算耗尽不再挂起（'suspend-tokens'），改为续期（'renew'）。
+  // 理由：长途任务必然多次撞窗口级预算（每轮重发上下文），把它当终点等于把任务废在半路；
+  // 真正的终点只剩「累计消耗撞到 TASK_TOTAL_TOKEN_CAP」。两条分支都要锁，缺一条就会
+  // 让「续期」悄悄退化成「无限跑」或「又变回挂起」。
+  check('救援用尽且窗口预算耗尽 → 续期（不再中途停任务）',
+    budgetDecision({ ctxEst: 27071, ctxWindow: 128000, spent: 210000, budget: 200000, rescues: 3 }) === 'renew');
+  check('救援用尽 + 窗口预算耗尽 + 累计撞总上限 → 才真停',
+    budgetDecision({ ctxEst: 27071, ctxWindow: 128000, spent: 210000, budget: 200000, rescues: 3, totalSpent: 20_000_000, totalCap: 20_000_000 }) === 'suspend-tokens',
+    '总上限没生效 → 跑飞的任务能无限续期，烧穿额度');
+  check('未传总上限（旧调用方）时按不设限处理，只续期不挂起',
+    budgetDecision({ ctxEst: 27071, ctxWindow: 128000, spent: 210000, budget: 200000, rescues: 3, totalSpent: 9e9 }) === 'renew');
   check('预算为 0 视为不设限，但体积闸仍生效',
     budgetDecision({ ctxEst: 27071, ctxWindow: 128000, spent: 9e9, budget: 0, rescues: 0 }) === 'ok'
     && budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 0, budget: 0, rescues: 0 }) === 'compact');

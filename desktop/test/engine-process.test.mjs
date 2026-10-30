@@ -117,7 +117,9 @@ await check('kill 引擎进程：reject 带 engineExited 标记', async () => {
   host.initEngineHost({ spawnChild: spawnFork });
 });
 
-// ── 4. onSuspend cbReq 往返：tokenBudget 触闸 3 次救援后熔断，主进程收到断点信息 ──
+// ── 4. onSuspend cbReq 往返：累计 token 撞总上限后挂起，主进程收到断点信息 ──
+// 2026-10-30 语义变更：窗口级预算耗尽改为'续期'（不再挂起），所以这里必须注入 totalTokenCap
+// 才能走到挂起分支——每轮烧 1000、预算 100 只决定「多久续期一次」，不再决定「什么时候停」。
 await check('onSuspend：cbReq 送达主进程且收尾文案含断点提示', async () => {
   let chatCalls = 0;
   let suspendSeen = null;
@@ -135,14 +137,15 @@ await check('onSuspend：cbReq 送达主进程且收尾文案含断点提示', a
     },
     shell: async () => ({ ok: true, stdout: '' }),
   };
-  const finalText = await host.runEngine('run-suspend', baseParams({ tokenBudget: 100 }), {
+  // 轮1/2/3 各续期一次（spent 每轮 1000 > 0.7×100），轮4 续期用尽且累计 4000 ≥ 2000 → 挂起。
+  const finalText = await host.runEngine('run-suspend', baseParams({ tokenBudget: 100, totalTokenCap: 2000 }), {
     toolHandlers,
     onEvent: () => {},
     onSuspend: (info) => { suspendSeen = info; return true; },
   });
   assert.ok(suspendSeen, '主进程 onSuspend 未收到 cbReq');
   assert.equal(suspendSeen.kind, 'tokens');
-  assert.equal(chatCalls, 4, `应 3 救援+1 收尾共 4 轮，实际 ${chatCalls}`);
+  assert.equal(chatCalls, 4, `应 3 次续期+1 轮撞总上限共 4 轮，实际 ${chatCalls}`);
   assert.match(finalText, /断点已保存/, '收尾文案应含断点提示');
 });
 

@@ -173,6 +173,10 @@ export const agentRunPayloadSchema = z
     sandboxPolicy: z.enum(['read-only', 'workspace-write', 'full-access']).optional(),
     planMode: z.boolean().optional(),
     tokenBudget: z.number().int().min(0).optional(),
+    // 2026-10-30：单任务累计 token 总上限（预算窗口耗尽改为续期后，这是唯一的真实终点）。
+    // 显式登记而不靠 passthrough：拼错字段名会让防失控线静默失效（默认 20M），
+    // 而这是「跑飞任务烧穿额度」的最后一道闸，不能靠字段名不写错来保证。
+    totalTokenCap: z.number().int().min(0).optional(),
     resumeContext: z.string().optional(),
     mcpTools: z.array(z.any()).optional(),
     enabledSkills: z.array(z.string()).optional(),

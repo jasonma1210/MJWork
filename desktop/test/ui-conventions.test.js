@@ -170,6 +170,39 @@ for (const file of files) {
   }
 }
 
+// ── 过程性内容的视觉分层（2026-10-30 用户需求 2）──
+// 契约：思考 / 工具轨迹属于「过程性内容」，必须比正式答复（15px + 主文字色）弱一档：
+//   折叠行 12px 灰字 + 行首类型图标（思考=大脑、命令=终端）+ 行尾 chevron；
+//   思考正文 13px + 次要文字色（.msg-prose-quiet）。
+// 判据读的是**去掉注释后的源码**：本轮注释里大量出现 text-code / msg-prose-quiet 这些词，
+// 若不去注释，「把类名改回 text-xs、注释留着」的变异会照样绿——那是空过，不是覆盖。
+{
+  const read = (rel) => blankComments(fs.readFileSync(path.join(SRC, rel), 'utf8'));
+  const panel = read('components/ReasoningPanel.tsx');
+  const trace = read('components/tools/ToolTrace.tsx');
+  const css = fs.readFileSync(path.join(SRC, 'styles', 'theme.css'), 'utf8');
+  // 折叠行按钮内的片段（到 </button> 为止）——断言只针对折叠行，不针对整个文件
+  const panelRow = panel.slice(panel.indexOf('<button'), panel.indexOf('</button>'));
+  check('思考折叠行带大脑图标（IconBrain）', /<IconBrain\b/.test(panelRow));
+  check('思考折叠行字号降到 12px（text-code，且未残留 text-xs）',
+    /\btext-code\b/.test(panelRow) && !/\btext-xs\b/.test(panelRow));
+  check('思考正文用 msg-prose-quiet（13px + 次要文字色）',
+    /className="msg-prose msg-prose-quiet"/.test(panel));
+  // 样式规则必须真的存在：类名挂在组件上但 CSS 里没有规则 = 静默不生效
+  const quietRule = (css.match(/\.msg-prose-quiet\s*\{([^}]*)\}/) || [])[1] || '';
+  check('theme.css 的 .msg-prose-quiet 真的降了字号与颜色',
+    /font-size:\s*13px/.test(quietRule) && /--theme-text-secondary/.test(quietRule),
+    quietRule ? quietRule.replace(/\s+/g, ' ').trim() : '规则缺失');
+  // 工具轨迹：外层字号 + 图标选择器里的 shell/终端配对（读函数体，避免「80 字符窗口」式的脆弱代理）
+  const iconFn = trace.slice(trace.indexOf('function toolIcon'), trace.indexOf('// ── 类型特定详情区'));
+  check('工具轨迹行容器字号为 12px（text-code）', /<div className="text-code">/.test(trace));
+  check('工具图标选择器把 shell/命令类映射到终端图标', /'shell'/.test(iconFn) && /<IconTerminal/.test(iconFn));
+  // chevron 在行尾：左对齐的是类型图标而不是箭头（位置代理，非样式判定）
+  const traceRow = trace.slice(trace.indexOf('{toolIcon(name, failed)}'), trace.indexOf('</button>', trace.indexOf('{toolIcon(name, failed)}')));
+  check('工具轨迹行的 chevron 收在行尾（位于图标之后）',
+    traceRow.indexOf('<IconChevron') > traceRow.indexOf('{toolIcon(name, failed)}'));
+}
+
 check('零 emoji / 零装饰性字形', counts.emoji === BASELINE.emoji, `${counts.emoji}/${BASELINE.emoji} ${samples.emoji.join(' | ')}`);
 check('无裸 z-index（须用 z-* 令牌）', counts.rawZIndex <= BASELINE.rawZIndex, `${counts.rawZIndex}/${BASELINE.rawZIndex} ${samples.rawZIndex.join(' | ')}`);
 check('硬编码调色板色不超过基线', counts.paletteColor <= BASELINE.paletteColor, `${counts.paletteColor}/${BASELINE.paletteColor} ${samples.paletteColor.join(' | ')}`);

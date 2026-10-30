@@ -77,3 +77,7 @@ export const IconSend = (p) => <S {...p}><path d="m22 2-7 20-4-9-9-4z" /><path d
 export const IconExternalLink = (p) => <S {...p}><path d="M14 4h6v6" /><path d="M20 4 10 14" /><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6" /></S>;
 // 记忆（设置页三层记忆入口）：三层堆叠意象，对应 会话 / 项目 / 个人 三层作用域
 export const IconMemory = (p) => <S {...p}><path d="m12 3 9 5-9 5-9-5z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" /></S>;
+// 思考过程（ReasoningPanel 折叠行）：大脑轮廓 + 中缝。
+// 为什么单独做一个而不是复用 IconCpu/IconWrench：用户明确要求「思考用大脑图标、命令用终端图标」，
+// 两者必须在扫读时能一眼区分——CPU 与脑在 13px 下几乎不可分辨，等于没区分。
+export const IconBrain = (p) => <S {...p}><path d="M12 5.6a3 3 0 0 0-5.6-1.4A2.8 2.8 0 0 0 4.2 8.1a3 3 0 0 0-.6 4.6A3 3 0 0 0 5 18.4a2.8 2.8 0 0 0 4.7.7A3 3 0 0 0 12 20z" /><path d="M12 5.6a3 3 0 0 1 5.6-1.4A2.8 2.8 0 0 1 19.8 8.1a3 3 0 0 1 .6 4.6A3 3 0 0 1 19 18.4a2.8 2.8 0 0 1-4.7.7A3 3 0 0 1 12 20z" /><path d="M12 5.6V20" /></S>;
