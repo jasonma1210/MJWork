@@ -77,21 +77,25 @@ const approvalSettings = require(path.join(ROOT, 'main/approvalSettings.js'));
     /model: payload\.model,\s*\}\);/.test(runnerSrc));
 
   const mainSrc = read('main/main.js');
+  // 2026-10-30：toolComputerUse 的实现已整段抽到 main/cuaHandlers.js。下面两类断言
+  // 数据源必须分开——「谁注册了这个 handler」在 main.js，「handler 内部怎么做」在
+  // cuaHandlers.js。混读一个文件会出现「断言恒真/恒假」的假绿（抽取前它们都在 main.js）。
+  const cuaSrc = read('main/cuaHandlers.js');
   check('main.js createToolHandlers 注册 computerUse handler',
     /computerUse: \(args\) => toolComputerUse\(args, \{/.test(mainSrc));
   check('main.js createToolHandlers 接收 model 参数',
     // R2（2026-10-20）：签名新增 projectPath（编排建组落记忆空间键），model 仍在列
     /createToolHandlers: \(\{ sender, signal, runId, emitSubagent, approvalMode: runApprovalMode, conversationId, model, projectPath \}\)/.test(mainSrc));
   check('toolComputerUse 顶层授权走标准审批中心（computer_use，仅 once 放行）',
-    /requestApproval\('computer_use'/.test(mainSrc) && /topDecision !== 'once'/.test(mainSrc));
+    /requestApproval\('computer_use'/.test(cuaSrc) && /topDecision !== 'once'/.test(cuaSrc));
   check('toolComputerUse 逐次动作确认走标准审批中心（复用 cua_action）',
-    /requestApproval: \(summary, action, node\) => requestApproval\('cua_action'/.test(mainSrc));
+    /requestApproval: \(summary, action, node\) => requestApproval\('cua_action'/.test(cuaSrc));
   check('toolComputerUse 复用 ComputerUseLoop + cuaProcess + 凭证解析',
-    /new cua\.ComputerUseLoop\(/.test(mainSrc)
-    && /cuaProcess\.isAvailable\(\) \? cuaProcess\.createSession\(\)/.test(mainSrc)
-    && /resolveSecret\(providerId, isGlobal\)/.test(mainSrc));
+    /new cua\.ComputerUseLoop\(/.test(cuaSrc)
+    && /cuaProcess\.isAvailable\(\) \? cuaProcess\.createSession\(\)/.test(cuaSrc)
+    && /resolveSecret\(providerId, isGlobal\)/.test(cuaSrc));
   check('toolComputerUse 平台门控（仅 darwin）',
-    /if \(process\.platform !== 'darwin'\) return \{ ok: false, error: '界面自动化仅支持 macOS' \}/.test(mainSrc));
+    /if \(process\.platform !== 'darwin'\) return \{ ok: false, error: '界面自动化仅支持 macOS' \}/.test(cuaSrc));
 
   const cuSrc = read('main/computerUse.js');
   check('computerUse.js requestConfirm 把 action/node 透给审批出口（标准通道可用）',

@@ -46,7 +46,7 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', 'assets']);
 // 必须在提交信息里写明理由。
 const BASELINE_800 = {
   'main/computerUse.js': 1004,
-  'main/main.js': 1500,
+  'main/main.js': 1178,
   'agent-core/index.js': 2967,
 };
 
@@ -105,17 +105,21 @@ check('基线清单只减不增（已拆薄到 800 以下应同步移出）', ()
   assert.deepEqual(stale, [], `以下文件已拆薄到 800 code 行以下，请把它们从 BASELINE_800 移除：${stale.join(', ')}`);
 });
 
-// 快照断言：登记了上限的文件，涨 1 行就红。未登记的新超标文件由第 1 条断言负责报，
-// 这里不重复报（两条断言失败含义不同，处置动作也不同）。
-check('基线文件不得超过其 code 行数快照（棘轮：只许缩）', () => {
-  const detail = [];
+// 快照断言（棘轮的两侧都要守）：
+//   · 实际 > 快照 ⇒ 文件变胖了，先拆再合入；
+//   · 实际 < 快照 ⇒ 拆薄了但没下调数字，快照留出的松弛空间会被下次增长无声吃掉。
+// 两种偏移都要求改 BASELINE_800，于是每次变化都会在 diff 里显形、可 review。
+// 未登记的新超标文件由第 1 条断言负责报，这里不重复报。
+check('基线快照必须等于实测 code 行数（涨=先拆；缩=同步下调，否则棘轮松驰）', () => {
+  const drift = [];
   for (const f of over800) {
     if (!BASELINE_PATHS.includes(f)) continue;
     const now = codeLines(path.join(DESKTOP, f));
-    if (now > BASELINE_800[f]) detail.push(`${f} 由 ${BASELINE_800[f]} 涨到 ${now}`);
+    if (now !== BASELINE_800[f]) {
+      drift.push(`${f} 快照 ${BASELINE_800[f]} 实际 ${now}${now > BASELINE_800[f] ? '（上涨）' : '（已拆薄，请下调快照）'}`);
+    }
   }
-  assert.deepEqual(detail, [],
-    `以下基线文件行数上涨（先拆再合入；抬高 BASELINE_800 的快照等于放宽门禁）：${detail.join('；')}`);
+  assert.deepEqual(drift, [], `快照与实测不符：${drift.join('；')}`);
 });
 
 check('eslint max-lines 豁免清单与实际 >1500(code) 文件一致，且属于软档基线', () => {

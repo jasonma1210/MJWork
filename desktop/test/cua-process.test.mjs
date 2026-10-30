@@ -94,16 +94,17 @@ await check('永不 ready 的子进程：ready 超时触发降级', async () => 
   host.initCuaProcess({ spawnChild: spawnFork });
 });
 
-// ── 6. registry 完整 + main.js 接线静态断言 ──
+// ── 6. registry 完整 + 主进程接线静态断言 ──
+// 2026-10-30：CUA 实现从 main.js 整段抽到 main/cuaHandlers.js，本组断言改读新模块。
 await check('通道登记表与主进程接线完整', () => {
   assert.deepEqual(CUA_CHANNELS, ['isAccessibilityGranted', 'collectAxTree', 'performAction', 'isScreenLocked']);
-  const mainSrc = fs.readFileSync(path.join(DESKTOP, 'main', 'main.js'), 'utf8');
-  assert.match(mainSrc, /require\('\.\/cuaProcess\/host'\)/);
-  assert.match(mainSrc, /cuaProcess\.isAvailable\(\) \? cuaProcess\.createSession\(\)/);
-  assert.match(mainSrc, /cuaExec\('collectAxTree'/);
-  assert.match(mainSrc, /cuaExec\('performAction'/);
-  assert.match(mainSrc, /err\.cuaDegraded/);
-  assert.match(mainSrc, /cuaSession\?\.dispose\(\)/);
+  const cuaSrc = fs.readFileSync(path.join(DESKTOP, 'main', 'cuaHandlers.js'), 'utf8');
+  assert.match(cuaSrc, /require\('\.\/cuaProcess\/host'\)/);
+  assert.match(cuaSrc, /cuaProcess\.isAvailable\(\) \? cuaProcess\.createSession\(\)/);
+  assert.match(cuaSrc, /cuaExec\('collectAxTree'/);
+  assert.match(cuaSrc, /cuaExec\('performAction'/);
+  assert.match(cuaSrc, /err\.cuaDegraded/);
+  assert.match(cuaSrc, /cuaSession\?\.dispose\(\)/);
 });
 
 console.log(`\ncua-process: ${pass}/${total} 通过`);

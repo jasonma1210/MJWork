@@ -187,25 +187,38 @@ await check('ReplayLoop 构造即校验：非法录制直接抛错（fail-closed
   assert.throws(() => new R.ReplayLoop({ recording: mkRec({ version: 2 }) }), /非法/);
 });
 
-// ── 7. 接线静态断言（main.js / preload.js / 渲染层 / i18n）──
+// ── 7. 接线静态断言（cuaHandlers.js / main.js / preload.js / 渲染层 / i18n）──
+// 2026-10-30：CUA 实现整段从 main.js 抽到 main/cuaHandlers.js（main.js code 1500 压硬档）。
+//   CUA 实现类断言改读 cuaHandlers.js；main.js 侧改守「只留装配、不留实现」——否则抽取后
+//   若旧实现没删干净，通道会被重复注册（ipcMain.handle 重复抛错），这类回归静态断言能抓。
+const cuaSrc = fs.readFileSync(path.join(DESKTOP, 'main', 'cuaHandlers.js'), 'utf8');
 const mainSrc = fs.readFileSync(path.join(DESKTOP, 'main', 'main.js'), 'utf8');
 const preloadSrc = fs.readFileSync(path.join(DESKTOP, 'main', 'preload.js'), 'utf8');
-await check('main.js 接线：record 参数 + 回放/列表/删除 IPC + 互斥守卫', () => {
-  assert.match(mainSrc, /require\('\.\/cuaRecorder'\)/);
-  assert.match(mainSrc, /cua:run[\s\S]*?record = false, recordingName = ''/);
-  assert.match(mainSrc, /ipcMain\.handle\('cua:replay'/);
-  assert.match(mainSrc, /ipcMain\.handle\('cua:recordings:list'/);
-  assert.match(mainSrc, /ipcMain\.handle\('cua:recordings:delete'/);
+await check('cuaHandlers 接线：record 参数 + 回放/列表/删除 IPC + 互斥守卫', () => {
+  assert.match(cuaSrc, /require\('\.\/cuaRecorder'\)/);
+  assert.match(cuaSrc, /cua:run[\s\S]*?record = false, recordingName = ''/);
+  assert.match(cuaSrc, /ipcMain\.handle\('cua:replay'/);
+  assert.match(cuaSrc, /ipcMain\.handle\('cua:recordings:list'/);
+  assert.match(cuaSrc, /ipcMain\.handle\('cua:recordings:delete'/);
   // 互斥守卫已收口到 cuaLoopRegistry（占用/释放都在同步函数里完成）：
   // 这里只守接线，行为由第 8 节覆盖 —— 静态断言看不出「后到者覆盖占用」这类竞态。
-  assert.match(mainSrc, /require\('\.\/cuaLoopRegistry'\)/);
-  assert.equal((mainSrc.match(/cuaLoopRegistry\.hasRunning\(\)/g) || []).length, 3, '三处入口都应先查占用');
-  assert.match(mainSrc, /cuaLoopRegistry\.claimCua\(loop\)/);
-  assert.match(mainSrc, /cuaLoopRegistry\.claimReplay\(loop\)/);
-  assert.match(mainSrc, /cuaLoopRegistry\.stopCurrent\(\)/);
+  assert.match(cuaSrc, /require\('\.\/cuaLoopRegistry'\)/);
+  assert.equal((cuaSrc.match(/cuaLoopRegistry\.hasRunning\(\)/g) || []).length, 3, '三处入口都应先查占用');
+  assert.match(cuaSrc, /cuaLoopRegistry\.claimCua\(loop\)/);
+  assert.match(cuaSrc, /cuaLoopRegistry\.claimReplay\(loop\)/);
+  assert.match(cuaSrc, /cuaLoopRegistry\.stopCurrent\(\)/);
+  assert.doesNotMatch(cuaSrc, /activeCuaLoop|activeReplayLoop/, '旧模块级互斥变量不应残留');
+  assert.match(cuaSrc, /userData'\), 'recordings'\)/); // 录制数据仅存本机 userData
+  assert.match(cuaSrc, /cua\.captureScreen\(\)/); // 每步截图
+});
+await check('main.js 只留 CUA 装配，实现与通道注册已全部搬走（防重复注册）', () => {
+  assert.match(mainSrc, /require\('\.\/cuaHandlers'\)/, 'main.js 应装配 cuaHandlers');
+  assert.match(mainSrc, /createCuaHandlers\(\{/, 'main.js 应调用工厂');
+  assert.equal((mainSrc.match(/ipcMain\.handle\('cua:/g) || []).length, 0,
+    'CUA 通道不应再注册在 main.js（会与 cuaHandlers.js 重复注册）');
+  assert.equal((mainSrc.match(/ipcMain\.on\('cua:/g) || []).length, 0, '同上（on 通道）');
   assert.doesNotMatch(mainSrc, /activeCuaLoop|activeReplayLoop/, '旧模块级互斥变量不应残留');
-  assert.match(mainSrc, /userData'\), 'recordings'\)/); // 录制数据仅存本机 userData
-  assert.match(mainSrc, /cua\.captureScreen\(\)/); // 每步截图
+  assert.doesNotMatch(mainSrc, /const cuaApprovalChannel/, '审批通道实例应随段搬走');
 });
 await check('preload 暴露 cuaReplay/cuaRecordingsList/cuaRecordingsDelete', () => {
   assert.match(preloadSrc, /cuaReplay: \(payload\) => ipcRenderer\.invoke\('cua:replay', payload\)/);

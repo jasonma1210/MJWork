@@ -1293,7 +1293,7 @@ flowchart TB
 | 文件 | code 行 | raw 行 | `BASELINE_800` 快照（上限） | ESLint `max-lines` 豁免 | code 余量 |
 |---|---:|---:|---|---|---:|
 | `agent-core/index.js` | 2967 | 4209 | 2967 | **是（唯一一条）** | 0 |
-| `main/main.js` | 1500 | 2263 | 1500 | 否（code 未超 1500） | 0 |
+| `main/main.js` | 1178 | 1850 | 1178 | 否（code 未超 1500） | 322 |
 | `main/computerUse.js` | 1004 | 1346 | 1004 | 否（同上） | 0 |
 | `main/scheduler.js` | 602 | 798 | 否（本就未到 800） | 否 | 198 |
 | `renderer/src/hooks/useAgentRun.ts` | 585 | 800 | 否 | 否（**eslint 不检查 .ts**） | 215 |
@@ -1306,11 +1306,16 @@ flowchart TB
 > **三条判据（`desktop/test/max-lines.test.js`，共 4 条断言）**：
 > ① `code > 800` 的文件必须全部登记在 `BASELINE_800` 里（新文件超线直接红）；
 > ② 登记过但已拆薄的必须移出（防清单变成养老名单）；
-> ③ **快照棘轮**：每个登记文件带 code 行数上限，只能缩，涨 1 行就红；
+> ③ **快照棘轮（两侧都守）**：每个登记文件带 code 行数快照，且快照必须**等于**实测值——
+>    实际涨了要「先拆再合入」，拆薄了要**同步下调快照**（不下调等于把松弛空间白送给下次增长）；
 > ④ ESLint 豁免清单的文件名集合必须等于实测 `>1500(code)` 集合（漏改任一侧都红）。
 >
-> `BASELINE_800` 现为 **3 条，且三条余量都是 0**（快照 = 当前值），这是**刻意的棘轮**：
-> 它们任何增长都必须先拆模块，不允许抬高快照。
+> `BASELINE_800` 现为 **3 条**（快照 = 当前值），这是**刻意的棘轮**，不允许抬高快照：
+> `agent-core/index.js`（2967）与 `main/computerUse.js`（1004）仍是**零余量**，任何增长都要先拆；
+> `main/main.js` 于 2026-10-30 由 1500 拆到 **1178（余量 322）**——它此前是全仓唯一「加一行就红」的
+> 文件。做法是把 CUA 那一整段（IPC 通道 + `toolComputerUse` 实现，code 348、自带 BEGIN/END 边界标记）
+> 抽到 `main/cuaHandlers.js`（工厂 + 8 个依赖注入；`getMainWindow` 必须传 getter，否则窗口重建后
+> 投递会打到旧对象）。这次拆分只搬代码不改行为，实现类断言已同步迁到新文件的守护套件。
 >
 > **ESLint 覆盖范围的坑**：`eslint.config.mjs` 的 `files` 只含 `**/*.{js,mjs}` 与
 > `renderer/**/*.{js,jsx}`，渲染层 `.ts/.tsx` **不被 eslint 检查**（实测报
