@@ -19,7 +19,7 @@
 // kind 字段是 L2 判定的分水岭（见 devicePorts.js）：
 //   'serial'        应该有串口；没有 = 异常，要看驱动
 //   'hub'           集线器，忽略
-//   'dfu' / 'uf2' / 'debug-probe'  非串口通道，没有串口是**正常**的
+//   'dfu' / 'uf2' / 'debug-probe' / 'fastboot'  非串口通道，没有串口是**正常**的
 const BOARDS = [
   // —— 串口类：原生 USB（免驱，ESP32-S3/C3/C6、Pico、Teensy 常见）——
   { vid: '303a', pid: null, kind: 'serial', chip: 'esp32-native', name: 'Espressif 原生 USB（S3/C3/C6 等）', driver: 'builtin', note: '免驱：走 USB CDC，macOS 直接出现 cu.usbmodem*' },
@@ -40,6 +40,11 @@ const BOARDS = [
   { vid: '05e3', pid: '0620', kind: 'hub', chip: 'hub', name: 'Genesys Logic USB3.0 HUB', driver: 'builtin', note: '集线器' },
   { vid: '0483', pid: 'df11', kind: 'dfu', chip: 'stm32-dfu', name: 'STM32 系统 DFU 模式', driver: 'builtin', note: '进 BOOT0 后才出现；无串口，走 dfu-util（L3 协议层）' },
   { vid: '2e8a', pid: '0003', kind: 'uf2', chip: 'rp2040-bootsel', name: 'RP2040 BOOTSEL / UF2', driver: 'builtin', note: '枚举成 U 盘而非串口；烧写走拷贝 .uf2（L4）' },
+  // Android bootloader（2026-10-31）：18d1 是 Google 的厂商号，4ee0 是它自报的 fastboot 接口。
+  // **只登记这一条**：其它厂商（小米/三星/OPPO…）在 bootloader 模式下用各自的 VID:PID，
+  // 我没有可核实的样本，凭印象编一张表比不登记更糟——认错设备就是把分区写到不该写的地方。
+  // 未登记时仍落到 kind='unknown'，用户看到的是「不在板卡表内」，而不是一个假的「大概是安卓」。
+  { vid: '18d1', pid: '4ee0', kind: 'fastboot', chip: 'android-fastboot', name: 'Android bootloader（fastboot 模式）', driver: 'builtin', note: '无串口；刷分区走 fastboot（L4，须 OEM 解锁 + 显式 channel=fastboot）' },
   { vid: '0483', pid: '3748', kind: 'debug-probe', chip: 'stlink', name: 'ST-LINK V2', driver: 'builtin', note: '调试探针：无串口，走 openocd（L3）' },
   { vid: '0483', pid: '374b', kind: 'debug-probe', chip: 'stlink', name: 'ST-LINK V2-1', driver: 'builtin', note: '调试探针' },
   { vid: '0483', pid: '3752', kind: 'debug-probe', chip: 'stlink', name: 'ST-LINK V3', driver: 'builtin', note: '调试探针' },

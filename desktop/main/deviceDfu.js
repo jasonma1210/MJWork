@@ -12,6 +12,9 @@
 
 const crypto = require('crypto');
 const { approvalCard, parseOffset } = require('./deviceFlash');
+// 通道别名表跟着通道自己的模块走（fastboot 的在 deviceFastboot.js）。这里只 import 数据，
+// 不 import 执行器 —— 路由函数必须保持纯函数，能被单测直接调用。
+const { FASTBOOT_CHANNEL_ALIASES } = require('./deviceFastboot');
 
 // dfu-util 接受的输入：裸二进制（STM32 最常见）与带后缀的 .dfu 容器。
 // 刻意不接受 .hex / .uf2 / .img：写进去的是容器/文本字节，设备照单全收但固件是废的
@@ -276,6 +279,11 @@ const ESPTOOL_CHANNEL_ALIASES = ['esptool', 'esptool-serial', 'serial', 'esp', '
  * 的后果是板子起不来，而工具照样返回 0）。
  *
  * 优先级：容器扩展名（.uf2/.dfu）> 显式 channel > 缺省 esptool。
+ *
+ * `.img` 刻意**不**按扩展名归入 fastboot：同一个 .img 既可能是要写到 SD 卡的整盘镜像
+ * （disk 通道），也可能是要 flash 到某个分区的 boot/system 镜像，字节级区分不出来 ——
+ * 猜错的代价是整盘覆盖。所以 .img 缺省仍归 disk（由 deviceFlashTool 拒绝并给出指引），
+ * 只有显式 channel=fastboot 才走 Android 通道。
  * @returns {{channel?:string, error?:string, warnings:string[]}}
  */
 function resolveFlashRoute({ channel = '', fmt = {}, port = '' } = {}) {
@@ -301,11 +309,20 @@ function resolveFlashRoute({ channel = '', fmt = {}, port = '' } = {}) {
       if (port) warnings.push(`DFU 不经串口：port=${port} 已忽略（DFU 设备没有串口节点）`);
       return { channel: 'dfu-util', warnings };
     }
+    // Android fastboot（2026-10-31）：**只能显式指定**，不能靠扩展名判——
+    // `.img` 既可能是要拷到 SD 卡的整盘镜像（disk 通道），也可能是要 flash 到某个分区的
+    // boot/system 镜像，两者字节级无法区分，猜错就是整盘覆盖。所以缺省仍归 disk（拒绝），
+    // 只有调用方明确说 channel=fastboot 才进这条通道。
+    if (FASTBOOT_CHANNEL_ALIASES.includes(raw)) {
+      if (port) warnings.push(`fastboot 不经串口：port=${port} 已忽略（fastboot 设备走 USB，由 serial 定位）`);
+      return { channel: 'fastboot', warnings };
+    }
     if (ESPTOOL_CHANNEL_ALIASES.includes(raw)) return { channel: 'esptool-serial', warnings };
     return {
       warnings,
-      error: `未知 channel：\`${channel}\`（可写 ${[...DFU_CHANNEL_ALIASES, ...ESPTOOL_CHANNEL_ALIASES].join(' / ')}；`
-        + '.uf2 / .dfu 按扩展名自动分流，不用传 channel）',
+      error: `未知 channel：\`${channel}\`（可写 ${[
+        ...DFU_CHANNEL_ALIASES, ...ESPTOOL_CHANNEL_ALIASES, ...FASTBOOT_CHANNEL_ALIASES,
+      ].join(' / ')}；.uf2 / .dfu 按扩展名自动分流，不用传 channel）`,
     };
   }
   // .bin / 无扩展名 / 未登记扩展名：缺省仍是 esptool（保持历史行为，不因新通道改变旧路径）

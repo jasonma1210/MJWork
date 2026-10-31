@@ -34,6 +34,11 @@ const {
   dfuPlanDigest, normalizeAddr, DFU_FLASH_VERDICTS,
 } = require('../main/deviceDfu.js');
 const { dfuChannelHandler, dfuList } = require('../main/tools/deviceDfuTool.js');
+const {
+  parseFastbootDevices, parseGetvar, pickDevice, unlockState, resolvePartition,
+  fbPlanDigest, parseFastbootFlash, buildFbPlan, FB_VERDICTS,
+} = require('../main/deviceFastboot.js');
+const { fastbootChannelHandler, fbDevices, fbGetvars } = require('../main/tools/deviceFastbootTool.js');
 
 let pass = 0;
 let fail = 0;
@@ -977,8 +982,10 @@ const hostExec = async (cmd) => {
     // 判据不变：多标一个 = 对用户承诺了没实现的烧写；少标一个 = 把已有能力说成没有。
     // 2026-10-31 再改：dfu-util 也进集合（deviceDfuTool 已落地 plan/flash）。这条断言的价值正在于
     // **逼人回来改它**——每加一条写入路径都必须回这里重新声明一次，并想清楚「真的能跑吗」。
-    // 字符串按 CHANNELS 的表序，不按改动时间序（曾写成 uf2-copy,dfu-util 而红）。
-    CHANNELS.filter((c) => c.implemented).map((c) => c.id).join(',') === 'esptool-serial,dfu-util,uf2-copy',
+    // 2026-10-31 三改：fastboot 进集合（deviceFastbootTool 已落地 plan/flash）。它只接 plan/flash，
+    // 但「只接一部分」与「没接线」是两件事：前者要把真实范围说清，后者只能说「本版本未接线」。
+    // 字符串按 CHANNELS 的表序，不按改动时间序（曾写成 uf2-copy,dfu-util 而红；fastboot 在表尾）。
+    CHANNELS.filter((c) => c.implemented).map((c) => c.id).join(',') === 'esptool-serial,dfu-util,uf2-copy,fastboot',
     CHANNELS.filter((c) => c.implemented).map((c) => c.id).join(','));
 
   // ② 执行器探测：三种「没有」必须分开
@@ -1796,6 +1803,248 @@ const hostExec = async (cmd) => {
   check('DFU 能力：没装 dfu-util 时 runnable=false 并给出安装指引（能跑 ≠ 已接线，两个条件都要）',
     withoutTool.targets[0].runnable === false
     && withoutTool.targets[0].todo.some((t) => t.includes('brew install dfu-util')));
+}
+
+// ── L4d：Android fastboot 通道（2026-10-31）──────────────────────────────────
+// 目标：把「DFU 只覆盖 STM32/AVR，安卓刷机没通道」补上，并且**错了在写之前就拒**。
+//
+// 这一段的形状由本机实测决定（fastboot 37.0.0，macOS，不接设备）：
+//   $ fastboot devices -l     → stdout 空 / stderr 空 / exit **0**
+//   $ fastboot getvar product → **无限等待**，只反复打 `< waiting for any device >`，直到被杀
+//   $ fastboot -s NOSUCHSERIAL getvar product → 同样挂住（`-s` 不能让它少等）
+// 所以下面每条「没有设备」的夹具都刻意用 `exit 0 + 空 stdout`，而不是「非零退出码」——
+// 用后者造出来的夹具会让人以为「退出码能判没设备」，而那正是真机上会挂死的假设。
+// `flash` 成功行的形状取自 fastboot 的标准输出（Sending/Writing OKAY + Finished. Total time）。
+{
+  const approval = require('../main/approval.js');
+  // 真机形状：seriali + tab + "fastboot usb:..."（tab 分开，第二段随版本变化）
+  const DEV_OK = '3A21FDH2001234\tfastboot usb:338690048X\n';
+  const VARS_OK = [
+    '(bootloader) product: barbet',
+    '(bootloader) current-slot: b',
+    '(bootloader) unlocked: yes',
+    '(bootloader) secure: no',
+    'Finished. Total time: 0.031s',
+  ].join('\n');
+  const FLASH_OK = [
+    "Sending 'boot_b' (65536 KB)                        OKAY [  1.512s]",
+    "Writing 'boot_b'                                     OKAY [  0.812s]",
+    'Finished. Total time: 2.430s',
+  ].join('\n');
+  // 假执行器：按 argv 形状分派，三条命令各给各的输出。第 2 位是子命令（devices）或 `-s`。
+  const fbRun = ({ devOut = DEV_OK, varsOut = VARS_OK, flashOut = FLASH_OK, code = 0, getvarKilled = false, flashKilled = false, seen = null } = {}) => async (argv) => {
+    if (seen) seen.push(argv);
+    if (argv[1] === 'devices') return { code: 0, stdout: devOut, stderr: '' };
+    if (argv[3] === 'getvar') {
+      return { code: getvarKilled ? 1 : 0, stdout: getvarKilled ? '' : varsOut, stderr: getvarKilled ? '< waiting for any device >' : '', killed: getvarKilled };
+    }
+    return { code, stdout: flashOut, stderr: '', killed: flashKilled };
+  };
+  const imgOk = () => ({ isFile: () => true, size: 67108864 });
+
+  // ① 解析：`devices` 空输出是「没有设备」，不是「工具坏了」
+  const devs = parseFastbootDevices(DEV_OK);
+  check('fastboot 解析：devices -l 按 serial + 描述两段解析（第二段随版本变化，不能整行当 serial）',
+    devs.ok === true && devs.devices.length === 1 && devs.devices[0].serial === '3A21FDH2001234'
+    && devs.devices[0].mode === 'fastboot');
+  check('fastboot 解析：**空输出 = 没有设备且 exit 0**（真机实测；靠退出码判会以为「飞快返回」）',
+    parseFastbootDevices('').ok === true && parseFastbootDevices('').devices.length === 0
+    && parseFastbootDevices('').note === 'no-device');
+  const vars = parseGetvar(VARS_OK);
+  check('fastboot 解析：getvar 两种前缀（(bootloader) 与裸 key: value）都认，Finished 行必须丢掉',
+    vars.ok === true && vars.vars.product === 'barbet' && vars.vars['current-slot'] === 'b'
+    && !('finished' in vars.vars) && parseGetvar('product: barbet\n').vars.product === 'barbet');
+  check('fastboot 解析：getvar 输出不可识别时带原始片段（不能与「读到了空值」同形）',
+    parseGetvar('').ok === false && String(parseGetvar('').error).includes('不可识别'));
+
+  // ② 挑设备：多台必须拒绝
+  check('fastboot 挑设备：一个都没有时指向「怎么进 bootloader」，并点明普通开机不算',
+    String(pickDevice([]).error || '').includes('bootloader')
+    && String(pickDevice([]).error || '').includes('不算'));
+  check('fastboot 挑设备：两台同时在线时拒绝，而不是挑第一台（刷错手机不可逆）',
+    pickDevice([{ serial: 'A' }, { serial: 'B' }]).ok === false
+    && String(pickDevice([{ serial: 'A' }, { serial: 'B' }]).error).includes('A / B'));
+  check('fastboot 挑设备：指定的 serial 不在线时把在线清单摆出来（而不是只说「没找到」）',
+    pickDevice([{ serial: 'A' }], 'ZZZ').ok === false
+    && String(pickDevice([{ serial: 'A' }], 'ZZZ').error).includes('A'));
+  check('fastboot 挑设备：serial 指定且在线时选中它（多台在线也不必拦）',
+    pickDevice([{ serial: 'A' }, { serial: 'B' }], 'B').ok === true
+    && pickDevice([{ serial: 'A' }, { serial: 'B' }], 'B').device.serial === 'B');
+
+  // ③ 解锁状态：yes/no/unknown 三值，unknown 只告警不拦
+  check('fastboot 解锁：unlocked 与老设备的 secure 两套字段都认（secure=no 等价于已解锁）',
+    unlockState({ unlocked: 'yes' }).state === 'yes' && unlockState({ unlocked: 'no' }).state === 'no'
+    && unlockState({ secure: 'no' }).state === 'yes' && unlockState({}).state === 'unknown');
+
+  // ④ 分区：白名单 / 点名拒绝 / A-B 归一
+  // 这里必须**两侧各断一次形态**，不能只断「被拒了」或只断某个词：
+  // 禁写名单的文案与「不在白名单」的文案都含「引导链」三个字（后者写的是「可能落到引导链或校准分区上」），
+  // 首版只 `includes('引导链')` ⇒ 把禁写名单整段失效后断言照样绿（变异实测 13/14，就漏在这条）。
+  const forb = resolvePartition('bootloader');
+  const unknownPart = resolvePartition('boott');
+  check('fastboot 分区：bootloader / xbl / modem 这类分区点名拒绝，并说清「不是重刷能救的」',
+    forb.ok === false && String(forb.error).includes('售后工具') && !String(forb.error).includes('不在可刷白名单里')
+    && String(resolvePartition('xbl').error).includes('售后工具')
+    && resolvePartition('modem').ok === false);
+  check('fastboot 分区：一个字母写错落到白名单外也拒绝（fastboot 不拦你，所以必须在这里拦）',
+    unknownPart.ok === false && String(unknownPart.error).includes('不在可刷白名单里')
+    && !String(unknownPart.error).includes('售后工具'));
+  const slotted = resolvePartition('boot', { currentSlot: 'b' });
+  check('fastboot 分区：A/B 设备上 boot + current-slot=b 归一成 boot_b 并告警（写错槽＝重启还是旧系统）',
+    slotted.ok === true && slotted.partition === 'boot_b' && slotted.warnings.length === 1, slotted.partition);
+  const offSlot = resolvePartition('boot_a', { currentSlot: 'b' });
+  check('fastboot 分区：显式指定非活动槽时告警（OTA 正常、手工刷机通常是写错）',
+    offSlot.ok === true && offSlot.partition === 'boot_a'
+    && offSlot.warnings.some((w) => w.includes('非活动槽')));
+
+  // ⑤ 计划：只收 .img、必须解锁、卡面要能让人核对
+  const dev1 = pickDevice(devs.devices).device;
+  const planBase = {
+    device: dev1, partitionInfo: resolvePartition('boot', { currentSlot: 'b' }),
+    firmware: '/a/boot.img', fileSize: 67108864, vars: vars.vars,
+  };
+  const fbPlan = buildFbPlan(planBase);
+  check('fastboot 计划：argv 是 `fastboot -s <serial> flash <partition> <img>`（-s 必须在子命令之前）',
+    fbPlan.ok === true && fbPlan.argv.join(' ') === 'fastboot -s 3A21FDH2001234 flash boot_b /a/boot.img',
+    fbPlan.argv?.join(' '));
+  check('fastboot 计划：卡面写清「哪台 + 哪个分区 + 哪个文件」（卡只渲染 tool+target，这是唯一可核对的信息）',
+    fbPlan.card.target === '3A21FDH2001234 (barbet) flash boot_b ← boot.img'
+    && fbPlan.card.consequence.includes('无法开机') && Boolean(fbPlan.card.rollback));
+  check('fastboot 计划：.zip 拒绝并指向 adb sideload（把 OTA 包当镜像发过去只会得到一句难懂的 FAILED）',
+    buildFbPlan({ ...planBase, firmware: '/a/ota.zip' }).ok === false
+    && String(buildFbPlan({ ...planBase, firmware: '/a/ota.zip' }).error).includes('sideload'));
+  check('fastboot 计划：空镜像 / 大小未知时拒绝', buildFbPlan({ ...planBase, fileSize: 0 }).ok === false);
+  const lockedPlan = buildFbPlan({ ...planBase, vars: { product: 'barbet', unlocked: 'no' } });
+  check('fastboot 计划：unlocked=no 时拒绝，并把解锁步骤交回给人（本工具不做解锁）',
+    lockedPlan.ok === false && String(lockedPlan.error).includes('flashing unlock'));
+  const unknownUnlock = buildFbPlan({ ...planBase, vars: { product: 'barbet' } });
+  check('fastboot 计划：读不到解锁状态时只告警不拦（设备侧的锁才是权威）',
+    unknownUnlock.ok === true && unknownUnlock.warnings.some((w) => w.includes('读不到解锁状态')));
+  check('fastboot 摘要：序列号 / 分区 / 文件 / 大小任一变则摘要变（否则「确认 A 写 B」能过关）',
+    fbPlanDigest({ serial: 'A', partition: 'boot', firmware: '/a/x.img', fileSize: 1 })
+      !== fbPlanDigest({ serial: 'B', partition: 'boot', firmware: '/a/x.img', fileSize: 1 })
+    && fbPlanDigest({ serial: 'A', partition: 'boot', firmware: '/a/x.img', fileSize: 1 })
+      !== fbPlanDigest({ serial: 'A', partition: 'recovery', firmware: '/a/x.img', fileSize: 1 })
+    && fbPlanDigest({ serial: 'A', partition: 'boot', firmware: '/a/x.img', fileSize: 1 })
+      !== fbPlanDigest({ serial: 'A', partition: 'boot', firmware: '/a/y.img', fileSize: 1 })
+    && fbPlanDigest({ serial: 'A', partition: 'boot', firmware: '/a/x.img', fileSize: 1 })
+      !== fbPlanDigest({ serial: 'A', partition: 'boot', firmware: '/a/x.img', fileSize: 2 }));
+
+  // ⑥ 执行器：没设备 / 没工具 / 挂住 / 成功 / 假成功
+  const noDevFb = await fbDevices({ run: fbRun({ devOut: '' }) });
+  check('fastboot 执行器：devices 空输出（exit 0）时报「没有设备」，不能说成「工具坏了」',
+    noDevFb.ok === true && noDevFb.devices.length === 0 && noDevFb.note === 'no-device'
+    && noDevFb.installed === true);
+  const noToolFb = await fbDevices({ run: async () => ({ code: 1, stdout: '', stderr: '', spawnError: 'ENOENT' }) });
+  check('fastboot 执行器：没装 platform-tools 时明说装什么（ENOENT 不能与「设备没插」同形）',
+    noToolFb.ok === false && noToolFb.installed === false
+    && String(noToolFb.error).includes('android-platform-tools'));
+  const hung = await fbGetvars('A', { run: fbRun({ getvarKilled: true }) });
+  check('fastboot 执行器：getvar 被超时杀掉时判「设备已退出 fastboot」并声明**没有写入**',
+    hung.ok === false && String(hung.error).includes('超时') && String(hung.error).includes('没有对设备做任何写入'));
+  const seen = [];
+  const planFb = await fastbootChannelHandler(
+    { action: 'plan', firmware: '/a/boot.img', partition: 'boot' },
+    { run: fbRun({ seen }), stat: imgOk });
+  check('fastboot 执行器：plan 只装配命令、**不执行 flash**（run 里不该出现 flash 子命令）',
+    planFb.ok === true && planFb.partition === 'boot_b' && Boolean(planFb.plan_digest)
+    && !seen.some((a) => a.includes('flash')), seen.map((a) => a[3]).join(','));
+  const emptyDev = await fastbootChannelHandler(
+    { action: 'plan', firmware: '/a/boot.img', partition: 'boot' },
+    { run: fbRun({ devOut: '' }), stat: imgOk });
+  check('fastboot 执行器：plan 阶段没设备时拒绝并指向「先让手机进 bootloader」',
+    emptyDev.ok === false && String(emptyDev.error).includes('bootloader'));
+  const noDigestFb = await fastbootChannelHandler(
+    { action: 'flash', firmware: '/a/boot.img', partition: 'boot' },
+    { run: fbRun({}), stat: imgOk });
+  check('fastboot 执行器：flash 缺 plan_digest 直接拒绝（不能跳档）',
+    noDigestFb.ok === false && String(noDigestFb.error).includes('plan_digest'));
+  const badDigestFb = await fastbootChannelHandler(
+    { action: 'flash', firmware: '/a/boot.img', partition: 'boot', plan_digest: 'deadbeefdeadbeef' },
+    { run: fbRun({}), stat: imgOk });
+  check('fastboot 执行器：plan_digest 不符时拒绝（确认后换分区/换镜像的第二次点击不会执行）',
+    badDigestFb.ok === false && String(badDigestFb.error).includes('不匹配'));
+  const movedPart = await fastbootChannelHandler(
+    { action: 'flash', firmware: '/a/boot.img', partition: 'recovery', plan_digest: planFb.plan_digest },
+    { run: fbRun({}), stat: imgOk });
+  check('fastboot 执行器：换分区后旧摘要失效（否则「确认 boot、实际写 recovery」能过闸）',
+    movedPart.ok === false && String(movedPart.error).includes('不匹配'));
+  const okFlash = await fastbootChannelHandler(
+    { action: 'flash', firmware: '/a/boot.img', partition: 'boot', plan_digest: planFb.plan_digest },
+    { run: fbRun({}), stat: imgOk });
+  check('fastboot 执行器：看到 Sending/Writing OKAY + Finished 才判成功（并提示重启确认能开机）',
+    okFlash.ok === true && okFlash.verdict === FB_VERDICTS.ok && okFlash.finished === true
+    && String(okFlash.hint).includes('重启'), `${okFlash.ok}/${okFlash.verdict}`);
+  // 最关键的一条：fastboot 在 FAILED 之后仍可能返回 0。若判据是「退出码 0」，
+  // 这条夹具会绿 —— 而真机上它意味着「刷失败了但工具说成功了」。
+  const failedButZero = await fastbootChannelHandler(
+    { action: 'flash', firmware: '/a/boot.img', partition: 'boot', plan_digest: planFb.plan_digest },
+    { run: fbRun({ code: 0, flashOut: "Sending 'boot_b' FAILED (remote: 'partition size mismatch')\n" }), stat: imgOk });
+  check('fastboot 判定：**退出码 0 但有 FAILED 时判失败**并引用设备侧原因（单看退出码会把失败报成成功）',
+    failedButZero.ok === false && failedButZero.verdict === FB_VERDICTS.remote
+    && String(failedButZero.error).includes('partition size mismatch'), `${failedButZero.ok}/${failedButZero.verdict}`);
+  const waitingFlash = await fastbootChannelHandler(
+    { action: 'flash', firmware: '/a/boot.img', partition: 'boot', plan_digest: planFb.plan_digest },
+    { run: fbRun({ flashKilled: true, code: 1, flashOut: '< waiting for any device >' }), stat: imgOk });
+  check('fastboot 判定：全程 waiting（超时被杀）单独判一档，并说明「本次没有写入任何分区」',
+    waitingFlash.ok === false && waitingFlash.verdict === FB_VERDICTS.waiting
+    && String(waitingFlash.error).includes('没有写入'));
+  const lockedFlash = await fastbootChannelHandler(
+    { action: 'flash', firmware: '/a/boot.img', partition: 'boot' },
+    { run: fbRun({ varsOut: '(bootloader) product: barbet\n(bootloader) unlocked: no\nFinished. Total time: 0.01s' }), stat: imgOk });
+  check('fastboot 执行器：设备已锁时在**写之前**就拒（不是等 fastboot 回一句 FAILED）',
+    lockedFlash.ok === false && String(lockedFlash.error).includes('flashing unlock'));
+
+  // ⑦ 与 device_flash 的分流：.img 只能靠显式 channel 认出来
+  check('fastboot 路由：.img + channel=fastboot 走 fastboot（不得被「格式与通道不匹配」挡住）',
+    resolveFlashRoute({ channel: 'fastboot', fmt: resolveImageFormat('/a/boot.img') }).channel === 'fastboot'
+    && resolveFlashRoute({ channel: 'fastboot', fmt: resolveImageFormat('/a/boot.img'), port: '/dev/cu.x' }).warnings.length === 1);
+  check('fastboot 路由：.img 不传 channel 时仍归 disk（缺省不自动走 fastboot ——猜错就是整盘覆盖）',
+    resolveFlashRoute({ fmt: resolveImageFormat('/a/boot.img') }).channel === 'disk');
+  const fdepsFb = { platform: 'darwin', exec: async () => ({ stdout: '' }), run: fbRun({}), stat: imgOk };
+  const dFbPlan = await deviceFlashHandler(
+    { action: 'plan', firmware: '/a/boot.img', channel: 'fastboot', partition: 'boot' }, fdepsFb);
+  check('fastboot 分流：device_flash + channel=fastboot + partition → 真能 plan 成功（不会被「没找到 esptool」挡住）',
+    dFbPlan.ok === true && dFbPlan.channel === 'fastboot' && Boolean(dFbPlan.plan_digest),
+    `${dFbPlan.ok}/${dFbPlan.channel || dFbPlan.error}`);
+  const dFbVerify = await deviceFlashHandler(
+    { action: 'verify', firmware: '/a/boot.img', channel: 'fastboot', partition: 'boot' }, fdepsFb);
+  check('fastboot 分流：verify/backup 明说「这条路本身不通」而不是「还没实现」（不留等不到的功能）',
+    dFbVerify.ok === false && String(dFbVerify.error).includes('本身不通'), String(dFbVerify.error).slice(0, 40));
+  const dImgNoChan = await deviceFlashHandler({ action: 'plan', firmware: '/a/boot.img' }, fdepsFb);
+  check('fastboot 分流：.img 不传 channel 时由 device_flash 拒绝，并指出该走磁盘通道或显式 fastboot',
+    dImgNoChan.ok === false && String(dImgNoChan.error).includes('格式与通道不匹配'));
+
+  // ⑧ 审批：卡面只有 tool + target
+  check('fastboot 审批目标：卡面是「serial flash 分区 ← 文件」（否则是「 ← boot.img」，目标看着像空的）',
+    approval.approvalTarget('device_flash', {
+      action: 'flash', firmware: '/a/boot.img', channel: 'fastboot', serial: '3A21FDH2001234', partition: 'boot',
+    }) === '3A21FDH2001234 flash boot ← /a/boot.img');
+  check('fastboot 审批目标：没传 serial 时写明「唯一在线设备」（多台会被执行器拒，卡面别说成已确定）',
+    approval.approvalTarget('device_flash', { action: 'flash', firmware: '/a/boot.img', channel: 'fastboot', partition: 'boot' })
+      === '唯一在线设备 flash boot ← /a/boot.img');
+  check('fastboot 审批：flash 仍是 L1（与 DFU 同一条地板，不因通道不同另开档位）',
+    approval.toolLevel('device_flash', { action: 'flash', channel: 'fastboot' }) === 'L1'
+    && approval.isRememberable('device_flash') === false);
+
+  // ⑨ 通道表 + 设备面板：implemented 翻转必须真的能让人看到「能烧」
+  check('fastboot 能力：通道表 implemented=true（只接 plan/flash），且不在未接线名单里',
+    CHANNELS.find((c) => c.id === 'fastboot').implemented === true);
+  const fbBridge = { vid: '18d1', pid: '4ee0', name: 'Android bootloader', kind: 'fastboot', verdict: 'not-serial', ports: [] };
+  const fbWith = resolveChannels({ bridges: [fbBridge], executors: parseExecutors(`HAVE=fastboot\n${EXECUTOR_PROBE_SENTINEL}`) });
+  const fbWithout = resolveChannels({ bridges: [fbBridge], executors: parseExecutors(`HAVE=esptool\n${EXECUTOR_PROBE_SENTINEL}`) });
+  check('fastboot 能力：认出的 Android bootloader 给 fastboot 通道，装了 platform-tools 时 runnable=true',
+    fbWith.targets[0].channel === 'fastboot' && fbWith.targets[0].runnable === true,
+    `${fbWith.targets[0]?.channel}/run=${fbWith.targets[0]?.runnable}`);
+  check('fastboot 能力：没装 fastboot 时 runnable=false 并给安装指引（能跑 ≠ 已接线，两个条件都要）',
+    fbWithout.targets[0].runnable === false
+    && fbWithout.targets[0].todo.some((t) => t.includes('android-platform-tools')));
+  check('fastboot 识别：18d1:4ee0 判成 fastboot（不是「未识别的 USB 设备 ⇒ 可能是任意 MCU」）',
+    matchBoard('18d1', '4ee0').kind === 'fastboot');
+  const fbAdvice = assessBridges({ devices: [{ vid: '18d1', pid: '4ee0', board: matchBoard('18d1', '4ee0') }], ports: [] });
+  check('fastboot 识别：L2 verdict 是 not-serial，且建议文案点明是 Android（别按「缺驱动」去装驱动）',
+    fbAdvice.bridges[0].verdict === 'not-serial' && fbAdvice.bridges[0].advice.includes('Android'),
+    fbAdvice.bridges[0].advice);
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

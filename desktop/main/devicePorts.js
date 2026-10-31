@@ -166,6 +166,7 @@ const KIND_LABEL = {
   dfu: 'DFU（芯片 ROM 下载模式）',
   uf2: 'UF2（枚举成 U 盘，不是串口）',
   'debug-probe': '调试探针（ST-LINK / J-Link / DAPLink）',
+  fastboot: 'Android bootloader（fastboot 模式）',
   hub: 'USB 集线器',
 };
 

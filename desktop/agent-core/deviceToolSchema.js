@@ -33,13 +33,21 @@ export const DEVICE_TOOL_SCHEMAS = [
 
 // device_flash 的芯片名**刻意不加 enum**：未知芯片不是错误，`buildFlashPlan` 会走 esptool 默认值
 // 并明确告警。加 enum 会把「新芯片刚上市」变成「模型调不动」，而实际能不能烧由 esptool 决定。
+//
+// ⚠ 预算压力（2026-10-31 实测）：`test/context-budget.test.mjs` 要求
+// `MAX_TOOL_SCHEMA_TOTAL_BYTES > toolTableByteSize(BASE_TOOLS) * 1.5`，而本文件加完
+// fastboot 的 channel/partition/serial/slot 四个属性后，整表 43679 / 阈值线 43690 —— **余量只剩 11 字节**。
+// 也就是说：这里再加一个字段（或把描述写长两行）就会让那条闸变红，而它不是坏闸，
+// 是「静态工具表已经吃满 64KB 预算」的信号。真要加字段，先想清楚三件事：
+//   ① 能不能把信息压进已有属性（例如用 enum 而不是新段落）；② 能不能删掉别处的重复描述；
+//   ③ 只有当前两条都不成立时，才去动 `MAX_TOOL_SCHEMA_TOTAL_BYTES` 并同时改它的钉值测试与设计文档。
 export const DEVICE_FLASH_SCHEMAS = [
   { type: 'function', function: {
     name: 'device_flash',
-    description: '把固件烧到开发板。**通道按固件格式自动选**：.bin→esptool 串口（DFU 板须显式传 channel=dfu），'
-      + '.uf2→UF2（拷到 bootloader 盘，无需串口），.dfu→dfu-util；.hex/.img 直接拒绝并给转换指引。'
-      + '只烧 .bin/.uf2/.dfu，不做磁盘镜像、不格式化介质。'
-      + '烧写按序、不可跳档：plan → flash（需 plan_digest）→ verify，digest 锁「人确认过的参数」，缺失或不符即拒。'
+    description: '把固件烧到开发板/手机。**通道按格式自动选**：.bin→esptool 串口（DFU 板须显式 channel=dfu），'
+      + '.uf2→UF2（拷到 bootloader 盘，无需串口），.dfu→dfu-util，.img 须显式 channel=fastboot+partition；'
+      + '.hex 拒绝并给转换指引。不做磁盘镜像、不格式化介质。'
+      + '烧写按序不可跳档：plan → flash（需 plan_digest）→ verify，digest 锁「人确认过的参数」，缺失或不符即拒。'
       + 'backup 应放在 flash **之前**，否则覆盖后没有回滚素材。'
       + 'chip_id 用于 device_probe 报 probe-required 时由工具自己问身份，别让用户手敲命令。'
       + 'logs 抓串口启动输出，判据是启动证据而非「有输出」：verify 证明字节写对，logs 才证明固件在跑。'
@@ -97,10 +105,24 @@ export const DEVICE_FLASH_SCHEMAS = [
         },
         channel: {
           type: 'string',
-          enum: ['esptool', 'dfu'],
-          description: '写入通道。`.bin` 是 esptool 与 DFU 共用的裸二进制，光看扩展名判不出来：'
-            + 'DFU 设备（枚举成 0483:df11、无串口）必须显式传 dfu，并给 offset（STM32 主 flash 通常是 0x08000000，'
-            + '写 0x0 会落错区域）。`.uf2`/`.dfu` 按扩展名自动分流，不用传。',
+          enum: ['esptool', 'dfu', 'fastboot'],
+          description: '写入通道。`.bin` 是 esptool 与 DFU 共用的裸二进制：DFU 设备（0483:df11、无串口）'
+            + '必须传 dfu 并给 offset（STM32 主 flash 通常 0x08000000）。`.uf2`/`.dfu` 按扩展名分流。'
+            + '`.img` 必须显式 fastboot（同一扩展名也可能是 SD 卡整盘镜像）。',
+        },
+        partition: {
+          type: 'string',
+          description: 'fastboot 必填：刷哪个分区（boot / recovery / system）。'
+            + 'A/B 设备只写 boot 会落到当前槽，指定槽写 boot_b。bootloader / xbl / modem 等引导链分区硬拒。',
+        },
+        serial: {
+          type: 'string',
+          description: 'fastboot 可选：序列号，多台在线时必须指定。取自 device_probe 或 fastboot devices。',
+        },
+        slot: {
+          type: 'string',
+          enum: ['a', 'b'],
+          description: 'fastboot 可选：A/B 槽位，缺省用当前槽；与当前槽不同会告警。',
         },
         seconds: { type: 'integer', description: 'logs 可选：抓多少秒，缺省 8，夹在 2–30。' },
         expect: {

@@ -12,9 +12,9 @@
 // 用户会以为板子坏了，然后去重刷、换线、装驱动——每一步都在错误的假设上。
 //
 // 另一个必须报的字段是 implemented：机器上装了 dfu-util **不等于**本项目支持 DFU 烧写。
-// 2026-10-31 实况：esptool 串口 / UF2 拷贝 / dfu-util 三条已接执行器（分别见 deviceFlashTool、
-// deviceUf2Tool、deviceDfuTool），其余通道只是「判定出来了」。不区分这两件事，
-// 模型就会对用户说「可以烧了」。
+// 2026-10-31 实况：esptool 串口 / UF2 拷贝 / dfu-util / fastboot 四条已接执行器（分别见
+// deviceFlashTool、deviceUf2Tool、deviceDfuTool、deviceFastbootTool），其余通道只是「判定出来了」。
+// 不区分这两件事，模型就会对用户说「可以烧了」。
 //
 // 文档 §3 的关键原则（本文件按此排序）：
 //   ① 优先用官方 ROM bootloader（出厂固化，最不容易变砖）——所以 esptool/DFU/UF2 排在调试器前；
@@ -112,9 +112,13 @@ const CHANNELS = [
     install: 'brew install --cask android-platform-tools',
     actions: ['devices', 'flash', 'reboot'],
     needsPort: false,
-    implemented: false,
+    // 2026-10-31 由 false 改 true：main/tools/deviceFastbootTool.js 已把 plan/flash 落地
+    // （device_flash 按 channel=fastboot 分流）。只接 plan/flash —— verify/backup 是**这条路
+    // 本身不通**（fetch 非标准、多数设备不支持；没有读全片的标准命令），不是「还没做」。
+    implemented: true,
     doc: '§3「Android → 可进 bootloader → fastboot（OEM 解锁为前提）」/ §7',
-    note: '以 OEM 解锁为前提；本工具不做解锁',
+    note: '以 OEM 解锁为前提；本工具不做解锁。只刷白名单分区（boot/recovery/system 一类），'
+      + 'bootloader/xbl/modem/persist 等引导链与校准分区硬拒——写错不是重刷能救的',
   },
 ];
 
@@ -182,6 +186,13 @@ function resolveOne(bridge, executors) {
   if (bridge.kind === 'dfu') return byKind('dfu-util', '设备已枚举为 DFU（ROM 下载模式）');
   if (bridge.kind === 'uf2') return byKind('uf2-copy', '设备已枚举成 U 盘（BOOTSEL/UF2 模式）');
   if (bridge.kind === 'debug-probe') return byKind('openocd-swd', '调试探针在位（SWD/JTAG 兜底通道）');
+  // Android bootloader（2026-10-31）：枚举成 USB 设备、没有串口、也不是 DFU/UF2 ——
+  // 之前它会落到「未识别的 USB 设备」里，用户看到的是「可能是任意 MCU」。实际上它是自报身份的：
+  // Google 的 fastboot 接口有固定 VID:PID，认出来就该直接给 fastboot 通道。
+  // 边界要说清：**只登记了能确认的 VID:PID**（18d1:4ee0），其他厂商用自己的号段，
+  // 未登记的设备仍是 unknown —— 那时提示用户去看 `device_probe` 之外的 fastboot devices 输出，
+  // 而不是让模型猜「这个 VID 大概是安卓」。猜错就是往一块未知设备上写分区。
+  if (bridge.kind === 'fastboot') return byKind('fastboot', '设备已枚举为 Android bootloader（fastboot 模式）');
 
   // ② 串口通道
   if (bridge.kind !== 'serial' && bridge.kind !== 'unknown') return base;

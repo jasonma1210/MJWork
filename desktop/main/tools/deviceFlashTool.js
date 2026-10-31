@@ -45,6 +45,9 @@ const { isUf2Volume } = require('../deviceUf2');
 // 这里只做分流，不重复任何 DFU 判据——`resolveFlashRoute` 是「走哪条通道」的唯一判据。
 const { resolveFlashRoute } = require('../deviceDfu');
 const { dfuChannelHandler } = require('./deviceDfuTool');
+// Android fastboot 通道（2026-10-31）：与 DFU 同款分工（纯逻辑 deviceFastboot.js / 执行器 deviceFastbootTool.js）。
+// 只能由显式 channel=fastboot 进入——.img 既可能是 SD 卡整盘镜像，字节级分不出目标。
+const { fastbootChannelHandler } = require('./deviceFastbootTool');
 const {
   CAPTURE_SCRIPT, VERDICTS, parseCapture, expectTokens, analyzeLog, previewOf,
 } = require('../deviceSerial');
@@ -360,6 +363,25 @@ async function deviceFlashHandler(args = {}, deps = {}) {
       };
     }
     const r = await dfuChannelHandler({ ...args, action }, deps);
+    return { ...r, warnings: [...routeWarnings, ...(r.warnings || [])] };
+  }
+  // Android fastboot（2026-10-31）。只接 plan / flash，理由写进拒绝文案而不是留空：
+  //   · verify → `fastboot fetch` 非标准、多数设备不支持，且分区回读长度语义依赖设备实现；
+  //   · backup → 没有「读全片」的标准命令，要备份得靠厂商工具或进第三方 recovery；
+  //   · chip_id / logs → 它既没有串口也没有 esptool 握手，getvar 已经在 plan 里读过了。
+  // 也就是说这里不是「还没做」，而是「这条路本身不通」，不能让用户等一个永远不会来的功能。
+  if (route.channel === 'fastboot') {
+    if (action !== 'plan' && action !== 'flash') {
+      return {
+        ok: false, action, channel: 'fastboot',
+        error: `fastboot 通道不支持 ${action}：只接 plan / flash。`
+          + '回读校验（fastboot fetch）非标准且多数设备不支持，整片备份也要靠厂商工具，'
+          + '所以验收只能看设备重启后是否正常开机——这不是还没实现，是这条路本身不通。'
+          + '要列 fastboot 设备请用 device_probe（它的 channels 会给出 fastboot 目标）。'
+          + '这次没有对设备做任何操作。',
+      };
+    }
+    const r = await fastbootChannelHandler({ ...args, action }, deps);
     return { ...r, warnings: [...routeWarnings, ...(r.warnings || [])] };
   }
   // 已知的「不能走串口」格式（.hex 文本 / .img 整盘镜像）在**解析工具之前**就拒。

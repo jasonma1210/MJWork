@@ -378,6 +378,9 @@ const { isReadonlySql } = require('./sqlReadonly');
 // 2026-10-31：DFU 通道的地址归一化与通道别名复用 deviceDfu 那一份判据。
 // 审批卡上写的地址必须与**实际执行的 argv** 逐字一致，否则用户核对的是一串「看起来对」的字。
 const { normalizeAddr, DFU_CHANNEL_ALIASES } = require('./deviceDfu');
+// fastboot 别名同理从通道自己的模块取：路由与审批卡认同一份名单，否则会出现
+// 「说好了走 fastboot，卡面却渲染成空的 port ← 文件」——而这次写入不可逆。
+const { FASTBOOT_CHANNEL_ALIASES } = require('./deviceFastboot');
 
 function toolLevel(tool, args = {}) {
   if (READONLY_TOOLS.has(tool)) return null;
@@ -446,6 +449,9 @@ function toolLevel(tool, args = {}) {
   //   额外一条：chip_id 的结论会决定后面用哪个通道烧、按哪个芯片族装配参数，误判的代价
   //   由紧随其后的 flash 承担；让它免费自动跑，等于把「烧错协议」的前置判断变成静默动作。
   //   代价是每次握手弹一张卡——握手本来就是一次**主动去问硬件**的动作，不是扫描，频率极低。
+  // 2026-10-31 fastboot 通道**不新开档位**：它同样是「覆盖设备上的一块分区、无自动回滚」，
+  //   走的是本分支同一条 L1 地板。刻意不按 channel 再分支一次——两处判据一旦漂移，
+  //   表现就是「某条通道静默过闸」，而这类 bug 没人会写测试来抓。
   if (tool === 'device_flash') {
     if (args.action === 'list_targets' || args.action === 'plan') return null;
     return 'L1';
@@ -549,6 +555,16 @@ function approvalTarget(tool, args = {}) {
     if (/\.uf2$/i.test(fw)) {
       const vol = String(args.volume || '');
       return `${vol || '（自动找 bootloader 盘）'} ← ${fw}`.trim();
+    }
+    // fastboot 通道（2026-10-31）：没有串口也没有卷，用户唯一能核对的两件事是
+    // **刷哪台**（serial）与**刷哪个分区**（partition）。这一支不写就会落到下面的默认拼接，
+    // 卡面变成「 ← boot.img」—— 目标看着像空的，而分区是整块覆盖、没有写前备份。
+    // 分区名照原样呈现（不做 _a/_b 归一）：归一发生在执行器里且会回写进 plan，
+    // 卡面上让用户看到的就是他输入的那个词，避免「卡上写 boot_b、我填的是 boot」的困惑。
+    if (FASTBOOT_CHANNEL_ALIASES.includes(chan)) {
+      const serial = String(args.serial || '唯一在线设备').trim();
+      const part = String(args.partition || '未指定分区').trim();
+      return `${serial} flash ${part} ← ${fw}`.trim();
     }
     const segs = Array.isArray(args.segments) ? args.segments : [];
     const what = fw

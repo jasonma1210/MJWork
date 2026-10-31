@@ -83,7 +83,10 @@ const IMAGE_FORMATS = [
   // 2026-10-31 随 L4 DFU 通道登记：此前 .dfu 落在「未登记扩展名」里只告警，等于放行写坏。
   { ext: 'dfu', channel: 'dfu-util', note: 'DfuSe 容器（带元素表）：只能由 dfu-util 写，esptool 写进去的是容器头部字节' },
   { ext: 'hex', channel: null, note: 'Intel HEX 是文本：esptool 只收裸二进制，先用 objcopy -I ihex -O binary in.hex out.bin 转换' },
-  { ext: 'img', channel: 'disk', note: '整盘镜像（SD 卡/eMMC）：走磁盘通道（list_targets），不写串口 flash' },
+  // .img 缺省仍归磁盘通道：同一个 .img 既可能是要拷到 SD 卡的整盘镜像，也可能是 Android 分区镜像，
+  // 字节级分不出目标。Android 那条路由**必须**显式 channel=fastboot（2026-10-31 接的 fastboot 通道），
+  // 猜错方向完全不同——把整盘镜像 flash 到一个分区，或把 boot.img 直接写卡。
+  { ext: 'img', channel: 'disk', note: '整盘镜像（SD 卡/eMMC）：走磁盘通道（list_targets），不写串口 flash；Android 分区镜像须显式 channel=fastboot + partition' },
 ];
 
 /**
