@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 // main/ 是 CJS：用具名 import 会被 cjs-module-lexer 判定失败，这里显式 require。
 const { matchBoard, parseUsbTree, classifyPorts, summarizeProbe } = require('../main/deviceProbe.js');
+const { partitionCandidates, buildFlashPlan, approvalCard } = require('../main/deviceFlash.js');
 
 let pass = 0;
 let fail = 0;
@@ -52,6 +53,38 @@ check('汇总：没有 esptool 时给出明确提示（刷机前必装）',
   summarizeProbe({ usbTree: TREE, ports: [], esptool: false }).notes.some((n) => n.includes('esptool')));
 check('汇总：什么都没插时提示「数据线 vs 充电线」（最常见的排查点）',
   summarizeProbe({ usbTree: { SPUSBDataType: [] }, ports: [], esptool: true }).notes.some((n) => n.includes('数据线')));
+
+// ── 烧写层（2026-10-31）：参数由工具算，模型只能选 ──
+{
+  const disks = [
+    { id: 'disk0', sizeBytes: 500 * 1024 ** 3, mediaName: 'APPLE SSD', mountpoints: ['/'], internal: true },
+    { id: 'disk4', sizeBytes: 32 * 1024 ** 3, mediaName: 'SanDisk Ultra', mountpoints: [], removable: true },
+    { id: 'disk5', sizeBytes: 8 * 1024 ** 3, mediaName: 'NO NAME', mountpoints: ['/Volumes/UNTITLED'], removable: true },
+    { id: 'disk6', sizeBytes: 200 * 1024 ** 2, mediaName: 'Tiny', mountpoints: [], removable: true },
+  ];
+  const { candidates, rejected } = partitionCandidates(disks);
+  check('烧盘候选：系统盘（挂着 /）与内置盘一律排除',
+    !candidates.some((c) => c.id === 'disk0') && rejected.some((r) => r.id === 'disk0' && r.why.includes('系统盘')),
+    `candidates=${candidates.map((c) => c.id).join(',')}`);
+  check('烧盘候选：可移动 SD 卡进入候选（含已挂载 /Volumes 的卡）',
+    candidates.some((c) => c.id === 'disk4') && candidates.some((c) => c.id === 'disk5'));
+  check('烧盘候选：过小的盘被排除并说明原因（避免把 200MB 的分区当卡烧）',
+    rejected.some((r) => r.id === 'disk6' && r.why.includes('容量过小')));
+
+  const plan = buildFlashPlan({ port: '/dev/cu.wchusbserial110', firmware: '/tmp/fw.bin', chip: 'esp32s3' });
+  check('刷机参数：按芯片装配（esp32s3 用 921600 且带 --chip/--port/write_flash）',
+    plan.ok && plan.argv.includes('esp32s3') && plan.argv.includes('921600') && plan.argv.includes('write_flash'),
+    JSON.stringify(plan.argv.slice(0, 6)));
+  check('刷机参数：缺串口/固件直接拒绝（不许模型自己拼设备名）',
+    buildFlashPlan({ firmware: '/tmp/fw.bin' }).ok === false && buildFlashPlan({ port: '/dev/cu.x' }).ok === false);
+  check('刷机参数：未登记芯片不猜，走默认并明确告警',
+    buildFlashPlan({ port: '/dev/cu.x', firmware: '/tmp/a.bin', chip: 'esp32p4' }).warnings.some((w) => w.includes('未登记芯片')));
+
+  const card = approvalCard({ action: '烧写 SD 镜像', target: 'disk4（SanDisk Ultra · 32GB）', impact: '整盘覆盖', consequence: '盘上原有数据不可恢复', rollback: '无（需重新制作镜像）' });
+  check('审批卡：不可逆动作标记为 never 档（每次都要弹）', card.level === 'never' && card.reversible === false);
+  check('审批卡：缺回滚说明直接抛错（不允许出现无回滚的不可逆卡）',
+    (() => { try { approvalCard({ action: 'a', target: 't', impact: 'i', consequence: 'c' }); return false; } catch (e) { return String(e.message).includes('rollback'); } })());
+}
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);
