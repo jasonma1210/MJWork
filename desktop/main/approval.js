@@ -876,13 +876,19 @@ function approvalSummary(tool, args = {}) {
       };
       const what = TITLES[act] || `设备操作（${act}）`;
       const segs = Array.isArray(args.segments) ? args.segments : [];
-      const target = args.partition
+      const dev = args.partition
         ? `${String(args.partition)}${args.slot ? `_${String(args.slot)}` : ''} 分区${args.serial ? `（设备 ${String(args.serial)}）` : ''}`
         : args.volume
           ? `UF2 卷 ${String(args.volume)}`
-          : `${String(args.port || '(未指定端口)')} ← ${args.firmware
-            ? String(args.firmware)
-            : (segs.length ? `${segs.length} 段镜像（${segs.map((s) => String(s?.offset || '?')).join(' / ')}）` : '(未指定固件)')}`;
+          : String(args.port || '(未指定端口)');
+      // 只有 plan / flash / verify 有「写什么」这回事；backup / logs / chip_id / list_targets 是只读动作，
+      // 硬套「端口 ← 固件」会印出「/dev/xxx ← (未指定固件)」这种自己都读不通的行（首版就是这么错的）。
+      const writes = act === 'plan' || act === 'flash' || act === 'verify';
+      const target = writes
+        ? `${dev} ← ${args.firmware
+          ? String(args.firmware)
+          : (segs.length ? `${segs.length} 段镜像（${segs.map((s) => String(s?.offset || '?')).join(' / ')}）` : '(未指定固件)')}`
+        : dev;
       const lines = [`动作：${what}`, `目标：${target}`];
       if (args.channel) lines.push(`写入通道：${String(args.channel)}`);
       if (args.chip) lines.push(`芯片参数：${String(args.chip)}`);

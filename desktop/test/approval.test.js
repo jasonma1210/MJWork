@@ -371,5 +371,18 @@ check('卡面棘轮：落 default 的集合 === 登记清单（新增工具落�
   actualJsonCard.length === KNOWN_JSON_CARD.length && KNOWN_JSON_CARD.every((t) => actualJsonCard.includes(t)),
   `实际 ${actualJsonCard.length} 条: ${actualJsonCard.join(', ')}`);
 
+// ④ 只读动作不得印出「写什么」——首版把「端口 ← 固件」套到 backup 上，卡面出现
+// 「/dev/cu.usbmodem1101 ← (未指定固件)」这种自己都读不通的行。卡面文案的质量问题恰恰
+// 不会被 ①②③ 抓住（它们只管有没有文案、有没有崩），只能靠对着真输出断内容。
+const backupCard = approval.approvalSummary('device_flash', { action: 'backup', port: '/dev/cu.usbmodem1101', out: '/tmp/bk.bin' });
+check('卡面：只读动作（backup）不出现「← 固件」这种写入措辞，且点明落盘路径与不可覆盖',
+  !backupCard.detail.includes('←') && backupCard.detail.includes('/tmp/bk.bin')
+  && backupCard.detail.includes('拒绝覆盖'), backupCard.detail.split('\n').slice(0, 3).join(' / '));
+// 反向：写入动作必须仍带箭头与固件名，否则上面那条会被「干脆不写目标」蒙过去。
+const flashCard = approval.approvalSummary('device_flash', { action: 'flash', port: '/dev/cu.usbmodem1101', firmware: 'fw.bin', plan_digest: 'abc' });
+check('卡面：写入动作（flash）带「端口 ← 固件」、且显式说明不会自动回滚',
+  flashCard.detail.includes('/dev/cu.usbmodem1101 ← fw.bin') && flashCard.detail.includes('不会自动回滚'),
+  flashCard.detail.split('\n')[1]);
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);
