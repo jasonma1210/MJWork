@@ -115,7 +115,11 @@ export async function runJudges({
     tokens: 0, calls: 0, judged: false,
   };
   if (typeof chatFn !== 'function' || !model?.provider || !model?.model) return out;
-  for (const kind of (Array.isArray(kinds) ? kinds : [])) {
+  // 2026-10-31：并行跑多个 kind。此前串行 ⇒ 收尾前「完成度 + 正确性」两次调用最坏沉默 60s
+  //（各 30s 看门狗），用户体感就是「模型写完了但界面卡住」。并行后最坏 30s，成本不变。
+  // 折叠仍按 kinds 原序进行，所以 missing_items 顺序、complete 合取语义与串行完全一致。
+  const list = Array.isArray(kinds) ? kinds : [];
+  const parts = await Promise.all(list.map(async (kind) => {
     try {
       const r = await withTimeout(chatFn({
         providerId: model.provider.id,
@@ -128,21 +132,26 @@ export async function runJudges({
         // 不换 tag 就会被 model:delta 一路推到渲染层，用户看到一段生 JSON）。
         quiet: true,
       }), timeoutMs, '独立审查');
-      out.calls += 1;
-      out.tokens += (Number(r?.usage?.prompt_tokens) || 0) + (Number(r?.usage?.completion_tokens) || 0);
-      const v = parseJudge(r?.content);
-      if (!v) continue; // 坏输出 = 未判定（fail-open），不把它当成「已完成」
-      out.judged = true;
-      if (kind === 'correctness') {
-        out.has_error = out.has_error || v.has_error;
-        if (v.error_detail) out.error_detail = out.error_detail ? `${out.error_detail}；${v.error_detail}` : v.error_detail;
-      } else {
-        // 多个 kind 时「完成」取合取：任一处判未完成就是未完成（不给自己开后门）。
-        out.complete = out.complete || v.complete;
-        for (const it of v.missing_items) if (!out.missing_items.includes(it)) out.missing_items.push(it);
-      }
+      return { kind, ok: true, v: parseJudge(r?.content), tokens: (Number(r?.usage?.prompt_tokens) || 0) + (Number(r?.usage?.completion_tokens) || 0) };
     } catch (e) {
       console.warn('[agent] 独立审查调用失败（不阻塞任务）:', e?.message || String(e));
+      return { kind, ok: false, v: null, tokens: 0 };
+    }
+  }));
+  for (const p of parts) {
+    if (!p.ok) continue; // 调用失败：既不计费也不算判定（与串行逐个 catch 同语义）
+    out.calls += 1;
+    out.tokens += p.tokens;
+    const v = p.v;
+    if (!v) continue; // 坏输出 = 未判定（fail-open），不把它当成「已完成」
+    out.judged = true;
+    if (p.kind === 'correctness') {
+      out.has_error = out.has_error || v.has_error;
+      if (v.error_detail) out.error_detail = out.error_detail ? `${out.error_detail}；${v.error_detail}` : v.error_detail;
+    } else {
+      // 多个 kind 时「完成」取合取：任一处判未完成就是未完成（不给自己开后门）。
+      out.complete = out.complete || v.complete;
+      for (const it of v.missing_items) if (!out.missing_items.includes(it)) out.missing_items.push(it);
     }
   }
   return out;

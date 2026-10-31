@@ -389,5 +389,24 @@ check('㉚ 空缺失项 → 空指令（不注入一条没有内容的「系统�
     traces.filter((e) => e.type === 'judge_stuck').length + ' 条');
 }
 
+// ── J. 双 Judge 并行（2026-10-31）：把收尾前最坏 60s 沉默砍到 30s ──
+// 语义等价性由「调用数 / 判定数 / 合取」三条保证；这里只钉「真的并行」——
+// 若退回串行，并发峰值会从 2 掉到 1，本断言立刻红。
+{
+  let inflight = 0; let maxInflight = 0;
+  const chatFn = async () => {
+    inflight += 1; maxInflight = Math.max(maxInflight, inflight);
+    await new Promise((r) => setTimeout(r, 10));
+    inflight -= 1;
+    return { content: '{"complete":true,"missing_items":[],"has_error":false}', usage: { prompt_tokens: 1, completion_tokens: 1 } };
+  };
+  const r = await runJudges({
+    chatFn, model, withTimeout: straight, goal: 'g',
+    acceptance: { must: ['a'], must_not: [] }, ledger: [], output: 'o', kinds: ['completion', 'correctness'],
+  });
+  check('双 Judge 并行：并发峰值 = 2 且调用数/判定不变（串行会让峰值掉到 1）',
+    maxInflight === 2 && r.calls === 2 && r.judged === true, `max=${maxInflight} calls=${r.calls}`);
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);
