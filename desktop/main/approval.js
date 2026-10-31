@@ -640,7 +640,7 @@ function approvalSummary(tool, args = {}) {
         level: 'L3',
         title: '丢弃工作区改动',
         detail: `将还原以下文件到上次提交状态：\n${String(args.files || '').slice(0, 300)}\n\n`
-          + '⚠ 这些文件里未提交的修改会**永久丢失，无法撤销**（面板内的 5 秒撤销快照仅覆盖刚才那一次）。'
+          + '⚠ 这些文件里未提交的修改会永久丢失、无法撤销（面板内的 5 秒撤销快照仅覆盖刚才那一次）。'
           + '确认要丢弃吗？',
       };
     case 'git_restore_staged':
@@ -680,7 +680,7 @@ function approvalSummary(tool, args = {}) {
         title: '创建定时任务',
         detail: `任务名：${args.name || '(未命名)'}\n计划：${String(args.schedule || '')}\n`
           + `执行内容：${String(args.prompt || '').slice(0, 300)}\n\n`
-          + '⚠ 该任务会按上述计划**无人值守自动执行**——你不在场时它也会跑。请确认内容与频率无误。',
+          + '⚠ 该任务会按上述计划无人值守自动执行——你不在场时它也会跑。请确认内容与频率无误。',
       };
     case 'install_plugin': {
       const what = args.kind === 'mcp'
@@ -773,7 +773,7 @@ function approvalSummary(tool, args = {}) {
       return {
         level: 'L2', title: '写入系统剪贴板',
         detail: `将把以下内容写入剪贴板（${String(args.text || '').length} 字符）：\n${String(args.text || '').slice(0, 500)}\n\n`
-          + '⚠ 你当前的剪贴板内容会被**覆盖且无法恢复**，请确认没有还没粘贴的东西。',
+          + '⚠ 你当前的剪贴板内容会被覆盖且无法恢复，请确认没有还没粘贴的东西。',
       };
     case 'http_request': {
       const method = String(args.method || 'GET').toUpperCase();
@@ -799,7 +799,7 @@ function approvalSummary(tool, args = {}) {
         level: readonly ? null : 'L3',
         title: readonly ? 'SQLite 只读查询' : 'SQLite 写入',
         detail: `数据库：${String(args.path || '')}\nSQL：${String(args.sql || '').slice(0, 500)}`
-          + (readonly ? '' : '\n\n⚠ 这是写语句，可能包含 DROP/DELETE 这类**直接销毁内容**的操作，'
+          + (readonly ? '' : '\n\n⚠ 这是写语句，可能包含 DROP/DELETE 这类直接销毁内容的操作，'
             + '且本机没有可回退的历史版本。请确认语句与目标库无误。'),
       };
     }
@@ -850,6 +850,34 @@ function approvalSummary(tool, args = {}) {
         detail: `入口文件：${String(args.path || '')}\n输出：同目录同名 .pdf\n`
           + `编译引擎：${String(args.engine || '自动选择（中文文档优先 xelatex，否则优先 tectonic）')}`,
       };
+    // ── 2026-10-31：工件写入与团队消息的卡面（此前落 default ⇒ 原始 JSON）──
+    // 这两个是「有后果」的一类：工件是**整章替换**（不是追加），团队消息省略 toMemberId 就是**广播全队**。
+    // 两件事都得让用户在点「允许」之前看见，否则他会以为只是追加一段、发给一个人。
+    case 'artifact_patch_section': {
+      const body = String(args.content || '');
+      return {
+        level: 'L2',
+        title: '写入工件章节（整章替换）',
+        detail: `章节：${String(args.section_key || '(未指定)')}\n`
+          + `基于版本：${String(args.base_version || '(未指定，会被拒)')}（乐观锁：与服务端当前版本不符即返回冲突与 diff，不会静默覆盖）\n`
+          + `新正文：${body.length} 字符${body.length > 16000 ? '（超过 16k 上限，会被拒）' : ''}\n`
+          + `变更说明：${String(args.change_summary || '(无)')}\n\n`
+          + '注意：这是整章替换，不是追加——该章节原有正文会被新内容完全取代（旧版本仍留在版本历史里，可回看 diff）。',
+      };
+    }
+    case 'team_send_message': {
+      const kindLabel = { assign: '派活', handoff: '移交', question: '提问', report: '汇报', artifact_ref: '引用工件' }[String(args.kind || 'report')] || String(args.kind || 'report');
+      const to = String(args.toMemberId || '').trim();
+      const refs = Array.isArray(args.refs) ? args.refs : [];
+      return {
+        level: 'L2',
+        title: `团队消息：${kindLabel}${to ? '' : '（广播全队）'}`,
+        detail: `收件人：${to || '未指定成员 ⇒ 广播给全队每个成员'}\n`
+          + `类型：${kindLabel}\n摘要：${String(args.summary || '(空)')}\n`
+          + (refs.length ? `引用：${refs.slice(0, 6).map((r) => String(r)).join('、')}\n` : '')
+          + '\n发送者身份与运行归属由系统注入，模型无法伪造；消息一旦发出无法撤回。',
+      };
+    }
     // ── V03：受限沙箱不可用时的单次非沙箱执行审批卡 ──
     case 'unconfined_exec':
       return {

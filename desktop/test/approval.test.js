@@ -361,10 +361,11 @@ check('卡面：L1 / 不可记忆工具全部有专门文案（不得落 default
 // ② 棘轮（只减不增）：其余仍落 default 的工具必须**恰好等于**这份清单。
 // 双向断言的用处相反也成立——补了文案却没从清单删名，同样红（否则清单会烂成一份自我安慰的名单）。
 // 补文案时把名字删掉即可，不需要改断言的其它部分。
+// 余下 10 项都是只读或纯内部动作（检索 / 网络读 / 子代理 / 团队等待），卡面是 JSON 不构成安全缺口，
+// 只是不好看；真要补时从这份清单里删名即可。**有后果的都已补**：工件整章替换、团队广播、对外 PR、设备烧写。
 const KNOWN_JSON_CARD = [
   'search_plugins', 'pr_list', 'pr_view', 'pr_diff', 'web_search', 'web_fetch',
-  'deep_research', 'spawn_subagent', 'orchestrate_task', 'team_send_message', 'team_wait',
-  'artifact_patch_section',
+  'deep_research', 'spawn_subagent', 'orchestrate_task', 'team_wait',
 ];
 const actualJsonCard = APPROVAL_SURFACE.filter((t) => cardTitle(t).title === t);
 check('卡面棘轮：落 default 的集合 === 登记清单（新增工具落进来即红，补了文案没删名也红）',
@@ -383,6 +384,40 @@ const flashCard = approval.approvalSummary('device_flash', { action: 'flash', po
 check('卡面：写入动作（flash）带「端口 ← 固件」、且显式说明不会自动回滚',
   flashCard.detail.includes('/dev/cu.usbmodem1101 ← fw.bin') && flashCard.detail.includes('不会自动回滚'),
   flashCard.detail.split('\n')[1]);
+
+// ⑤ 卡面不得含 markdown 标记。ApprovalCard 用 `<pre>` **纯文本**渲染 detail ⇒ `**加粗**` 不会被渲染，
+// 用户看到的是字面星号。这是四类文案自己的问题（git_checkout / scheduled_create / clipboard / sqlite 各一处），
+// 2026-10-31 清掉。**为什么用源码扫描而不是枚举工具**：这些文案绝大多数只在特定参数下才出现
+// （sqlite 要写语句、clipboard 要 action=write），枚举工具配一套参数样本既漏又脆；而「文件里有 `**`」
+// 是判据本身。前提是先把注释剥掉——本文件注释里到处是 `**`（剥不干净会假红）。
+function blankComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:\\])\/\/[^\n]*/g, (m, p) => p + m.slice(p.length).replace(/./g, ' '));
+}
+// 验证器先被验证：剥不干净的话，下面那条要么恒绿（没剥 ⇒ 假红）要么恒真（全剥 ⇒ 连字符串也剥了）。
+check('自检：blankComments 真能剥掉块注释与行注释，且不破坏字符串里的 //',
+  blankComments('a /* **b** */ c').includes('**') === false
+  && blankComments('a // **b**\nc').includes('**') === false
+  && blankComments("const u = 'http://x/**';").includes('http://x/**') === true);
+const APPROVAL_SRC_FILE = require('path').join(__dirname, '..', 'main', 'approval.js');
+const mdMarks = blankComments(require('fs').readFileSync(APPROVAL_SRC_FILE, 'utf8'))
+  .split('\n').map((l, i) => ({ line: i + 1, text: l.trim() })).filter((x) => x.text.includes('**'));
+check('卡面：approval.js 去注释后不得含字面 `**`（卡片纯文本渲染，星号会原样印给用户）',
+  mdMarks.length === 0, mdMarks.map((x) => `${x.line}:${x.text.slice(0, 40)}`).join(' | '));
+
+// ⑥ 两处「最容易读错」的地方，必须写在卡面上（不是写在注释里）：
+// 团队消息省略 toMemberId = 广播全队（用户会以为发给某一个人）；工件是整章替换（会以为只是追加）。
+const broadcastCard = approval.approvalSummary('team_send_message', { summary: '今晚冻结发版' });
+const unicastCard = approval.approvalSummary('team_send_message', { toMemberId: 'rev-1', summary: '看一眼' });
+check('卡面：团队消息省略收件人时，标题与正文都要出现「广播」（不能只写「未指定」）',
+  broadcastCard.title.includes('广播') && broadcastCard.detail.includes('广播给全队')
+  && !unicastCard.title.includes('广播') && unicastCard.detail.includes('rev-1'),
+  `${broadcastCard.title} / ${unicastCard.title}`);
+const patchCard = approval.approvalSummary('artifact_patch_section', { section_key: 'ch2', content: 'abc', base_version: 'V1.2' });
+check('卡面：工件写入必须点明「整章替换」与 base_version（否则用户会当成追加，也不会注意到乐观锁）',
+  patchCard.detail.includes('整章替换') && patchCard.detail.includes('V1.2')
+  && patchCard.detail.includes('不是追加'), patchCard.detail.split('\n')[0]);
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);
