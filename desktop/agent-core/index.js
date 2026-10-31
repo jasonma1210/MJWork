@@ -24,7 +24,7 @@ import { noteToolOutcome } from './loopGuard.js';
 import { segmentDecision, segmentHandoffStep, spentOf, MAX_SEGMENTS, SEGMENT_HANDOFF_RATIO } from './segmentHandoff.js';
 import { buildCheckPlan, checkAgainstLedger } from './hardCheck.js';
 import { resolveAcceptance } from './acceptance.js';
-import { runJudges, buildReflection, JUDGE_EVERY_DEFAULT, MAX_REFLECTIONS } from './judge.js';
+import { runJudges, buildReflection, JUDGE_EVERY_DEFAULT, MAX_REFLECTIONS, FINAL_PUSH_MAX } from './judge.js';
 export { budgetDecision, TOKEN_COMPACTION_TRIGGER, TOKEN_COMPACT_MIN_RATIO, TASK_TOTAL_TOKEN_CAP, DEFAULT_CONTEXT_WINDOW_FALLBACK };
 
 // ── node:fs 惰性获取（仅 sessionDir 落盘时需要）──
@@ -3305,7 +3305,7 @@ export async function runAgent({
   // M4：独立 Judge 的账单独记（不与主循环用量混在一起——否则「审查花了多少」永远查不出来）。
   // M5：AC 满足率（acSatisfied / acTotal）。只在 **Judge 真判过** 时才赋值——
   // 未判定就显示「4/4」等于替模型背书，那正是本轮要消灭的自欺。
-  let judgeTokens = 0, judgeCalls = 0, reflections = 0, acTotal = 0, acSatisfied = 0, judgeMissing = 0, judgeError = false, lastMissingKey = '', judgeRecords = []; // judgeRecords：每轮判定留痕（随断点落盘，事故后可还原「Judge 每轮怎么判的」）
+  let judgeTokens = 0, judgeCalls = 0, reflections = 0, finalPushes = 0, acTotal = 0, acSatisfied = 0, judgeMissing = 0, judgeError = false, lastMissingKey = '', judgeRecords = []; // judgeRecords：每轮判定留痕（随断点落盘，事故后可还原「Judge 每轮怎么判的」）
   // 判定逻辑全在 agent-core/judge.js（输入刻意不含思考过程），这里只接线、记账、留痕。
   const judgeNow = async (kinds) => {
     const r = await runJudges({ chatFn, model, withTimeout, goal: acGoal, acceptance: acResult.ac, ledger: toolLedger, output: finalText, kinds });
@@ -3663,7 +3663,8 @@ export async function runAgent({
       // 仅在**有 AC** 时才判：没有验收基线就无从判「完成」，跑了也只是白花一次调用
       //（实测教训：不加这个门，每个无 AC 的 run 都会多出 2 次模型调用）。
       const jr = acResult.ac ? await judgeNow(['completion', 'correctness']) : null;
-      if (jr?.missing_items.length && reflections < MAX_REFLECTIONS) { reflections += 1; renewNotice = buildReflection(jr.missing_items); continue; }
+      // 反思额度用尽后仍给 finalPushes 次续跑（真机反馈：13/120 轮、额度 3% 就收尾了——不是没力气，是被自己的反思额度停了）
+      if (jr?.missing_items.length && (reflections < MAX_REFLECTIONS || finalPushes < FINAL_PUSH_MAX)) { if (reflections < MAX_REFLECTIONS) { reflections += 1; renewNotice = buildReflection(jr.missing_items); } else { finalPushes += 1; renewNotice = `${buildReflection(jr.missing_items)}\n（反思额度已用尽，这是最后 ${FINAL_PUSH_MAX - finalPushes + 1} 次补齐机会：确实做不到的项请明确说明原因与替代方案，不要沉默收尾。）`; } continue; }
       if (jr?.missing_items.length) finalText += `\n\n（独立审查判定以下验收项尚未确认完成：${jr.missing_items.join('、')}）`;
       if (jr?.has_error && jr.error_detail) finalText += `\n\n（独立审查发现产出与事实可能有出入：${jr.error_detail}）`;
       // 纯文本收尾视为本轮对话完成。「只说不做」由系统提示第 8 条（持续执行纪律）约束，

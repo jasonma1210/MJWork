@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseJudge, buildJudgePrompt, buildReflection, runJudges, JUDGE_EVERY_DEFAULT, MAX_REFLECTIONS } from '../agent-core/judge.js';
+import { parseJudge, buildJudgePrompt, buildReflection, runJudges, JUDGE_EVERY_DEFAULT, MAX_REFLECTIONS, FINAL_PUSH_MAX } from '../agent-core/judge.js';
 import { parseAcceptance, hasAcceptance, buildAcceptancePrompt, resolveAcceptance, AC_MAX_ITEMS, AC_MAX_ITEM_CHARS } from '../agent-core/acceptance.js';
 import { runAgent } from '../agent-core/index.js';
 import { pathsIn, buildCheckPlan, checkAgainstLedger } from '../agent-core/hardCheck.js';
@@ -253,11 +253,12 @@ check('㉚ 空缺失项 → 空指令（不注入一条没有内容的「系统�
   const probes = calls.filter(isJudgeProbe);
   const mains = calls.filter((p) => !isJudgeProbe(p) && !/验收标准提取器/.test(String(p?.messages?.[0]?.content || '')));
   check('㉞ 判出缺失 → 反思回溯：多跑一轮（主循环轮数 = MAX_REFLECTIONS + 1）',
-    mains.length === MAX_REFLECTIONS + 1, `mains=${mains.length}`);
+    mains.length === MAX_REFLECTIONS + FINAL_PUSH_MAX + 1, `mains=${mains.length}`);
   check('㉟ 回溯额度用尽后如实收尾：产出里写明「哪些验收项尚未确认完成」',
     /尚未确认完成/.test(doneText) && /补安装步骤/.test(doneText), String(doneText).slice(-80));
-  check('㊱ Judge 调用次数有界（每轮收尾 2 次：完成度 + 正确性）',
-    probes.length === (MAX_REFLECTIONS + 1) * 2, `probes=${probes.length}`);
+  // 收尾每轮 2 次（完成度 + 正确性）×(反思 2 + 补齐 2 + 1)；另有 1 次周期性完成度判定（第 4 轮）。
+  check('㊱ Judge 调用次数有界（每轮收尾 2 次 + 1 次周期性）',
+    probes.length === (MAX_REFLECTIONS + FINAL_PUSH_MAX + 1) * 2 + 1, `probes=${probes.length}`);
 }
 {
   const { calls } = await runOnce({ acceptance: false, script: [{ content: '做完了' }] });
