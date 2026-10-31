@@ -17,16 +17,17 @@ export const DEVICE_TOOL_SCHEMAS = [
       + 'flashable（可烧写候选）、toolchain.esptool（工具链是否就绪）与 notes（探测失败/降级原因）。'
       + '另返回 bridges（verdict 五档 ready / need-driver / driver-loaded-no-port / not-serial / unknown）'
       + '与 portDetails（每条串口的 hwid 身份；real=false=确认非 USB 串口如蓝牙虚拟口，real=null=查不到）。'
-      + '回答「为什么烧不进去」**先看 bridges[].verdict**：need-driver 是装驱动；driver-loaded-no-port 不是'
-      + '（设备当前模式没串口）；not-serial（DFU/UF2/调试探针）本来就没串口。'
-      + '还返回 channels：每个设备该走哪条刷写通道（esptool-serial / dfu-util / uf2-copy / '
-      + 'openocd-swd / stm32flash-serial / avrdude-serial / fastboot）与三件事：'
-      + 'confidence（certain=芯片身份确定 / probe-required=桥芯片背后可能是任意 MCU，'
-      + '须先用 device_flash action=chip_id 握手问清，**不要**让用户自己去命令行跑）、'
+      + '「为什么烧不进去」**先看 bridges[].verdict**：need-driver 是装驱动；driver-loaded-no-port 是模式不对'
+      + '（没出串口）；not-serial（DFU/UF2/探针）本来没串口。'
+      + '还返回 channels：每个设备该走哪条刷写通道（名见 name）与三点：'
+      + 'confidence（certain=身份确定 / probe-required=桥芯片后可能是任意 MCU，'
+      + '须先用 device_flash action=chip_id 握手问清，**别**让用户自己敲命令）、'
       + 'implemented（本版本是否已接线执行器）、runnable（现在能否立即执行）。'
-      + '**只有 runnable=true 才能承诺「可以烧」**；implemented=false = 只识别得出通道、还不能执行。'
-      + 'primaryChannel 是首选目标（优先能跑、其次身份确定）。'
-      + '不刷机、不装驱动、不碰 sudo（刷写与装驱动属不可逆动作，另由用户确认）。',
+      + '**只有 runnable=true 才能说「可以烧」**；implemented=false = 认得出通道、不能执行。'
+      + 'primaryChannel 首选（优先能跑、其次身份确定）。'
+      + 'android：用户态 Android 设备的型号/系统/ABI/槽与下一步；此态不可刷，须用户进 bootloader'
+      + '（别代执行）。null=查不到≠没有设备。'
+      + '不刷机、不装驱动、不碰 sudo（刷写与装驱动不可逆，须用户确认）。',
     parameters: { type: 'object', properties: {} },
   }},
 ];
@@ -34,11 +35,15 @@ export const DEVICE_TOOL_SCHEMAS = [
 // device_flash 的芯片名**刻意不加 enum**：未知芯片不是错误，`buildFlashPlan` 会走 esptool 默认值
 // 并明确告警。加 enum 会把「新芯片刚上市」变成「模型调不动」，而实际能不能烧由 esptool 决定。
 //
-// ⚠ 预算压力（2026-10-31 实测）：`test/context-budget.test.mjs` 要求
-// `MAX_TOOL_SCHEMA_TOTAL_BYTES > toolTableByteSize(BASE_TOOLS) * 1.5`，而本文件加完
-// fastboot 的 channel/partition/serial/slot 四个属性后，整表 43679 / 阈值线 43690 —— **余量只剩 11 字节**。
-// 也就是说：这里再加一个字段（或把描述写长两行）就会让那条闸变红，而它不是坏闸，
-// 是「静态工具表已经吃满 64KB 预算」的信号。真要加字段，先想清楚三件事：
+// ⚠ 预算压力（2026-10-31 实测，每次改本文件都要重测）：`test/context-budget.test.mjs` 要求
+// `MAX_TOOL_SCHEMA_TOTAL_BYTES(65536) > toolTableByteSize(BASE_TOOLS) * 1.5`，即整表必须 < 43690 字节。
+// 当前 **43676 / 余 14 字节**（一个汉字 3 字节，也就是说这里再多写 5 个汉字就红）。
+// 这个数字变过好几次，别信任何一处抄来的旧值，用这条命令现取：
+//   node --input-type=module -e "import p from 'node:path';const{BASE_TOOLS}=await import(p.resolve('agent-core/index.js'));const{toolTableByteSize}=await import(p.resolve('shared/contextBudget.mjs'));console.log(toolTableByteSize(BASE_TOOLS))"
+// 加 `android` 段时就是靠删冗余腾出的字节：原来 device_probe 描述里把 7 条通道名逐个列了一遍
+// （esptool-serial / dfu-util / …），既占 ~100 字节，又和 device_flash 的 channel enum
+// （esptool / dfu / fastboot）**不是同一套名字**，模型照抄会被拒 —— 改成「名见 name 字段」是净收益。
+// 真要加字段，先想清楚三件事：
 //   ① 能不能把信息压进已有属性（例如用 enum 而不是新段落）；② 能不能删掉别处的重复描述；
 //   ③ 只有当前两条都不成立时，才去动 `MAX_TOOL_SCHEMA_TOTAL_BYTES` 并同时改它的钉值测试与设计文档。
 export const DEVICE_FLASH_SCHEMAS = [

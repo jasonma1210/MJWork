@@ -18,6 +18,9 @@ const {
 } = require('../main/deviceFlash.js');
 const { parseDiskutilListText } = require('../main/diskList.js');
 const { deviceProbeHandler, parseLinuxUsb, parseWinUsb, resolveEsptoolFromPath, PROBES } = require('../main/tools/deviceProbeTool.js');
+const {
+  parseAdbDevices, parseAdbDeviceLine, pickAdbDevice, parseGetprop, summarizeAndroid, describeAndroid, isSafeSerial,
+} = require('../main/deviceAdb.js');
 const { deviceFlashHandler, inspectSegments, resetSubcommandCacheForTest } = require('../main/tools/deviceFlashTool.js');
 const {
   parseHwid, splitPyserialOutput, parsePyserialDetailed, parseLoadedDrivers, assessBridges,
@@ -2239,6 +2242,139 @@ const hostExec = async (cmd) => {
   const stray = esptoolFormatCheck('/a/fw.weird');
   check('对照：未登记扩展名仍只告警放行（登记 .zip 没把格式闸变成白名单）',
     stray.ok === true && String(stray.warning).includes('未登记的镜像格式'));
+}
+
+// ── L2b：Android 用户态识别（2026-10-31）────────────────────────────────────
+// 目标：把「手机在用户态」与「这块板不支持烧写」分开 —— 前者下一步是让用户进 bootloader，
+// 后者是换通道。判据全部来自本机实测（adb 37.0.0），不凭印象。
+{
+  // ① 无设备时的真实字节：`b'List of devices attached\n\n'` + exit 0 —— 有输出 ≠ 有设备
+  const emptyOut = 'List of devices attached\n\n';
+  const e1 = parseAdbDevices(emptyOut);
+  check('adb 无设备：表头恒在（实测 `List of devices attached\\n\\n` + exit 0）⇒ 必须是 0 台而不是「有输出就有设备」',
+    e1.sawHeader === true && e1.devices.length === 0);
+  const e2 = parseAdbDevices('');
+  check('adb 没装/输出异常（无表头）与「adb 正常但没插设备」分成两档（压成一个会让人去查 USB 线）',
+    e2.sawHeader === false && e2.devices.length === 0);
+
+  // ② 表头之前的守护进程自述不得被读成设备
+  const noisy = '* daemon started successfully *\n'
+    + "adb server version (41) doesn't match this client (40); killing...\n"
+    + 'List of devices attached\n'
+    + 'c35e1792               device usb:3-1 product:OPD2409 model:OPD2409 device:OPD2409 transport_id:1\n';
+  const d1 = parseAdbDevices(noisy);
+  check('表头之前的 daemon 自述/版本告警不会被读成假设备（否则会造出一台叫 adb、状态叫 server 的设备）',
+    d1.devices.length === 1 && d1.devices[0].serial === 'c35e1792', JSON.stringify(d1.devices.map((d) => d.serial)));
+  const line1 = parseAdbDeviceLine('c35e1792               device usb:3-1 product:OPD2409 model:OPD2409 transport_id:1');
+  check('设备行解析：serial / state / product / model 都取到', line1.serial === 'c35e1792' && line1.state === 'device'
+    && line1.props.model === 'OPD2409' && line1.props.transport_id === '1');
+
+  // ③ 序列号是「外部字符串流向我方 argv」的唯一路径，必须白名单
+  check('序列号白名单：真实形态放过（c35e1792 / emulator-5554 / 192.168.1.5:5555）',
+    isSafeSerial('c35e1792') && isSafeSerial('emulator-5554') && isSafeSerial('192.168.1.5:5555'));
+  check('序列号白名单：注入形态拒绝（恶意 USB 设备可自报任意序列号）',
+    !isSafeSerial('x; rm -rf ~') && !isSafeSerial('a$(whoami)') && !isSafeSerial('a`id`') && !isSafeSerial(''));
+
+  // ④ 多台不挑第一台
+  const two = parseAdbDevices('List of devices attached\nAAA\tdevice\nBBB\tdevice\n').devices;
+  const pick2 = pickAdbDevice(two, '');
+  check('多台在线时拒绝自动选（列清单让用户指定，而不是挑枚举顺序里的第一台）',
+    pick2.ok === false && pick2.reason === 'multiple' && String(pick2.error).includes('AAA')
+    && String(pick2.error).includes('BBB'));
+  const unauthOne = parseAdbDevices('List of devices attached\nAAA\tunauthorized\n').devices;
+  const pickU = pickAdbDevice(unauthOne, '');
+  check('唯一那台未授权时给「不可用」而不是「成功选中」', pickU.ok === false && pickU.reason === 'not-usable');
+
+  // ⑤ getprop 解析（Android 的 shell 输出带 \r）
+  const gp = parseGetprop('[ro.product.model]: [OPD2409]\r\n[ro.build.version.release]: [15]\r\n\r\n[ro.secure]: [1]\r\n');
+  check('getprop 解析：去掉 \\r、只认 `[k]: [v]` 形态', gp['ro.product.model'] === 'OPD2409'
+    && gp['ro.build.version.release'] === '15' && gp['ro.secure'] === '1');
+  const sum = summarizeAndroid({
+    'ro.product.manufacturer': 'OPPO', 'ro.product.model': 'OPD2409', 'ro.product.device': 'OPD2409',
+    'ro.build.version.release': '15', 'ro.product.cpu.abi': 'arm64-v8a', 'ro.boot.slot_suffix': '_b',
+  });
+  check('摘要：厂商/型号/代号/系统/ABI 与 A/B 槽位（槽位决定要不要带 _a/_b）',
+    sum.manufacturer === 'OPPO' && sum.model === 'OPD2409' && sum.androidVersion === '15'
+    && sum.abi === 'arm64-v8a' && sum.slot === '_b');
+  const sumNoAb = summarizeAndroid({ 'ro.product.model': 'X' });
+  check('摘要：A/B 判据缺席时 abUpdate=null（读不到 ≠ 不是 A/B，压缩成 false 会误导选包）',
+    sumNoAb.abUpdate === null);
+
+  // ⑥ 结论：任何 ADB 状态都不能直接刷
+  const ddU = describeAndroid({ device: { serial: 'AAA', state: 'unauthorized' } });
+  check('未授权：canFlash=false 且下一步是「在手机上点允许」，不提重启/换线',
+    ddU.canFlash === false && ddU.next.includes('允许') && !ddU.next.includes('bootloader'));
+  const ddB = describeAndroid({ device: { serial: 'AAA', state: 'bootloader' } });
+  check('bootloader 状态：直接指向 fastboot 通道（已在烧写模式，别让它再重启一次）',
+    ddB.next.includes('fastboot'));
+
+  // ⑦ 端到端：注入 exec + runArgv
+  const adbExec = (out) => async (cmd) => {
+    if (cmd.includes('adb devices')) return { stdout: out };
+    return { stdout: '' };
+  };
+  const called = [];
+  const mk = (devOut, runImpl) => ({
+    platform: 'darwin', exec: adbExec(devOut),
+    runArgv: async (argv, ms) => { called.push({ argv, ms }); return runImpl ? runImpl() : { code: 0, stdout: '', stderr: '' }; },
+  });
+
+  const androidNote = 'adb 未安装或输出异常（未见表头）：无法判断是否有 Android 设备处于用户态；'
+    + '若接的是手机，装 platform-tools 后重试';
+  const pNone = await deviceProbeHandler(mk(''));
+  check('端到端：adb 没装 ⇒ android=null（查不到）且有 note，不静默降级成「没有设备」',
+    pNone.android === null && pNone.notes.includes(androidNote));
+  const pEmpty = await deviceProbeHandler(mk('List of devices attached\n\n'));
+  check('端到端：adb 在但没设备 ⇒ android 是「查了、0 台」而不是 null（null 只留给查不到）',
+    pEmpty.android && Array.isArray(pEmpty.android.devices) && pEmpty.android.devices.length === 0);
+
+  called.length = 0;
+  const props1 = '[ro.product.manufacturer]: [OPPO]\r\n[ro.product.model]: [OPD2409]\r\n'
+    + '[ro.build.version.release]: [15]\r\n[ro.product.cpu.abi]: [arm64-v8a]\r\n';
+  const pDev = await deviceProbeHandler(mk('List of devices attached\nc35e1792\tdevice usb:3-1\n', () => ({ code: 0, stdout: props1, stderr: '' })));
+  check('端到端：唯一在线设备 ⇒ 读 getprop 并给出型号/系统（这正是「该刷哪份固件」的依据）',
+    pDev.android.summary.model === 'OPD2409' && pDev.android.summary.androidVersion === '15'
+    && pDev.android.picked === 'c35e1792');
+  check('端到端：getprop 走 **argv**（不是拼 shell 字符串）—— 注入面交给陌生人设备就完了',
+    called.length === 1 && Array.isArray(called[0].argv)
+    && called[0].argv.join('\u0000') === ['adb', '-s', 'c35e1792', 'shell', 'getprop'].join('\u0000'),
+    JSON.stringify(called.map((c) => c.argv)));
+  check('端到端：用户态一律 canFlash=false，且提示要用户自己进 bootloader（不代执行 reboot）',
+    pDev.android.canFlash === false && pDev.android.next.includes('bootloader')
+    && pDev.notes.some((n) => n.includes('bootloader')));
+
+  called.length = 0;
+  const pUn = await deviceProbeHandler(mk('List of devices attached\nAAA\tunauthorized\n'));
+  check('端到端：未授权时不跑 getprop（跑了也是白跑，还会把 exit=1 误报成「读不到型号」），且下一步指向授权',
+    called.length === 0 && pUn.android.state === 'unauthorized' && pUn.android.canFlash === false
+    && pUn.android.next.includes('允许'), `${called.length}/${String(pUn.android.next).slice(0, 24)}`);
+
+  called.length = 0;
+  // 注意：adb 的协议是空白分隔，所以「恶意序列号」不可能带空格（带了就变成另一列）。
+  // 这里给的是**真实可达**的形态：无空格、带 shell 元字符。
+  const pBad = await deviceProbeHandler(mk('List of devices attached\nx;rm\tdevice\n'));
+  check('端到端：序列号含注入字符 ⇒ 拒绝定位、不调 argv（外部字符串不进命令）',
+    called.length === 0 && String(pBad.android.error).includes('非法字符'), String(pBad.android.error).slice(0, 40));
+
+  called.length = 0;
+  const pMulti = await deviceProbeHandler(mk('List of devices attached\nAAA\tdevice\nBBB\tdevice\n'));
+  check('端到端：多台在线时不读 getprop（会读到别人机器上）',
+    called.length === 0 && String(pMulti.android.error).includes('序列号'));
+
+  called.length = 0;
+  const pFail = await deviceProbeHandler(mk('List of devices attached\nAAA\tdevice\n', () => ({ code: 1, stdout: '', stderr: 'error: closed' })));
+  check('端到端：getprop 退出码非 0 ⇒ 报 exit 与 stderr，不把「查失败」写成「型号为空」',
+    String(pFail.android.error).includes('exit=1') && String(pFail.android.error).includes('closed')
+    && pFail.android.summary === null);
+  called.length = 0;
+  const pKill = await deviceProbeHandler(mk('List of devices attached\nAAA\tdevice\n', () => ({ code: null, stdout: '', stderr: '', killed: true })));
+  check('端到端：getprop 超时被杀单列一档（与「退出码非 0」不是同一类故障，下一步也不同）',
+    String(pKill.android.error).includes('超时') && !String(pKill.android.error).includes('exit='));
+
+  // ⑧ win32 未接线要说出来，不能静默当「没有 Android 设备」
+  const pWin = await deviceProbeHandler({ platform: 'win32', exec: async () => ({ stdout: '' }), runArgv: async () => ({ code: 0, stdout: '' }) });
+  check('win32 未接线 adb 探测 ⇒ android=null 且 note 说明「无法判断」（不是「没有设备」）',
+    pWin.android === null && pWin.notes.some((n) => n.includes('暂未接线 adb 探测')));
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

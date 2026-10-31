@@ -8,17 +8,23 @@
 //   推导驱动集逐环节比对），别只信本注释——注释会漂，门禁不会。
 //
 // 纪律：
-//   · 只读：本 handler **不写任何东西**，只跑五条只读命令（列 USB、列串口、查 esptool、
-//     详细串口枚举、驱动加载状态）；
+//   · 只读：本 handler **不写任何业务文件**，只跑七条只读命令（列 USB、列串口、查 esptool、
+//     详细串口枚举、驱动加载状态、执行器探测、adb 设备枚举）+ 一条 getprop；
+//     唯一的副作用来自 adb 自身：首次调用会在 ~/.android 下生成 adbkey 并常驻一个
+//     **只监听 127.0.0.1** 的 adb daemon（不出网、不写项目目录）。这一点在 approval.js 的
+//     只读档论证里同样写明 —— 声称「不写盘」而实际上写了，比不写这句更坏。
 //   · exec 由调用方注入：便于单测（给假输出）与权限控制（走宿主既有 shell 通道）；
 //   · 失败不抛：探测失败只体现在 notes 里 —— 探测是「给出信息」，不该因为一条命令失败就中断任务。
 
-const { exec: execCb } = require('child_process');
+const { exec: execCb, execFile: execFileCb } = require('child_process');
 const { summarizeProbe } = require('../deviceProbe'); // deviceProbe.js 在 main/ 下，本文件在 main/tools/
 const { splitPyserialOutput, parsePyserialDetailed, parseLoadedDrivers, assessBridges } = require('../devicePorts');
 const {
   EXECUTOR_NAMES, EXECUTOR_PROBE_SENTINEL, parseExecutors, resolveChannels,
 } = require('../deviceChannels');
+const {
+  parseAdbDevices, pickAdbDevice, parseGetprop, summarizeAndroid, describeAndroid, isSafeSerial,
+} = require('../deviceAdb');
 
 // 「pyserial 可用」的唯一信号是这条 echo：装了 pyserial 但当前 0 个端口，与没装 pyserial，
 // 输出**都是空列表**——只看列表长度会把「没装」误判成「没插设备」。
@@ -50,6 +56,9 @@ const PROBES = {
     // kextstat 在 Apple Silicon 上仍在，但 kmutil 是官方替代且输出同格式；用 kmutil 少一层兼容。
     drivers: DRIVER_PROBE('kmutil showloaded', 'usb\\.cdc|wch|ch34|slab|cp210|ftdi'),
     executors: EXECUTOR_SCAN,
+    // `adb devices -l`：无设备时 stdout 是 `List of devices attached\n\n` + exit 0（**有输出 ≠ 有设备**）。
+    // 有 adb 才跑：`command -v` 为假时整条短路，不会因 ENOENT 让 exec 报错。
+    adb: 'command -v adb >/dev/null 2>&1 && adb devices -l || true',
   },
   linux: {
     // /sys 比 lsusb 更可靠（不依赖 usbutils 安装）
@@ -60,12 +69,13 @@ const PROBES = {
     // 注意：lsmod 只能说明模块在内存里，不代表设备已绑定 —— 结论以「端口有没有出来」为准。
     drivers: DRIVER_PROBE('lsmod', 'cdc_acm|ch34|cp210|ftdi|wch|usbserial'),
     executors: EXECUTOR_SCAN,
+    adb: 'command -v adb >/dev/null 2>&1 && adb devices -l || true',
   },
   win32: {
     usb: 'powershell -NoProfile -Command "Get-PnpDevice -Class Ports | Select-Object FriendlyName,InstanceId | ConvertTo-Json -Compress"',
     ports: 'powershell -NoProfile -Command "[System.IO.Ports.SerialPort]::GetPortNames() -join \\"`n\\""',
     esptool: 'where esptool 2>nul || where esptool.py 2>nul',
-    // serialDetailed / drivers / executors 暂不接线：POSIX 的 for 循环与 $(...) 在 cmd.exe 下语义不同，
+    // serialDetailed / drivers / executors / adb 暂不接线：POSIX 的 for 循环与 $(...) 在 cmd.exe 下语义不同，
     // 未在真机验证过的命令不写进来（宁可少一个信号，也不要给出错的结论）。
     // 代价是 win32 上 installed 恒为 null（未知）而不是 false——这个区别由 deviceChannels 保留，
     // 结论会写成「未探测」而不是「没装」。
@@ -114,13 +124,115 @@ function parseWinUsb(stdout) {
 }
 
 /**
+ * L2b：Android 用户态设备识别。**只读，且绝不替用户重启设备。**
+ *
+ * 存在理由：`bridges[].verdict = not-serial` 对 DFU 板 / UF2 盘是对的，对一台手机**是误导** ——
+ * 手机在用户态（USB 调试已开）本来就没有串口，用户看到 not-serial 会以为「这块板不能烧」，
+ * 而真相是「它现在不在烧写模式」：下一步不是换通道，而是把手机重启进 bootloader。
+ *
+ * 返回值的三态是本函数最重要的约定（C-001：不能把「没查到」与「查失败」压同形）：
+ *   · `null`            —— **查不到**（平台未接线 / adb 未安装或输出异常）：不能断言「没有设备」；
+ *   · `{devices: []}`   —— 查了，确实一台 Android 设备都没有；
+ *   · 有设备            —— 带 state / label / next，多台或未授权时给 error 而不是随便挑一台。
+ *
+ * `canFlash` 恒为 false：没有任何 ADB 状态能直接刷写。
+ */
+async function probeAndroid({ raw, wired = true, runArgv } = {}) {
+  const notes = [];
+  if (!wired) {
+    return {
+      android: null,
+      notes: ['本平台暂未接线 adb 探测（win32 的复合命令未在真机验证）：无法判断是否有手机处于用户态，'
+        + '若接的是手机请用 `adb devices -l` 自行确认'],
+    };
+  }
+  const parsed = parseAdbDevices(raw);
+  if (!parsed.sawHeader) {
+    // 没有表头 ⇒ 这不是 adb 的正常输出（没装 / 版本不对 / 输出被截）。此时**不能**说「没有 Android 设备」：
+    // 一句「没插手机」会让用户去翻线和驱动，而真正要装的是 platform-tools。
+    notes.push('adb 未安装或输出异常（未见表头）：无法判断是否有 Android 设备处于用户态；'
+      + '若接的是手机，装 platform-tools 后重试');
+    return { android: null, notes };
+  }
+  if (parsed.empty) return { android: { devices: [], picked: '', canFlash: false }, notes };
+
+  const picked = pickAdbDevice(parsed.devices);
+  const devices = parsed.devices.map((d) => {
+    const dd = describeAndroid({ device: d });
+    return { serial: d.serial, state: d.state, mode: dd.mode, label: dd.label };
+  });
+  const base = {
+    devices,
+    canFlash: false,
+    picked: '',
+    state: '',
+    label: '',
+    next: '',
+    advice: '',
+    summary: null,
+    error: '',
+  };
+
+  if (!picked.ok) {
+    // 多台 / 唯一那台不可用（unauthorized、offline…）：把「为什么不能用」说清，不挑一台凑数
+    const d = picked.device || parsed.devices[0];
+    const dd = describeAndroid({ device: d });
+    return {
+      android: { ...base, picked: picked.ok ? d.serial : '', state: d.state, label: dd.label, next: dd.next, advice: dd.text, error: picked.error },
+      notes: [picked.error],
+    };
+  }
+
+  const target = picked.device;
+  const dd = describeAndroid({ device: target });
+  const out = { ...base, picked: target.serial, state: target.state, label: dd.label, next: dd.next, advice: dd.text };
+
+  // 这里刻意**不**再写 `if (state !== 'device') return`：`pickAdbDevice` 只在恰好一台 `device` 状态时
+  // 才返回 ok，unauthorized / offline / recovery / sideload 都已在上面走「不可用」分支并被各自的
+  // 断言锁住。多写一层永远不可达的守卫，只会让下一次改动以为「有这层兜着」——
+  // 而变异测试证明它是杀不死的死代码（删掉行为完全不变）。真要做带 serial 的定向查询时再加。
+  // 序列号来自设备、不是模型：一台恶意 USB 设备可以自报任意序列号，而它会被拼进 argv。
+  // 不过白名单就不查 —— 只说「序列号不像真的」，不让它流进命令。
+  if (!isSafeSerial(target.serial)) {
+    out.error = `设备自报的序列号含非法字符（${String(target.serial).slice(0, 40)}）：拒绝用它定位设备`;
+    notes.push(out.error);
+    return { android: out, notes };
+  }
+
+  if (typeof runArgv !== 'function') {
+    notes.push('缺少 argv 注入：只能报设备在线，读不到型号/系统版本');
+    return { android: out, notes };
+  }
+  const r = await runArgv(['adb', '-s', target.serial, 'shell', 'getprop'], ADB_INFO_TIMEOUT_MS);
+  const stdout = String(r?.stdout || '');
+  if (r?.killed || r?.spawnError) {
+    // 「超时被杀 / 起不来」与「查到了但为空」必须分开：前者是 adb 卡住或没装，后者才是属性读不到
+    out.error = r?.killed ? `adb getprop 超时（${ADB_INFO_TIMEOUT_MS}ms）已被终止` : `adb 无法启动：${String(r?.spawnError).slice(0, 120)}`;
+    notes.push(out.error);
+    return { android: out, notes };
+  }
+  if ((r?.code ?? 0) !== 0) {
+    out.error = `adb getprop 失败（exit=${r?.code}）：${String(r?.stderr || '').trim().slice(0, 160)}`;
+    notes.push(out.error);
+    return { android: out, notes };
+  }
+  const summary = summarizeAndroid(parseGetprop(stdout));
+  out.summary = summary;
+  const dd2 = describeAndroid({ device: target, summary });
+  out.advice = dd2.text;
+  notes.push(dd2.text);
+  return { android: out, notes };
+}
+
+/**
  * 执行一次设备探测（只读）。
  * @param {object} p
  * @param {(cmd: string) => Promise<{stdout?: string}>} p.exec 注入的命令执行器
+ * @param {(argv: string[], timeoutMs: number) => Promise<object>} [p.runArgv] 注入的 argv 执行器（读 getprop 用）
  * @param {string} [p.platform] 默认 process.platform
  * @returns {Promise<{ok: boolean, platform: string, devices: Array, ports: Array, flashable: Array, notes: string[], toolchain: {esptool: boolean}}>}
  */
-async function deviceProbeHandler({ exec, platform = process.platform } = {}) {
+async function deviceProbeHandler({ exec, runArgv, platform = process.platform } = {}) {
   const notes = [];
   const p = PROBES[platform];
   if (!p) {
@@ -148,6 +260,7 @@ async function deviceProbeHandler({ exec, platform = process.platform } = {}) {
     [p.serialDetailed, '串口详细枚举'],
     [p.drivers, '驱动加载状态'],
     [p.executors, '执行器探测'],
+    [p.adb, 'adb 设备枚举'],
   ].filter(([cmd]) => Boolean(cmd));
   const outs = await Promise.all(specs.map(([cmd, what]) => run(cmd, what)));
   const byName = new Map(specs.map(([, what], i) => [what, outs[i]]));
@@ -179,7 +292,16 @@ async function deviceProbeHandler({ exec, platform = process.platform } = {}) {
   const executors = p.executors ? parseExecutors(get('执行器探测')) : null;
   const chan = resolveChannels({ bridges: bridge.bridges, executors });
 
-  const allNotes = [...outs.map((o) => o.note).filter(Boolean), ...result.notes, ...bridge.notes, ...chan.notes];
+  // —— L2b：Android 用户态识别 ——
+  // 放在 L3 之后：它的用途是**修正**「not-serial 被读成不能烧」这个误判，所以要先知道 L2 判了什么。
+  // adb 未接线/未安装时探到的是 null（查不到），不是「没有 Android 设备」——这个区别由 probeAndroid 保证。
+  const adbRes = await probeAndroid({
+    raw: p.adb ? get('adb 设备枚举') : '',
+    wired: Boolean(p.adb),
+    runArgv: runArgv || defaultRunArgv,
+  });
+
+  const allNotes = [...outs.map((o) => o.note).filter(Boolean), ...result.notes, ...bridge.notes, ...chan.notes, ...adbRes.notes];
   if (p.serialDetailed && !pyserial) {
     allNotes.push('未找到带 pyserial 的 python3：串口身份只能按命名推断（装 pyserial 后可钉住 VID:PID）');
   }
@@ -197,6 +319,7 @@ async function deviceProbeHandler({ exec, platform = process.platform } = {}) {
     interpreter,
     drivers: drivers ? { ok: drivers.ok, families: drivers.families } : null,
     executors: executors ? { ok: executors.ok, have: executors.have } : null,
+    android: adbRes.android,
     notes: allNotes,
     toolchain: { esptool, pyserial },
   };
@@ -213,6 +336,9 @@ async function deviceProbeHandler({ exec, platform = process.platform } = {}) {
 //     引擎看门狗 60s（agent-core 的 TOOL_TIMEOUT_OVERRIDES.device_probe）留一倍余量。
 const PROBE_CMD_TIMEOUT_MS = 10000;
 const PROBE_CMD_MAX_BUFFER = 2 * 1024 * 1024;
+// getprop 只读、无设备时实测 0.01s 立即失败（不像 fastboot 会无限等），所以这个超时只是兜
+// 「adb server 卡死」这类极端情况；给 5s 是因为首次调用要拉起 adb 守护进程，比冷启动命令慢。
+const ADB_INFO_TIMEOUT_MS = 5000;
 
 function defaultExec(cmd) {
   return new Promise((resolve, reject) => {
@@ -222,11 +348,35 @@ function defaultExec(cmd) {
   });
 }
 
+/**
+ * argv 化执行器（读 getprop 用）。**不 resolve 成 reject**：调用方按 `code/killed/spawnError` 判，
+ * 与 deviceFlashTool 的 run 同形，避免两套约定（一套 try/catch、一套看字段）迟早漂移。
+ * 必须 argv 化：序列号是设备自报的外部字符串，拼进 shell 字符串就是把注入面交给一台陌生 USB 设备。
+ */
+function defaultRunArgv(argv, timeoutMs = ADB_INFO_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    execFileCb(argv[0], argv.slice(1), { timeout: timeoutMs, maxBuffer: PROBE_CMD_MAX_BUFFER, windowsHide: true },
+      (err, stdout, stderr) => {
+        if (err && err.code === 'ENOENT') {
+          resolve({ code: null, stdout: '', stderr: String(stderr || ''), spawnError: 'ENOENT: adb 不在 PATH 里' });
+          return;
+        }
+        resolve({
+          code: err ? (typeof err.code === 'number' ? err.code : 1) : 0,
+          stdout: String(stdout || ''),
+          stderr: String(stderr || ''),
+          killed: Boolean(err && err.killed),
+        });
+      });
+  });
+}
+
 /** 宿主侧入口：用真实命令跑一次探测（main/scheduledTools.js 的 deviceProbe 通道调它）。 */
 function probeDevice({ platform = process.platform } = {}) {
-  return deviceProbeHandler({ exec: defaultExec, platform });
+  return deviceProbeHandler({ exec: defaultExec, runArgv: defaultRunArgv, platform });
 }
 
 module.exports = {
-  deviceProbeHandler, probeDevice, defaultExec, PROBES, parseLinuxUsb, parseWinUsb, resolveEsptoolFromPath,
+  deviceProbeHandler, probeDevice, probeAndroid, defaultExec, defaultRunArgv, PROBES,
+  parseLinuxUsb, parseWinUsb, resolveEsptoolFromPath,
 };

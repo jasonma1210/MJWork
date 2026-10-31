@@ -343,9 +343,12 @@ const READONLY_TOOLS = new Set([
   'team_list_members', 'team_board',
   // B-04 / T6-6：读消息与工件读取三工具均为只读查询（读总线不改变任何状态）
   'team_read_messages', 'artifact_index', 'artifact_get_section', 'artifact_get_diff',
-  // 2026-10-31：设备探测（device_probe）——五条只读命令（USB 枚举 / 串口枚举 / esptool 检测 /
-  // pyserial 详细枚举 / 驱动加载状态），命令串来自实现里的常量、**不接受模型输入**（schema 无参数，
-  // handler 不读 args），不写盘、不出网（pyserial 与 kmutil 都是本地查询）。
+  // 2026-10-31：设备探测（device_probe）——七条只读命令（USB 枚举 / 串口枚举 / esptool 检测 /
+  // pyserial 详细枚举 / 驱动加载状态 / 执行器探测 / adb 设备枚举）+ 一条 getprop，命令串来自实现里的常量、
+  // **不接受模型输入**（schema 无参数，handler 不读 args），不写业务文件、不出网。
+  // 唯一副作用要说清而不是含糊过去：`adb devices -l` 首次调用会在 ~/.android 下生成 adbkey 并常驻一个
+  // 只监听 127.0.0.1:5037 的 daemon。这是 adb 自身行为（任何 `adb` 命令都会），不是本项目写盘，
+  // 也不进项目目录 —— 所以仍归只读档，但绝不能再声称「不写盘」。
   // 为什么归只读档而不是 L2：它与 read_file 同类——探测结果确实会进模型上下文（含设备名与序列号），
   // 但 read_file 的文件正文同样如此且已在只读档；把它判 L2 会在 on-request 档为「看下插了什么板」
   // 逐次弹卡，属审批磨损（真危险的是刷写，那条走 REVERSIBILITY.reversible=false 的 never 档）。
