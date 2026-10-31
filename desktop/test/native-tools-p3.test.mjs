@@ -31,7 +31,9 @@ function check(name, ok, detail = '') {
   const byName = Object.fromEntries(BASE_TOOLS.map((t) => [t.function.name, t.function]));
   const missing = NATIVE.filter((n) => !byName[n]);
   check('BASE_TOOLS 含 5 个原生工具', missing.length === 0, missing.length ? `缺=${missing}` : '');
-  check('BASE_TOOLS.length === 52（期 3 新增 5 个 + G-deep-research 1 个 + G-doc 4 个 + G-latex 1 个）', BASE_TOOLS.length === 52, `got=${BASE_TOOLS.length}`);
+  // 精确条数钉在这里的理由：它是「工具面体积」的 coarse 哨兵，一旦变动就该有人确认。
+  // 2026-10-31：52 → 53，新增 device_probe（只读设备探测，schema 外置在 agent-core/deviceToolSchema.js）。
+  check('BASE_TOOLS.length === 54（期 3 新增 5 个 + G-deep-research 1 个 + G-doc 4 个 + G-latex 1 个 + device 2 个）', BASE_TOOLS.length === 54, `got=${BASE_TOOLS.length}`);
   check('clipboard schema required=[action]、action 枚举 read/write',
     JSON.stringify(byName.clipboard?.parameters?.required) === '["action"]'
     && JSON.stringify(byName.clipboard?.parameters?.properties?.action?.enum) === '["read","write"]');

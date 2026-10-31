@@ -88,6 +88,8 @@
   "pdfGenerate": "生成 PDF 文档",
   "computerUse": "界面自动化（Computer Use）",
   "latexCompile": "编译 LaTeX",
+  "deviceProbe": "探测设备",
+  "deviceFlash": "烧写固件",
   "latexProbe": "LaTeX 工具链体检",
   "researchEvidence": "证据条目 {n} 条",
   "researchDeepRead": "精读原文 {n} 篇",

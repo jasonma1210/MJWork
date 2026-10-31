@@ -157,7 +157,7 @@ flowchart TB
 
 > 关键点：引擎侧**不认识任何具体工具**，只按 `TOOL_HANDLER_NAMES` 映射出的**通道名**向宿主发起 `toolReq`；
 > 宿主侧 `TOOL_CHANNELS` 静态白名单是唯一的准入闸——**漏登记会让引擎报「未知工具」甚至重启也无法修复**。
-> 第八轮实测：`TOOL_CHANNELS` **61 条**（第七轮 HEAD 为 52 条，之后新增四条团队层通道，B-04 又补 `teamReadMessages`，DS Bots T6-6 再补四个 `artifact*` 通道），
+> 第八轮实测：`TOOL_CHANNELS` **63 条**（第七轮 HEAD 为 52 条，之后新增四条团队层通道，B-04 又补 `teamReadMessages`，DS Bots T6-6 再补四个 `artifact*` 通道，2026-10-31 再补 `deviceProbe` 与 `deviceFlash`），
 > 回调桥为 **8 notify + 1 request = 9** 个。详见第四章。
 
 ### 1.4 系统总览（六大子系统全景）
@@ -250,7 +250,7 @@ flowchart TB
 - `main/engineProcess/host.js`：生产环境经 `utilityProcess.fork` 启动引擎子进程并设置 V8 堆上限；主进程作为**工具执行端**处理 `toolReq`，在本进程内执行审批 / 流式推送 / 凭证解析，再把结果经 `toolRes` 回传子进程。
   > 口径澄清：`--max-old-space-size=2048` 约束的是 **V8 堆**，不等价于「进程 RSS ≤ 2GB」（`A-09`）。崩溃半径隔离本身是有效的：子进程 OOM 只杀自己，`tr.onExit` 收敛为 `engineExited`。
 - `main/engineProcess/childEntry.js`：子进程侧为 `TOOL_CHANNELS` 中每个通道生成 RPC 工具代理，等待 `toolRes`——这实现了「引擎调用主进程能力」的反向依赖。
-- `main/engineProcess/registry.js`：**工具通道静态白名单** `TOOL_CHANNELS`。子进程只能回调登记在其中的句柄；**漏登记会导致 `resolveChannel` 返回 `null`、引擎报「未知工具」**（重启应用也无法修复）。新增原生工具必须同步更新此白名单。2026-10-22 实测 61 条（详见第四章）。
+- `main/engineProcess/registry.js`：**工具通道静态白名单** `TOOL_CHANNELS`。子进程只能回调登记在其中的句柄；**漏登记会导致 `resolveChannel` 返回 `null`、引擎报「未知工具」**（重启应用也无法修复）。新增原生工具必须同步更新此白名单。2026-10-31 实测 63 条（含 `deviceProbe` / `deviceFlash`；详见第四章）。
 - `main/engineProcess/transport.js`：传输适配层，兼容 Electron `utilityProcess`（`parentPort`）与 Node `child_process.fork`（`process.send`），统一 `send/onMessage/onExit/kill`。
 
 ### 2.3 回调分类
@@ -426,7 +426,7 @@ sequenceDiagram
 | `BASE_TOOLS` | **52** | `BASE_TOOLS.length` | 静态声明的**模型可见 schema** 条数。注意元素形状为 `{type, function:{name,...}}`，取名须走 `t.function.name` |
 | `TOOL_HANDLER_NAMES` | **60** | `Object.keys(...).length` | 工具名 → 通道名的**映射表**条数（第七轮 51 → 团队四工具 55 → B-04 读消息 56 → T6-6 工件四工具 60） |
 | **模型可调用工具并集** | **62** | `new Set([...BASE_NAMES, ...TH_KEYS]).size` | 上面两张表的并集，也是登记矩阵认定的「模型可见工具全集」（第七轮 53 → 团队层 57 → B-04 58 → T6-6 62） |
-| `TOOL_CHANNELS` | **61** | `require('main/engineProcess/registry.js').TOOL_CHANNELS.length` | 子进程 ↔ 宿主的**通道白名单**条数（第七轮 52 → B-04 团队读消息 57 → T6-6 工件四通道 61） |
+| `TOOL_CHANNELS` | **63** | `require('main/engineProcess/registry.js').TOOL_CHANNELS.length` | 子进程 ↔ 宿主的**通道白名单**条数（第七轮 52 → B-04 团队读消息 57 → T6-6 工件四通道 61 → 2026-10-31 设备探测 62 → 设备烧写 63） |
 
 > **为什么三个数不相等**：`todo_write → todoWrite` 登记了映射但**不经 RPC**（引擎内置 case，`A-08`）；
 > 而 `team_*` 四条登记了通道与映射，却被**条件注册**（见 4.4 节）。这两处例外都由注释而非机器可读标记表达。

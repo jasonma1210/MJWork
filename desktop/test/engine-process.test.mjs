@@ -171,10 +171,11 @@ await check('多会话并行：两个引擎子进程互不干扰', async () => {
 // ── 6. registry 与 childEntry/host 协议一致性 + 主进程接线静态断言 ──
 // B-04（2026-10-21）：teamReadMessages 加入后 56 → 57。
 // T6-6（2026-10-22）：artifact 四工具（index/get_section/patch_section/get_diff）加入后 57 → 61。
+// 2026-10-31：deviceProbe（只读设备探测）加入后 61 → 62；同日 deviceFlash（烧写三档）62 → 63。
 // 这个数字刻意硬编码（而不是从 registry 自取）：它是「通道表被人悄悄删条目」的独立计数器，
 // 从同一来源自取就等于让断言恒真。改这里必须同步 docs 的 TOOL_CHANNELS 契约字面量。
-await check('协议登记表完整（61 工具通道 / onSuspend 请求-响应）', () => {
-  assert.equal(registry.TOOL_CHANNELS.length, 61);
+await check('协议登记表完整（63 工具通道 / onSuspend 请求-响应）', () => {
+  assert.equal(registry.TOOL_CHANNELS.length, 63);
   assert.ok(registry.TOOL_CHANNELS.includes('chat') && registry.TOOL_CHANNELS.includes('shell'));
   assert.deepEqual(registry.REQUEST_CBS, ['onSuspend']);
 });

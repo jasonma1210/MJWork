@@ -88,6 +88,8 @@
   "pdfGenerate": "Generate PDF document",
   "computerUse": "Computer Use (UI automation)",
   "latexCompile": "Compile LaTeX",
+  "deviceProbe": "Probe devices",
+  "deviceFlash": "Flash firmware",
   "latexProbe": "LaTeX toolchain check",
   "researchEvidence": "{n} evidence items",
   "researchDeepRead": "{n} sources read in depth",

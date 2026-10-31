@@ -142,6 +142,26 @@
  *        → A18b：TOOL_HANDLER_NAMES 56 → **60**（新增 artifact_* 四个映射）。
  *        → BASE_TOOLS 仍 52：工件工具属**运行时条件追加**（宿主注入 artifactContext 才通告），
  *          与 team_* / computer_use 同纪律，不进静态清单。
+ *      · 设备烧写工具批（2026-10-31，**未提交工作区**）—— 三条等位数字**原地重写**（总数仍 76）：
+ *        → A17a：TOOL_CHANNELS 62 → **63**（新增 deviceFlash：烧写三档的宿主通道）；
+ *        → A18a：BASE_TOOLS 53 → **54**（device_flash 同样是**静态** schema：三档 action 无需
+ *          运行时上下文，随时可调；schema 与 device_probe 同在 agent-core/deviceToolSchema.js）；
+ *        → A18b：TOOL_HANDLER_NAMES 61 → **62**（新增 device_flash → deviceFlash）。
+ *        → 接线面：main/scheduledTools.js、main/engineProcess/registry.js、agent-core 的
+ *          APPROVAL_TOOLS（flash 判 L1，须透传档位）、approval.js 的 SPECIAL_CASED_TOOLS
+ *          特判（list_targets/plan 不进审批面）、NON_REMEMBERABLE（不给「始终允许」）、
+ *          approvalTarget（卡面显示「往哪个口烧哪个文件」）、ToolTrace.tsx + 双语 toolTrace.json。
+ *        → 新增文件：main/diskList.js（只读枚举，partitionCandidates 的数据源）、
+ *          main/tools/deviceFlashTool.js（三档 handler）。
+ *      · 设备探测工具批（2026-10-31，**未提交工作区**）—— 三条等位数字**原地重写**（总数仍 76）：
+ *        → A17a：TOOL_CHANNELS 61 → **62**（新增 deviceProbe：只读设备探测的宿主通道）；
+ *        → A18a：BASE_TOOLS 52 → **53**（device_probe 是**静态** schema，不是运行时条件追加：
+ *          它不依赖任何宿主上下文，随时可调；schema 外置在 agent-core/deviceToolSchema.js
+ *          以守 800 行软档棘轮，展开进 BASE_TOOLS）；
+ *        → A18b：TOOL_HANDLER_NAMES 60 → **61**（新增 device_probe → deviceProbe）。
+ *        → 接线面：main/scheduledTools.js（交互/定时/Worker 同源的 handler 表）、
+ *          main/engineProcess/registry.js、approval.js 的 READONLY_TOOLS（只读命令、无模型输入）、
+ *          ToolTrace.tsx + 双语 toolTrace.json。
  *      · 0.7.0-beta 发版批（2026-10-22，**未提交工作区**）—— 一条版本钉值**原地重写**（总数仍 76）：
  *        → A15b：desktop/package.json version `0.6.1-beta` → **`0.7.0-beta`**。
  *          触发：发版提升三包版本（desktop / renderer / server 同步，由
@@ -934,11 +954,11 @@ function httpHeaderSegments() {
   // 清扫记录（本轮）：原先 else 分支只补了一条 A17a —— registry require 失败时
   //   A17b/A17c **既不出现也不计 SKIP**，总数静默少 2。同样的病，同样的治法：BLOCKED 出声。
   if (!regErr) {
-    ok('A17a', 'TOOL_CHANNELS = 61', TOOL_CHANNELS.length, 61);
+    ok('A17a', 'TOOL_CHANNELS = 63', TOOL_CHANNELS.length, 63);
     ok('A17b', 'NOTIFY_CBS = 8', NOTIFY_CBS.length, 8);
     ok('A17c', 'REQUEST_CBS = 1', REQUEST_CBS.length, 1);
   } else {
-    ok('A17a', 'registry.js 可 require（=61 的值因此无从判定）', `ERR: ${regErr}`, 61);
+    ok('A17a', 'registry.js 可 require（=63 的值因此无从判定）', `ERR: ${regErr}`, 63);
     blockedAssert('A17b', 'NOTIFY_CBS = 8', `registry require 失败：${regErr}`);
     blockedAssert('A17c', 'REQUEST_CBS = 1', `registry require 失败：${regErr}`);
   }
@@ -991,10 +1011,10 @@ function httpHeaderSegments() {
     const m = await import(P(agentCore));
     baseTools = m.BASE_TOOLS; handlerNames = m.TOOL_HANDLER_NAMES;
   } catch (e) { /* ignore */ }
-  if (baseTools) ok('A18a', 'BASE_TOOLS = 52（真实 ESM import）', baseTools.length, 52);
-  else ok('A18a', 'BASE_TOOLS 可导入', 'IMPORT_FAILED', 52);
-  if (handlerNames) ok('A18b', 'TOOL_HANDLER_NAMES = 60', Object.keys(handlerNames).length, 60);
-  else ok('A18b', 'TOOL_HANDLER_NAMES 可导入', 'IMPORT_FAILED', 60);
+  if (baseTools) ok('A18a', 'BASE_TOOLS = 54（真实 ESM import）', baseTools.length, 54);
+  else ok('A18a', 'BASE_TOOLS 可导入', 'IMPORT_FAILED', 54);
+  if (handlerNames) ok('A18b', 'TOOL_HANDLER_NAMES = 62', Object.keys(handlerNames).length, 62);
+  else ok('A18b', 'TOOL_HANDLER_NAMES 可导入', 'IMPORT_FAILED', 62);
 
   // A18c~g 全是「常量是否按契约写」的**代码**事实：注释里抄一遍同样的字面量
   //   就能把任何一条喂绿，故统一去注释。

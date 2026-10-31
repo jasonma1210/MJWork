@@ -58,6 +58,9 @@ export const CAPABILITY_GROUPS = [
   { key: 'desktop', label: '桌面自动化', hint: '模拟鼠标键盘操作桌面应用（需用户在设置里主动开启）', tools: ['computer_use'], tier: TIER_ONDEMAND },
   { key: 'plugin', label: '插件市场', hint: '搜索并安装网络插件（安装需要审批）', tools: ['search_plugins', 'install_plugin'], tier: TIER_ONDEMAND },
   { key: 'schedule', label: '定时任务', hint: '创建定时执行的提示词任务', tools: ['scheduled_create'], tier: TIER_ONDEMAND },
+  // 2026-10-31：设备探测。低频（只在「板子插上了吗 / 为什么烧不进去」时用）+ 误用无副作用，
+  // 但**不进 core**：新增工具默认不进 core，否则小窗口模型每轮都要为它付 schema token。
+  { key: 'device', label: '设备与串口', hint: '探测本机 USB 设备、串口与 esptool 工具链（只读）', tools: ['device_probe'] },
 ];
 
 const CORE = new Set(CORE_TOOLS);

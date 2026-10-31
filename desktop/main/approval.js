@@ -215,7 +215,10 @@ function notifyExecuted({
 //   · G-CUA cua_action：逐次界面动作——CUA 的敏感动作设计上恒逐次确认（决策不落规则库），
 //     若 UI 仍给「本会话/始终允许」按钮，用户点了却对后续动作无效 → 即为产品撒谎，
 //     故与顶层调用一并标记为不可记忆（ApprovalCard 只显示「允许一次 / 拒绝」）。
-const NON_REMEMBERABLE = new Set(['unconfined_exec', 'scheduled_create', 'computer_use', 'cua_action', 'install_plugin', 'pr_review', 'pr_comment']); // A4/P0-1: 7 项恒 L3 不可记忆（尾注原写「三者」，与集合实际条目数不符）
+//   · device_flash（2026-10-31）：烧写覆盖板子 flash，无自动回滚。它走 L1 特判（见 toolLevel），
+//     正常情况下已不受规则豁免；列入本集合是为让审批 UI **不给**「始终允许」按钮——
+//     否则按钮点下去对后续烧写无效，同样是产品撒谎。8 项。
+const NON_REMEMBERABLE = new Set(['unconfined_exec', 'scheduled_create', 'computer_use', 'cua_action', 'install_plugin', 'pr_review', 'pr_comment', 'device_flash']); // A4/P0-1: 8 项恒不可记忆（2026-10-31 新增 device_flash；原尾注写「三者」，与集合实际条目数不符）
 const isRememberable = (tool) => !NON_REMEMBERABLE.has(tool);
 
 // 工具 → 默认分级
@@ -340,6 +343,13 @@ const READONLY_TOOLS = new Set([
   'team_list_members', 'team_board',
   // B-04 / T6-6：读消息与工件读取三工具均为只读查询（读总线不改变任何状态）
   'team_read_messages', 'artifact_index', 'artifact_get_section', 'artifact_get_diff',
+  // 2026-10-31：设备探测（device_probe）——五条只读命令（USB 枚举 / 串口枚举 / esptool 检测 /
+  // pyserial 详细枚举 / 驱动加载状态），命令串来自实现里的常量、**不接受模型输入**（schema 无参数，
+  // handler 不读 args），不写盘、不出网（pyserial 与 kmutil 都是本地查询）。
+  // 为什么归只读档而不是 L2：它与 read_file 同类——探测结果确实会进模型上下文（含设备名与序列号），
+  // 但 read_file 的文件正文同样如此且已在只读档；把它判 L2 会在 on-request 档为「看下插了什么板」
+  // 逐次弹卡，属审批磨损（真危险的是刷写，那条走 REVERSIBILITY.reversible=false 的 never 档）。
+  'device_probe',
 ]);
 
 // toolLevel() 在 `|| 'L2'` 兜底**之前**按工具名特判的工具（须与 toolLevel 分支同步，漏一个即门禁误判）：
@@ -350,7 +360,7 @@ const READONLY_TOOLS = new Set([
 // 也没有 mcp__：它是前缀通配（toolLevel 用 startsWith 判），不是可枚举的工具名。
 const SPECIAL_CASED_TOOLS = new Set([
   'notify', 'todo_write', 'chrome_status', 'clipboard', 'http_request', 'sqlite',
-  'shell', 'code_exec', 'cua_action', 'latex_compile', 'sandbox_code_run',
+  'shell', 'code_exec', 'cua_action', 'latex_compile', 'sandbox_code_run', 'device_flash',
 ]);
 
 // P0-S1：危险命令规则统一从 dangerousPatterns.js 导入（单一事实来源）。事故背景：本文件原有
@@ -415,6 +425,19 @@ function toolLevel(tool, args = {}) {
   // G-latex：latex_compile 的 probeOnly（工具链体检）只探测不写文件、无副作用 → 不进审批面；
   // 实际编译写 PDF 判 L2（见 TOOL_LEVEL）。
   if (tool === 'latex_compile') return args.probeOnly === true ? null : 'L2';
+  // 设备烧写（2026-10-31）：只有 action=flash 进审批面——list_targets 是只读列举、plan 是纯计算
+  //   （装配 argv + 生成摘要，不执行），两者都不该打扰用户。
+  // 判 **L1** 而不是 L3 + NON_REMEMBERABLE：L1 是硬地板（任何档位都弹卡，且跳过「始终允许/
+  //   本对话同类」规则豁免）；L3 只在 never 档下才因不可记忆而弹卡，其他档位下用户点一次
+  //   「始终允许」就能让后续所有烧写静默过闸——而覆盖板子 flash 没有自动回滚，一次误授权即永久。
+  // 缺省/未知 action 一律按 L1（fail-closed）：漏传参数不会变成「免审批执行」。
+  // 2026-10-31 新增 verify / backup 两档：**仍然是 L1**，不因「只读」降档。
+  //   理由一：verify/backup 都会把芯片复位进 bootloader，是对硬件状态的改变而非纯读取；
+  //   理由二：backup 产出的是整片 flash（含配网信息/NVS），落到磁盘等于把设备秘密存了一份，
+  //           这是**信息披露**而非普通读文件，点击确认的必要性与烧写相同；
+  //   理由三：一支三岔分支比「flash=L1 / verify=L2 / backup=L2」少一半漂移面，而后者一旦漂移
+  //           的表现是「某档静默过闸」，这类 bug 没人会写测试。
+  if (tool === 'device_flash') return (args.action === 'list_targets' || args.action === 'plan') ? null : 'L1';
   if (tool.startsWith('mcp__')) return 'L3';
   // 兜底只兜「未登记的原生/插件工具」（mcp__ 已在上面返回 L3）。第八轮 D-801 由 'L2' 改为 'L3'：
   // 未登记 ≠ 自动批准 —— 'L2' 在 auto-safe 档直接放行（漏登记即静默过闸），'L3' 需审批且可被
@@ -484,6 +507,28 @@ function approvalTarget(tool, args = {}) {
   // 此处仅为 needsApproval 的豁免检查提供一致的目标形态，与 cua_action 同款纪律）。
   if (tool === 'computer_use') return `${String(args.app_name || args.appName || '')} ${String(args.objective || '')}`.trim().slice(0, 200);
   if (tool.startsWith('mcp__')) return tool;
+  // 设备烧写：卡面只渲染 tool + target，所以 target 必须承载「对哪个口做什么」——
+  // 这是用户在那一秒钟里唯一能用来判断「是不是我要的那块板子」的信息。
+  // segments 形态没有 firmware：只拼 firmware 会渲染成「/dev/cu.x ← 」（右侧空白），
+  // 用户看不到将要对什么动手 ⇒ 多段必须把段数与文件名带进 target。
+  // backup 的方向是「从板子读到文件」，用 → 而不是 ←，避免被读成「往板子写备份」。
+  if (tool === 'device_flash') {
+    const port = String(args.port || '');
+    const act = String(args.action || '');
+    if (act === 'backup') return `${port} → ${String(args.out || '')}`.trim();
+    const fw = String(args.firmware || '');
+    // UF2 通道没有串口，唯一能让人核对的是「哪个卷 ← 哪个文件」。
+    // 审批卡只渲染 tool + target（ApprovalCard 不展参数）⇒ 目标卷必须出现在这里，
+    // 否则用户看到的是「← fw.uf2」，根本没法确认会写到哪块盘。
+    if (/\.uf2$/i.test(fw)) {
+      const vol = String(args.volume || '');
+      return `${vol || '（自动找 bootloader 盘）'} ← ${fw}`.trim();
+    }
+    const segs = Array.isArray(args.segments) ? args.segments : [];
+    const what = fw
+      || (segs.length ? `${segs.length} 段（${segs.map((s) => String(s?.file || '').split('/').pop()).join(' + ')}）` : '');
+    return `${port} ${act === 'verify' ? '⇄' : '←'} ${what}`.trim();
+  }
   // 2026-10-17：破坏性 git 操作按「受影响文件列表」做规则粒度——
   // 用户对 a.js 允许「本会话同类」后，b.js 仍会再问一次（不做全工具一次放行）。
   if (tool === 'git_checkout' || tool === 'git_restore_staged') return String(args.files || '').slice(0, 200);

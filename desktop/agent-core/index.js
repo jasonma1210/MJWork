@@ -15,6 +15,7 @@ import { narrowToolsByMcpAllow, mcpAllowMatches } from '../shared/mcpAllow.mjs';
 import { filterUnavailableTools } from './toolAvailability.js';
 // P1-8 / 讨论方案：工具三档分层 + 窗口自适应裁剪（纯常量 + 纯函数）
 import { selectToolsForWindow, buildToolCatalogText, toolsOfGroups, groupInfo } from './toolTiers.js';
+import { DEVICE_TOOL_SCHEMAS, DEVICE_FLASH_SCHEMAS } from './deviceToolSchema.js';
 // 预算/上下文闸的阈值与判定（纯函数）。2026-10-30 从本文件外置：判据搬家既能改行为
 // （预算窗口耗尽改为续期 'renew'），又不必给自己开 code 行棘轮基线。外部既有调用方
 // 仍然可以从本文件拿到这些符号——下面原样 re-export。
@@ -637,6 +638,8 @@ export const BASE_TOOLS = [
       probeOnly: { type: 'boolean', description: '仅体检工具链：探测可用引擎与版本、缺失项与安装建议，不编译不写文件' },
     } },
   }},
+  // 2026-10-31：设备探测（只读）。schema 外置在 deviceToolSchema.js（行数棘轮，见该文件头）。
+  ...DEVICE_TOOL_SCHEMAS, ...DEVICE_FLASH_SCHEMAS,
 ];
 
 const SKILL_PROMPTS = {
@@ -1140,7 +1143,7 @@ const APPROVAL_TOOLS = new Set(['shell', 'write_file', 'edit_file', 'apply_patch
   // G-CUA：模型侧桌面自动化（L1 恒逐次确认），需透传 approvalMode/conversationId 进主进程审批中心
   'computer_use',
   // DS Bots / T6-6：工件章节写入（approval.js 分级 L2）——需透传 approvalMode/conversationId
-  'artifact_patch_section']);
+  'artifact_patch_section', 'device_flash']); // 设备烧写：action=flash 判 L1（approval.js 特判），须透传档位才读得到用户设置
 
 // V01：宿主治理保留字段——这些字段决定审批/沙箱/执行根/会话归属，
 // 只能由宿主（runAgent 参数）注入，模型工具参数里出现即剥离（见工具执行循环）。
@@ -1203,7 +1206,10 @@ const TOOL_HANDLER_NAMES = {
   // 的 TOOL_CHANNELS 登记，否则子进程路径会报「未知工具」）
   computer_use: 'computerUse',
   // G-latex：LaTeX 编译原生工具通道
-  latex_compile: 'latexCompile',
+  latex_compile: 'latexCompile', device_flash: 'deviceFlash',
+  // 2026-10-31：设备探测（只读）——通道实现落在 main/scheduledTools.js（交互式/定时/Worker 同源），
+  // 且须同步登记到 engineProcess/registry.js 的 TOOL_CHANNELS，否则子进程路径报「未知工具」
+  device_probe: 'deviceProbe',
   // M5 / T5-8：军团协同工具（成员任务才注入；通道名须同步登记到 engineProcess/registry.js，
   // 否则子进程路径会报「未知工具: team_*」）
   team_list_members: 'teamListMembers',
@@ -2129,10 +2135,7 @@ export const TOOL_TIMEOUT_OVERRIDES = {
   sandbox_code_run: 90000,
   // G-doc：文档生成——实现侧上限 45s（PDF 的 Chromium 渲染最慢），看门狗统一 60s
   //（数值与 main/tools/timeouts.js 的 DOC_GEN_* 对账，由 test/native-doc-tools 断言）
-  doc_create: 60000,
-  xlsx_create: 60000,
-  pptx_create: 60000,
-  pdf_generate: 60000,
+  doc_create: 60000, xlsx_create: 60000, pptx_create: 60000, pdf_generate: 60000,
   // G-deep-research：一次 runDeepResearch = 最多 5 次检索(60s) + 6 篇精读(60s) + 2 次模型调用，
   // 编排内部用 mapWithLimit 有界并发（3/2），自然上限约 4-5min；看门狗给 10min 做最后防线。
   deep_research: 600000,
@@ -2143,12 +2146,13 @@ export const TOOL_TIMEOUT_OVERRIDES = {
   // G-latex：一次 latex_compile = 单次引擎编译（含 latexmk 多轮 pass），实现侧 5min
   // → 看门狗 6min（数值与 main/tools/timeouts.js 的 LATEX_* 对账，由 test 断言）
   latex_compile: 360000,
+  // 探测：三条只读命令，实现侧单条 10s 自断 ⇒ 最坏 30s+解析；看门狗给 60s 留一倍余量，不与实现抢同一数字。
+  // 烧写：921600 波特率下单次约 40s、慢板卡可到 2-3min ⇒ 与 deviceFlashTool 的 FLASH_TIMEOUT_MS=300s 同值（看门狗不得先断）。
+  device_probe: 60000, device_flash: 300000,
   // M5 / T5-8：军团协同工具——都是主进程内的短路径（总线落库 / 看板读 / 等待登记）。
   // team_wait 登记成功后立即中止本 run（不真的在工具里阻塞等待），故同样只需短超时；
   // 给 60s 是为了覆盖 SQLite 写事务抖动，而不是等待本身。
-  team_list_members: 30000,
-  team_board: 30000,
-  team_send_message: 30000,
+  team_list_members: 30000, team_board: 30000, team_send_message: 30000,
   // B-04：读消息同样是主进程内的短查询（一次 SQLite SELECT）
   team_read_messages: 30000,
   team_wait: 60000,

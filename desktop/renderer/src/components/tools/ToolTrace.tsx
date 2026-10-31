@@ -50,6 +50,9 @@ export function toolNameCN(name: string): string {
     computer_use: 'toolTrace.computerUse',
     // G-latex：LaTeX 编译
     latex_compile: 'toolTrace.latexCompile',
+    // 2026-10-31：设备探测（只读）
+    device_probe: 'toolTrace.deviceProbe',
+    device_flash: 'toolTrace.deviceFlash',
     // M5 / T5-8：军团协同工具（B-04 起含读消息）
     team_list_members: 'toolTrace.teamListMembers', team_send_message: 'toolTrace.teamSendMessage',
     team_board: 'toolTrace.teamBoard', team_wait: 'toolTrace.teamWait',

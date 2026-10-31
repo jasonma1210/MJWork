@@ -249,11 +249,12 @@ check('P2-8 isDangerousCode 与 dangerousPatterns 同源',
   approval.isDangerousCode === dangerous.isDangerousCode);
 
 // ── A4：不可记忆清单（NON_REMEMBERABLE）──
+// 2026-10-31：device_flash 加入（烧写覆盖板子 flash 无自动回滚）⇒ 7 → 8 项。
 // 尾注曾写「三者恒 L3 不可记忆」而集合实际 7 项；install_plugin / pr_review / pr_comment 三项
 // 此前既无注释依据也无断言覆盖 —— 一旦被误移出集合，「本会话允许」按钮就会出现在恒 L3 的动作上，
 // 而实现侧并不落规则库（用户点了却对后续无效 = 产品撒谎）。
-check('A4 不可记忆清单恰好 7 项（尾注与实际条目数一致）',
-  approval.NON_REMEMBERABLE.size === 7, `size=${approval.NON_REMEMBERABLE.size}`);
+check('A4 不可记忆清单恰好 8 项（尾注与实际条目数一致）',
+  approval.NON_REMEMBERABLE.size === 8, `size=${approval.NON_REMEMBERABLE.size}`);
 check('A4 install_plugin / pr_review / pr_comment 均不可记忆',
   ['install_plugin', 'pr_review', 'pr_comment'].every((t) => approval.isRememberable(t) === false));
 // 逐项钉分级：unconfined_exec 是 L1 硬地板（沙箱绕行），其余恒 L3。

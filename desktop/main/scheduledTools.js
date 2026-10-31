@@ -12,6 +12,8 @@ const path = require('path');
 const { denialText, approvalReasonOf } = require('./approvalChannel');
 const { audit } = require('./audit/auditLog');
 const { makeProgressBridge, settleProgress } = require('./mcpProgress');
+const { probeDevice } = require('./tools/deviceProbeTool');
+const { flashDevice } = require('./tools/deviceFlashTool');
 
 function scheduledToolHandlers(deps = {}) {
   const {
@@ -93,6 +95,14 @@ function scheduledToolHandlers(deps = {}) {
     prDiff: withCtx(prTools.prDiff),
     prReview: withCtx(prTools.prReview),
     prComment: withCtx(prTools.prComment),
+    // 2026-10-31：设备探测（只读·三条只读命令）。**不**用 withCtx：命令串是常量、不带路径，
+    // 与项目目录无关。放在本模块而不是 main.js 的 createToolHandlers：那张表被交互式
+    // （`...scheduledToolHandlers()`）、定时任务、Worker 三条路径 shared，且行数棘轮把
+    // main.js 钉死了——读写都靠这一处，比在三处各加一行更不容易漏。
+    deviceProbe: () => probeDevice(),
+    // 2026-10-31：设备烧写。同样放这里（三条执行路径同源）。action=flash 的审批由 approval.js
+    // 的 L1 特判在**引擎侧**弹卡；本 handler 只负责「摘要校验 + 白名单 + argv 化执行」。
+    deviceFlash: (a) => flashDevice(a),
     // M5 / T5-8：军团协同工具（仅当宿主注入 teamTools 时出现——即成员任务）。
     // 非成员任务（普通编排 Worker / 定时任务 / 主会话）不注册，模型也就看不到这些 schema。
     // B-04（2026-10-21）加入 teamReadMessages：补齐总线的「读」半边。

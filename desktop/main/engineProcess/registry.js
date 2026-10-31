@@ -39,6 +39,12 @@ const TOOL_CHANNELS = [
   'computerUse',
   // G-latex LaTeX 编译原生工具（漏登记 → 子进程「未知工具: latex_compile」）
   'latexCompile',
+  // 2026-10-31：设备探测（只读·三条只读命令）。实现在 main/scheduledTools.js（交互/定时/Worker 同源），
+  // 漏登记 → 子进程路径「未知工具: device_probe」（与 pdf_generate 那次真机事故同形）。
+  'deviceProbe',
+  // 设备烧写：三档 action 都经此通道（list_targets/plan 只读、flash 执行）。
+  // 漏登记 → 子进程「未知工具: device_flash」，与 pdf_generate 那次事故同形。
+  'deviceFlash',
   // M5 / T5-8 军团协同工具（漏登记 → 子进程「未知工具: team_*」）
   // B-04（2026-10-21）补入 teamReadMessages：模型侧读消息
   'teamListMembers', 'teamSendMessage', 'teamBoard', 'teamWait', 'teamReadMessages',
