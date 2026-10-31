@@ -526,6 +526,8 @@ function approvalTarget(tool, args = {}) {
     // chip_id 没有固件、也不写设备，用户唯一能核对的是「对哪个口动手」。
     // 不写这一支会落到下面的默认拼接，卡面变成「/dev/cu.x ← 」——目标看似空的。
     if (act === 'chip_id') return `探测 ${port}`.trim();
+    // logs 同理：没有固件可显示，能核对的只有「对哪个口抓」——否则卡面是「/dev/x ← 」。
+    if (act === 'logs') return `日志 ${port}`.trim();
     if (act === 'backup') return `${port} → ${String(args.out || '')}`.trim();
     const fw = String(args.firmware || '');
     // UF2 通道没有串口，唯一能让人核对的是「哪个卷 ← 哪个文件」。

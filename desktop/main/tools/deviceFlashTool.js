@@ -1,6 +1,6 @@
 // device_flash 的工具实现（2026-10-31）：把 deviceFlash 的决策层接到真实的 esptool 上。
 //
-// 六档 action —— 递进而非并列，是保护策略的核心：
+// 七档 action —— 递进而非并列，是保护策略的核心：
 //   · list_targets：只读。列可烧磁盘（排除系统盘/内置盘/虚拟盘）与串口。不弹审批卡。
 //   · chip_id     ：只读。用 esptool `--chip auto` 跟芯片同步一次，查出它到底是哪颗
 //                   （桥芯片后面可能是 ESP32/STM32/AVR，光看 VID 永远不知道）。不弹审批卡。
@@ -10,6 +10,9 @@
 //                   只把设备内容与本地文件逐字节比对，**不写设备**——烧完拿它自证，别信「成功」两个字。
 //   · backup      ：整片备份（esptool read_flash）。读设备、**写磁盘**，因此额外两条约束：
 //                   输出路径必须显式给、已存在则拒绝覆盖（把唯一一份恢复镜像写坏＝毁掉回滚手段）。
+//   · logs        ：抓串口启动输出（L5）。verify 证明「写对了」，它证明「能跑」——
+//                   判据是启动链路的证据（ROM banner / entry / IDF 日志行），不是「有输出」。
+//                   会独占串口并复位板子以便从 0 抓，因此与 chip_id 同档（L1）。
 // 分档的理由：若一把执行，用户在被问「要不要烧」时看不到 argv（审批卡只渲染 tool + target），
 // 只能凭模型口述作判断。先 plan 后 flash 让「将要执行什么」以 tool result 的形式落到对话里，
 // 用户和 digest 校验各有一份证据。
@@ -33,10 +36,14 @@ const {
   resolveImageFormat, esptoolFormatCheck, parseHandshake, HANDSHAKE_VERDICTS,
 } = require('../deviceFlash');
 const { parseUsbTree, classifyPorts } = require('../deviceProbe');
+const { splitPyserialOutput } = require('../devicePorts');
 const { listDisks } = require('../diskList');
 const { PROBES, defaultExec, parseLinuxUsb, parseWinUsb, resolveEsptoolFromPath } = require('./deviceProbeTool');
 const { uf2ChannelHandler, readVolumes } = require('./deviceUf2Tool');
 const { isUf2Volume } = require('../deviceUf2');
+const {
+  CAPTURE_SCRIPT, VERDICTS, parseCapture, expectTokens, analyzeLog, previewOf,
+} = require('../deviceSerial');
 
 const FLASH_TIMEOUT_MS = 300000; // esptool 烧 4MB 固件在 921600 波特率下约 40s；留足余量
 // 握手要比烧写短得多：它只做一次 ROM 同步，正常 3–8s，失败时 esptool 自己在 10s 内超时。
@@ -450,6 +457,120 @@ async function deviceFlashHandler(args = {}, deps = {}) {
     };
   }
 
+  // ── logs：抓串口启动输出，回答「烧完到底跑起来了没有」（L5，2026-10-31）──────
+  // 与 verify 的分工：verify 逐字节比对，证明「写对了」；logs 看启动链路，证明「能跑」。
+  // 「烧录成功但不开机」是这条链上最难排查的一类，两个判据缺一不可。
+  // 只读：不发任何写命令。但会**独占串口**并把板子复位（否则抓不到从 0 开始的启动日志），
+  // 因此与 chip_id 同档（L1）——复位是对硬件状态的改变，不是纯读取。
+  if (action === 'logs') {
+    if (!port) return { ok: false, action, error: '缺少 port：抓日志必须指定一个串口（取自 device_probe 的 ports）' };
+    const probe = PROBES[platform];
+    if (!probe || !probe.serialDetailed) {
+      return {
+        ok: false, action,
+        error: `暂不支持 ${platform} 的串口抓取（该平台尚未接线解释器探测）：`
+          + '未在真机验证过的命令不写进来，请用系统自带串口工具确认启动。',
+      };
+    }
+    const portRes = await readPorts({ exec, platform });
+    const gate = portGate(port, portRes, '读取日志');
+    if (gate) return { ...gate, action };
+    // 解释器必须复用 device_probe 的同一套发现逻辑，不能写死 `python3`：
+    // 本机实测 /usr/bin/python3 没有 pyserial，只有 anaconda 的解释器有。
+    // 写死的结果是「抓日志永远说没装 pyserial」，而装不装取决于用户用哪个 python。
+    let interp = '';
+    try {
+      interp = splitPyserialOutput(String((await exec(probe.serialDetailed))?.stdout || '')).interpreter || '';
+    } catch {
+      // 探测失败等价于「没有可用解释器」：下面统一报需要 pyserial（不是静默降级）
+    }
+    if (!interp) {
+      return {
+        ok: false, action, port,
+        error: '没找到带 pyserial 的 python：抓日志需要 pyserial（pip install pyserial）。'
+          + 'macOS 自带的 /usr/bin/python3 通常没有，装到 anaconda/homebrew 的解释器即可。',
+      };
+    }
+    const secs = clampNum(args.seconds, 8, 2, 30);
+    const baud = clampNum(args.baud, 115200, 1200, 2000000);
+    // 脚本作为单个 argv 元素传入（不经 shell）：脚本里的引号/反引号都不是注入面。
+    const argv = [interp, '-c', CAPTURE_SCRIPT, '--port', port, '--baud', String(baud), '--secs', String(secs)];
+    const run = deps.run || defaultRun;
+    const cap = parseCapture(`${(await run(argv, Math.round((secs + 8) * 1000))).stdout || ''}`);
+    if (!cap.ok) {
+      return {
+        ok: false, action, port, argv, portError: Boolean(cap.portError), error: cap.error,
+        // 端口打不开与「抓到了但没输出」是两件事：前者重试没用，后者要去看固件
+        hint: cap.portError ? `先 lsof ${port} 看是不是被别的串口工具占着` : '检查解释器与 pyserial 安装',
+      };
+    }
+    const an = analyzeLog({ buf: cap.buf, expect: expectTokens(args.expect) });
+    const booted = an.verdict === VERDICTS.booted;
+    const res = {
+      ok: booted && an.expect.missing.length === 0,
+      action, port, argv, seconds: secs, baud,
+      verdict: an.verdict,
+      bytes: an.bytes,
+      signals: an.signals,
+      expect: an.expect,
+      // 复位前残留的字节数：它被排除在判据之外，但要报出来，否则「8 秒抓到 7KB」会让人
+      // 以为全是本次启动的输出（真机首次实现就踩到：开头是上一份固件的尾流）。
+      staleBytes: an.staleBytes,
+      // 只作为证据：USB-CDC 口的波特率是建议值，改动不影响数据（真机实测），
+      // 所以「比例高」不能推成「波特率不对」——只有真正的 UART 桥口才会因速率不匹配产生乱码。
+      nonPrintableRatio: an.nonPrintableRatio,
+      preview: previewOf(an.text),
+    };
+    const warnings = [];
+    res.warnings = warnings;
+    if (an.staleBytes > 0) {
+      warnings.push(`抓到了复位前的残留输出 ${an.staleBytes} 字节（已排除在判据之外）：`
+        + '打开端口时驱动缓冲里还压着上一份固件的输出。判据只认最后一次启动横幅之后的内容，'
+        + '否则旧日志能冒充本次启动、把 expect 蒙混过去');
+    }
+    if (an.nonPrintableRatio > 0.15) {
+      warnings.push(`输出里非可打印字符占 ${(an.nonPrintableRatio * 100).toFixed(0)}%：`
+        + '若是 UART 桥口（ch34x/cp210x/ftdi）优先怀疑波特率；若是原生 USB 口（usbmodem）'
+        + '波特率一般不影响，更可能是设备在输出二进制协议');
+    }
+    if (an.verdict === VERDICTS.download) {
+      return {
+        ...res,
+        error: '板子停在**下载模式**，没有跑 app（输出里有下载模式标记）。'
+          + '烧完仍停在这里，通常意味着它没被正常复位、或 BOOTSEL/BOOT 引脚被按住/接错。'
+          + '先松开按键再上电复位后重抓；这时的 flash 内容对不对要另用 verify 判断。',
+      };
+    }
+    if (an.verdict === VERDICTS.noOutput) {
+      return {
+        ...res,
+        error: `${secs} 秒内没有任何串口输出：没有启动证据。可能是固件没启用日志、日志走了别的口，`
+          + '或者板子根本没启动。注意：原生 USB 口改波特率不影响数据，所以「波特率不对」通常不是原因。',
+      };
+    }
+    if (an.verdict === VERDICTS.unknown) {
+      return {
+        ...res,
+        error: `有 ${an.bytes} 字节输出，但没识别到启动证据（ROM banner / entry / IDF 日志行）：`
+          + '看 preview 里的原文判断它是自研格式日志还是别的东西。',
+      };
+    }
+    if (an.expect.missing.length) {
+      return {
+        ...res,
+        error: `启动证据齐了（${[
+          an.signals.rom ? 'ROM' : '', an.signals.entry ? 'entry' : '', an.signals.idfLog ? 'IDF 日志' : '',
+        ].filter(Boolean).join(' / ')}），但期望的特征串没出现：${an.expect.missing.join(' | ')}`
+          + '——固件跑起来了，但不是你预期的那个固件/分支，或者这几行打在更后面（可加大 seconds）。',
+      };
+    }
+    return {
+      ...res,
+      next: '启动证据齐了：烧进去的固件确实在跑。'
+        + (an.expect.checked ? `期望的 ${an.expect.checked} 个特征串全部命中。` : '如需更严格的判据，可用 expect 指定特征串。'),
+    };
+  }
+
   if (action === 'plan') {
     const segsIn = normalizeSegments({ firmware, offset, segments: args.segments });
     const tool = await resolveTool({ exec, platform });
@@ -587,7 +708,7 @@ async function deviceFlashHandler(args = {}, deps = {}) {
   }
 
   if (action !== 'flash' && action !== 'verify') {
-    return { ok: false, action, error: `未知 action：${action}（只支持 list_targets / chip_id / plan / flash / verify / backup）` };
+    return { ok: false, action, error: `未知 action：${action}（只支持 list_targets / chip_id / plan / flash / verify / backup / logs）` };
   }
 
   // ── flash / verify：共用同一条前置门，差别只在最后那条子命令 ──────────────────
@@ -689,6 +810,18 @@ async function deviceFlashHandler(args = {}, deps = {}) {
 function parseOffsetSafe(text) {
   const m = /^(?:0x)?([0-9a-f]+)$/i.exec(String(text || '').trim());
   return m ? parseInt(m[1], 16) : 0;
+}
+
+/**
+ * 数值参数收敛到区间内（缺省/非法一律回落 default）。
+ * 为什么要夹：`seconds` 是模型可控输入，不夹的话 `seconds=3600` 会把一次工具调用挂成
+ * 一小时（看门狗超时后还要等子进程），`seconds=0` 则永远抓不到启动日志——两头都是坏结果，
+ * 而两头的表象完全不同，靠看日志很难看出是参数问题。
+ */
+function clampNum(raw, dflt, min, max) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return dflt;
+  return Math.min(max, Math.max(min, Math.round(n)));
 }
 
 /** 宿主侧入口：真实 exec + 真实 child_process（main/scheduledTools.js 的 deviceFlash 通道调它）。 */

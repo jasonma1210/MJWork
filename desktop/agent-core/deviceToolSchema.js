@@ -37,13 +37,13 @@ export const DEVICE_FLASH_SCHEMAS = [
   { type: 'function', function: {
     name: 'device_flash',
     description: '把固件烧到开发板。**通道按固件格式自动选**：.bin→esptool 串口，.uf2→UF2（拷到 bootloader 盘，无需串口）；'
-      + '.hex/.img 直接拒绝并给转换指引。**烧写必须按序、不可跳档**：list_targets（只读列举）'
-      + '→ chip_id（只读：跟芯片同步一次问出它到底是哪颗）→ plan（装配命令+审批卡+plan_digest，不执行）'
-      + '→ flash（必须回传 plan_digest，每次弹人工审批）→ verify（回读逐字节比对，用同一 digest，不写设备）。'
+      + '.hex/.img 直接拒绝并给转换指引。'
       + 'digest 缺失或不匹配即拒绝：它锁「人确认的参数」与「实际执行的参数」一致。'
       + 'backup（整片备份到 out）独立，**应在 flash 之前**做，否则覆盖后没有回滚素材。'
       + 'chip_id 用于 device_probe 报 probe-required 时——工具自己用 esptool --chip auto 问出 '
       + 'chip/chipKey/flashSizeBytes，别让用户去命令行手敲；它不写任何字节，只把 MCU 复位进下载模式。'
+      + 'logs 抓串口启动输出，判据是启动链路证据（ROM banner / entry / IDF 日志行）而非「有输出」：'
+      + 'verify 只证明字节写对，logs 才证明固件真的在跑。它也会复位板子并独占串口。'
       + '只烧 .bin/.uf2，不做磁盘镜像、不格式化介质。UF2：plan 自动找 bootloader 盘'
       + '（判据是盘根 INFO_UF2.TXT 而非卷名），多个必须用 volume 指定；设备重启卸载该卷才算完成。',
     parameters: {
@@ -51,9 +51,10 @@ export const DEVICE_FLASH_SCHEMAS = [
       properties: {
         action: {
           type: 'string',
-          enum: ['list_targets', 'chip_id', 'plan', 'flash', 'verify', 'backup'],
-          description: 'list_targets=只读列举；chip_id=跟芯片握手确认身份（只读，需 port）；plan=装配命令并给出摘要（不执行）；'
-            + 'flash=写入（需 plan_digest）；verify=回读校验（需同一个 plan_digest，不写）；backup=整片备份到 out 文件（需 out）。',
+          enum: ['list_targets', 'chip_id', 'plan', 'flash', 'verify', 'backup', 'logs'],
+          description: '**烧写必须按序、不可跳档**：list_targets（只读列举）→ chip_id（握手确认身份，需 port）'
+            + '→ plan（装配命令+摘要，不执行）→ flash（写入，需 plan_digest）→ verify（回读校验，同一 digest，不写）。'
+            + 'backup=整片备份（需 out）；logs=抓启动日志（需 port，可选 seconds/expect/baud）。',
         },
         port: {
           type: 'string',
@@ -83,26 +84,30 @@ export const DEVICE_FLASH_SCHEMAS = [
         plan_digest: { type: 'string', description: 'action=plan 返回的 plan_digest 原文；flash 与 verify 必填，用于防止确认后参数被改。' },
         volume: {
           type: 'string',
-          description: 'UF2 通道的目标卷（如 /Volumes/RPI-RP2）。**必须落在系统挂载目录下**（macOS /Volumes、Linux /media 或 /run/media），'
-            + '且卷根要有 INFO_UF2.TXT——否则拒绝：这不是"顺便支持一下"，放任任意路径就等于给了一个任意文件写入原语。'
-            + '缺省时自动探测；同时插着多个 UF2 盘会拒绝并要求显式指定（挑错就是把 A 的固件写进 B）。',
+          description: 'UF2 目标卷（如 /Volumes/RPI-RP2）。必须落在系统挂载目录下（/Volumes、/media、/run/media）'
+            + '且卷根有 INFO_UF2.TXT，否则拒绝（否则等于给了任意文件写入）；缺省自动探测，多个 UF2 盘时必须显式指定。',
         },
         out: {
           type: 'string',
-          description: 'backup 必填：整片备份的落盘文件路径（绝对路径）。**已存在会被拒绝覆盖**——'
-            + '备份通常是唯一的回滚素材，写坏它就等于没有回滚手段。例：/Users/me/backup/board-20261031.bin',
+          description: 'backup 必填：落盘文件绝对路径。**已存在会拒绝覆盖**——它通常是唯一的回滚素材。',
         },
         size: {
           type: 'string',
-          description: 'backup 可选：要读取的长度，如 "4MB" / "0x400000"（**裸数字按十进制**）。'
-            + '缺省由 flash_id 实测；解析不出会拒绝备份而不是猜一个默认值——读一半的备份比没备份更危险。',
+          description: 'backup 可选：读取长度，如 "4MB" / "0x400000"（裸数字按十进制）。缺省由 flash_id 实测，'
+            + '解析不出就拒绝备份而不是猜默认值——读一半的备份比没备份更危险。',
         },
         expect_vid_pid: {
           type: 'string',
-          description: '可选的身份钉子，如 "1a86:7523"。给了就必须在本次实时枚举到的 USB 设备里出现，否则拒绝执行。'
-            + '串口名（/dev/cu.*）会随插拔和顺序变化、也可能明天指向另一块板子；VID:PID 是硬件身份，'
-            + '要确保「烧的就是这块芯片」时应显式给出。',
+          description: '可选身份钉子，如 "1a86:7523"。给了就必须在本次实时枚举里出现，否则拒绝。'
+            + '串口名会随插拔变化也可能指向另一块板子，VID:PID 才是硬件身份。',
         },
+        seconds: { type: 'integer', description: 'logs 可选：抓多少秒，缺省 8，夹在 2–30。烧完验证 5–10 秒够，要等某行日志再加大。' },
+        expect: {
+          type: 'string',
+          description: 'logs 可选：期望特征串，用 `|` 或逗号分隔（最多 8 条，大小写不敏感）。如 "Ready|Wi-Fi"。'
+            + '给了就要求全部命中——这是「跑的是不是我要的固件」的判据；不给只判有无启动证据。',
+        },
+        baud: { type: 'integer', description: 'logs 可选：抓取波特率，缺省 115200。原生 USB 口该值仅是建议值，不影响数据。' },
       },
       required: ['action'],
     },

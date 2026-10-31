@@ -1390,5 +1390,138 @@ const hostExec = async (cmd) => {
     JSON.stringify(bridged.primary.todo));
 }
 
+// ── L5 验证反馈：抓串口启动输出（2026-10-31）──────────────────────────────────
+// 目标：回答「烧完到底跑起来了没有」。verify 只证明字节写对，这一层才证明固件在跑。
+// 下面的 BOOT_LOG 是**真机原文**（ESP32-S3 / /dev/cu.usbmodem1301，行尾是真实的 CRLF），
+// download / 乱码两种形态本机造不出来（要按住 BOOT 或换 UART 桥口），标注为构造。
+{
+  const approval = require('../main/approval.js');
+  const { parseCapture, expectTokens, analyzeLog, CAPTURE_SCRIPT, VERDICTS } = require('../main/deviceSerial.js');
+
+  const BOOT_LOG = [
+    'ESP-ROM:esp32s3-20210327',
+    'Build:Mar 27 2021',
+    'rst:0x15 (USB_UART_CHIP_RESET),boot:0xb (SPI_FAST_FLASH_BOOT)',
+    'Saved PC:0x40381762',
+    'SPIWP:0xee',
+    'mode:DIO, clock div:1',
+    'load:0x3fce2820,len:0x548',
+    'load:0x403c8700,len:0xc3c',
+    'load:0x403cb700,len:0x2d9c',
+    'entry 0x403c8908',
+    'I (35) octal_psram: vendor id    : 0x0d (AP)',
+    'I (8180) Assets: The checksum calculation time is 94 ms',
+    'I (8190) MODEL_LOADER: Successfully load srmodels',
+  ].join('\r\n');
+  // 真机首跑的实际开头：打开端口时驱动缓冲里还压着上一份固件的尾流，复位只是把新内容接在后面
+  const STALE_PREFIX = 'I (5940) wifi:new:<1,1>, old:<1,0>, ap:<255,255>, sta:<1,1>, pro';
+  const capOut = (text) => {
+    const b64 = Buffer.from(text, 'utf8').toString('base64');
+    return `MJCODE_CAP_BEGIN\n${b64}\nMJCODE_CAP_END ${Buffer.byteLength(text, 'utf8')}\n`;
+  };
+  // 最近一次 run 收到的 argv（用来钉「脚本是单个 argv 元素」这条注入面结论）
+  let lastArgv = [];
+  const logsDeps = (stdout) => ({
+    exec: hostExec, platform: 'darwin',
+    run: async (argv) => { lastArgv = argv; return { code: 0, stdout }; },
+  });
+  const P = '/dev/cu.usbmodem1301';
+
+  // ① 启动判据：看的是启动链路证据，不是「有输出」
+  const booted = analyzeLog({ buf: Buffer.from(BOOT_LOG), expect: [] });
+  check('L5：真机启动日志 → verdict=booted，且 rom / entry / IDF 三类证据都识别到',
+    booted.verdict === VERDICTS.booted && booted.signals.rom && booted.signals.entry && booted.signals.idfLog
+    && booted.signals.download === false, JSON.stringify(booted.signals));
+  check('L5：0 字节 → no-output（不是「启动成功」也不是「崩溃」，就是没说话）',
+    analyzeLog({ buf: Buffer.alloc(0) }).verdict === VERDICTS.noOutput);
+  check('L5：有输出但无启动证据 → unknown-output（不乱判成 booted）',
+    analyzeLog({ buf: Buffer.from('hello from some other device\n') }).verdict === VERDICTS.unknown);
+  // 下载模式下 ROM 横幅照样会打 ⇒ 必须先判 download，否则「没跑 app」被误报成「启动成功」
+  const dl = analyzeLog({ buf: Buffer.from(`${BOOT_LOG}\r\nwaiting for download\r\n`) });
+  check('L5：停在下载模式 → 优先判 download-mode（即使同时有 ROM 横幅，也不能算启动成功）',
+    dl.verdict === VERDICTS.download && dl.signals.rom === true);
+
+  // ② 复位前残留必须切掉：否则上一份固件的日志能冒充本次启动、把 expect 蒙混过去
+  const withStale = analyzeLog({ buf: Buffer.from(`${STALE_PREFIX}${BOOT_LOG}`), expect: ['wifi:new', 'octal_psram'] });
+  check('L5：复位前残留被排除在判据外（旧日志里的 wifi:new 不能命中本轮的 expect）',
+    withStale.staleBytes > 0 && withStale.expect.missing.includes('wifi:new')
+    && withStale.expect.matched.includes('octal_psram'), JSON.stringify(withStale.expect));
+  check('L5：锚点必须优先取 ROM 横幅 —— 取「最后一个锚点」会把横幅自己切掉，rom 证据就没了',
+    withStale.signals.rom === true);
+  check('L5：没有横幅时用 rst:0x 兜底（ESP32 经典款只打 ets/ rst 行，没有 ESP-ROM）',
+    analyzeLog({ buf: Buffer.from('ets Jun  8 2016 00:22:57\r\nrst:0x1 (POWERON_RESET)\r\nI (12) boot: ok\r\n') })
+      .staleBytes === 0);
+
+  // ③ expect 解析：上限不是洁癖 —— 塞进一大段文本会让「全部命中」永远为假，判据等于没有
+  check('L5：expect 支持 | , 换行分隔、去重、去空白、去空项',
+    JSON.stringify(expectTokens(' Ready | wifi ,  Ready \n\n boot ')) === JSON.stringify(['Ready', 'wifi', 'boot']));
+  check('L5：expect 最多 8 条、每条截 80 字（超长输入不能让判据恒假）',
+    expectTokens(Array.from({ length: 20 }, (_, i) => `t${i}`).join('|')).length === 8
+    && expectTokens('x'.repeat(200)).every((t) => t.length <= 80));
+  check('L5：expect 为空/缺省 → 空数组（不能变成「零个期望 = 全部通过」的假绿）',
+    expectTokens('').length === 0 && expectTokens(undefined).length === 0);
+
+  // ④ 抓取输出解析：长度自检挡住「base64 被截断但 Buffer.from 不报错」
+  const parsed = parseCapture(capOut(BOOT_LOG));
+  check('L5 解析：正常输出 → 字节数一致', parsed.ok === true && parsed.bytes === Buffer.byteLength(BOOT_LOG));
+  const truncated = capOut(BOOT_LOG).replace(/MJCODE_CAP_END \d+/, 'MJCODE_CAP_END 999999');
+  check('L5 解析：声明字节与实际不符 → 报「采集被截断」，不许当成 0 字节输出（那会变成「设备没说话」）',
+    parseCapture(truncated).ok === false && String(parseCapture(truncated).error).includes('长度不符'));
+  check('L5 解析：没有抓取标记（脚本半路死了）→ 明确报工具问题，不与「没输出」同形',
+    String(parseCapture('Traceback: somehow died').error).includes('没有找到抓取标记'));
+  check('L5 解析：缺 pyserial 与端口打不开是两条不同的路（前者装库，后者查占用）',
+    String(parseCapture('MJCODE_CAP_NO_PYSERIAL').error).includes('pyserial')
+    && parseCapture('MJCODE_CAP_OPEN_FAIL SerialException: busy').portError === true);
+
+  // ⑤ 执行器接线（注入 run，绝不真开串口）
+  const d1 = logsDeps(capOut(BOOT_LOG));
+  const okRes = await deviceFlashHandler({ action: 'logs', port: P, expect: 'ESP-ROM|octal_psram' }, d1);
+  check('L5 接线：抓到启动日志且 expect 全中 → ok=true，verdict/bytes 都有',
+    okRes.ok === true && okRes.verdict === VERDICTS.booted && okRes.bytes === Buffer.byteLength(BOOT_LOG),
+    `${okRes.ok}/${okRes.verdict}`);
+  check('L5 接线：脚本作为**单个 argv 元素**传入（不经 shell ⇒ 脚本里的引号反引号都不是注入面）',
+    Array.isArray(lastArgv) && lastArgv.includes(CAPTURE_SCRIPT) && !lastArgv.some((a) => /\s&&|\|;/.test(String(a))),
+    JSON.stringify((lastArgv || []).slice(0, 2).map((x) => String(x).slice(0, 20))));
+  check('L5 接线：argv 里带 port 与抓取时长，且用发现到的解释器（不是写死 python3）',
+    lastArgv.includes(P) && lastArgv.includes('--secs') && lastArgv[0] === '/opt/anaconda3/bin/python3',
+    lastArgv[0]);
+
+  const noOut = await deviceFlashHandler({ action: 'logs', port: P }, logsDeps(capOut('')));
+  check('L5 接线：零输出 → ok=false 且点明「没有启动证据」，不猜成「板子坏了」',
+    noOut.ok === false && noOut.verdict === VERDICTS.noOutput && String(noOut.error).includes('没有启动证据'));
+  const dlRes = await deviceFlashHandler({ action: 'logs', port: P }, logsDeps(capOut(`${BOOT_LOG}\r\nwaiting for download\r\n`)));
+  check('L5 接线：下载模式单独给出可操作下一步（松按键/换复位方式），并说明内容对不对要用 verify 判',
+    dlRes.ok === false && String(dlRes.error).includes('下载模式') && String(dlRes.error).includes('verify'));
+  const missRes = await deviceFlashHandler({ action: 'logs', port: P, expect: 'ESP-ROM|不存在的串' }, logsDeps(capOut(BOOT_LOG)));
+  check('L5 接线：启动成功但特征串缺失 → ok=false 且列出缺失项（「跑起来了但不是你要的固件」）',
+    missRes.ok === false && missRes.expect.missing.length === 1
+    && String(missRes.error).includes('不存在的串'));
+
+  // 参数收敛：seconds 是模型可控输入，不夹会把一次调用挂成一小时
+  const clamped = await deviceFlashHandler({ action: 'logs', port: P, seconds: 999, baud: 9999999 }, logsDeps(capOut(BOOT_LOG)));
+  check('L5 接线：seconds/baud 越界被夹进区间（否则一次调用能挂掉整轮对话）',
+    clamped.seconds === 30 && clamped.baud === 2000000, `${clamped.seconds}/${clamped.baud}`);
+  const lowSec = await deviceFlashHandler({ action: 'logs', port: P, seconds: 1 }, logsDeps(capOut(BOOT_LOG)));
+  check('L5 接线：seconds 下限 2（给 1 秒几乎必然抓不到启动）', lowSec.seconds === 2);
+
+  check('L5 接线：缺 port / 非可刷机口都拒绝（不猜一个口去开串口）',
+    String((await deviceFlashHandler({ action: 'logs' }, logsDeps(capOut(BOOT_LOG)))).error || '').includes('缺少 port')
+    && String((await deviceFlashHandler({ action: 'logs', port: '/dev/cu.QCYMeloBudsN70' }, logsDeps(capOut(BOOT_LOG)))).error || '')
+      .includes('可刷'));
+  const noPy = await deviceFlashHandler({ action: 'logs', port: P }, {
+    platform: 'darwin',
+    exec: async (cmd) => (cmd.includes('serial.tools.list_ports') ? { stdout: 'INTERP=' } : hostExec(cmd)),
+    run: async () => ({ code: 0, stdout: '' }),
+  });
+  check('L5 接线：找不到带 pyserial 的解释器 → 明说装什么，不是静默返回空日志',
+    noPy.ok === false && String(noPy.error).includes('pyserial'));
+
+  // ⑥ 审批与目标：与 chip_id / verify 同档（复位硬件），卡面必须说清对哪个口动手
+  check('L5 审批：logs 与 chip_id / verify 同为 L1（都要独占串口并复位板子）',
+    approval.toolLevel('device_flash', { action: 'logs' }) === 'L1'
+    && approval.toolLevel('device_flash', { action: 'chip_id' }) === 'L1');
+  check('L5 审批目标：卡面是「日志 <口>」', approval.approvalTarget('device_flash', { action: 'logs', port: '/dev/cu.x' }) === '日志 /dev/cu.x');
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);
