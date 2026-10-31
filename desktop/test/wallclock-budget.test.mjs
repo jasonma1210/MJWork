@@ -150,6 +150,10 @@ check('段判定：未到 90% 不动 / 到 90% 交接 / 段数用满交给上层
   segmentDecision({ totalCap: 100, segmentSpent: 50 }) === 'none'
   && segmentDecision({ totalCap: 100, segmentSpent: 90 }) === 'handoff'
   && segmentDecision({ totalCap: 100, segmentSpent: 90, segmentsUsed: MAX_SEGMENTS }) === 'exhausted');
+check('段判定：runOpts 可覆盖段数与阈值（B3：不再写死）',
+  segmentDecision({ totalCap: 100, segmentSpent: 60, ratio: 0.5 }) === 'handoff'
+  && segmentDecision({ totalCap: 100, segmentSpent: 99, maxSegments: 0 }) === 'exhausted'
+  && segmentDecision({ totalCap: 100, segmentSpent: 99, ratio: 1 }) === 'none');
 check('段判定：未启用总闸（cap=0）时永不交接（不假装有段）',
   segmentDecision({ totalCap: 0, segmentSpent: 10 ** 9 }) === 'none');
 {

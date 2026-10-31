@@ -682,6 +682,11 @@ function startAgentRun(payload, sender) {
               //（每续一段换一套标准等于没有标准）。没有 AC 时写 null，不写 undefined
               //（JSON 落盘会丢键，读回时「没这个键」与「有但为 null」要能区分）。
               acceptance: info?.acceptance || null,
+              // 2026-10-31（C3）：判定序列 + 循环指纹 + 段号随断点落盘——事故后可还原
+              //「Judge 每轮怎么判的」「是否原地打转」，而不是只有一句收尾文案。
+              judgeRecords: info?.judgeRecords || null,
+              loopSignature: info?.loopSignature || null,
+              segmentNo: Number(info?.segmentNo) || 0,
             });
           } catch (e) {
             console.warn('[agentRunner] 断点保存失败:', e.message);

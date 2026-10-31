@@ -185,6 +185,9 @@ async function runOnce({ acceptance = true, criteria = null, acReply = AC_REPLY,
   check('㉔ 断点载荷带 AC（跨「继续」复用的唯一载体）',
     !!suspended && Array.isArray(suspended.acceptance?.must) && suspended.acceptance.must.length === 2,
     JSON.stringify(suspended?.acceptance || null));
+  check('㉔-3 断点载荷带「判定序列 + 循环指纹 + 段号」（C3：事故后可还原 Judge 每轮怎么判的）',
+    Array.isArray(suspended?.judgeRecords) && Array.isArray(suspended?.loopSignature) && Number.isInteger(suspended?.segmentNo),
+    JSON.stringify({ jr: suspended?.judgeRecords?.length, ls: suspended?.loopSignature?.length, seg: suspended?.segmentNo }));
 }
 {
   // 带外调用不得串流（M6 修正）：AC 探针必须带 quiet，否则宿主会用本 run 的 stream tag

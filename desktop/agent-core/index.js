@@ -21,7 +21,7 @@ import { selectToolsForWindow, buildToolCatalogText, toolsOfGroups, groupInfo } 
 import { budgetDecision, TOKEN_COMPACTION_TRIGGER, TOKEN_COMPACT_MIN_RATIO, TASK_TOTAL_TOKEN_CAP, DEFAULT_CONTEXT_WINDOW_FALLBACK, wallClockDecision, roundCapDecision, MAX_WALLCLOCK_RENEWS, MAX_ROUND_RENEWS } from './budgetDecision.js';
 import { buildExhaustedNotice, buildHandoff, makeSuspendNotifier, buildStoppedEarlyHint } from './exhaustedNotice.js';
 import { noteToolOutcome } from './loopGuard.js';
-import { segmentDecision, segmentHandoffStep, spentOf } from './segmentHandoff.js';
+import { segmentDecision, segmentHandoffStep, spentOf, MAX_SEGMENTS, SEGMENT_HANDOFF_RATIO } from './segmentHandoff.js';
 import { buildCheckPlan, checkAgainstLedger } from './hardCheck.js';
 import { resolveAcceptance } from './acceptance.js';
 import { runJudges, buildReflection, JUDGE_EVERY_DEFAULT, MAX_REFLECTIONS } from './judge.js';
@@ -2462,7 +2462,7 @@ export async function runAgent({
   rolePreset,
   sandboxPolicy, memories = [], chatRetryBaseMs = 1000,
   toolHandlers, sessionDir, planMode = false,
-  maxTotalRounds = AGENT_HARD_ROUND_CAP, tokenBudget = 0, totalTokenCap = TASK_TOTAL_TOKEN_CAP,
+  maxTotalRounds = AGENT_HARD_ROUND_CAP, tokenBudget = 0, totalTokenCap = TASK_TOTAL_TOKEN_CAP, segmentMax = MAX_SEGMENTS, segmentRatio = SEGMENT_HANDOFF_RATIO,
   // 无人值守通道（定时任务/Worker）：收尾文案里不能出现「发送继续」——那边没有人能发。
   unattended = false,
   resumeContext = '',
@@ -3215,7 +3215,7 @@ export async function runAgent({
   // M3：断点载荷的**唯一装配点**。四处挂起（墙钟/超时/上下文/总上限）此前各抄一遍同样的
   // 六个字段，加字段要改四处——漏一处就是「这条路存下来的断点和别的不一样」。
   // AC 随断点落盘：「继续」时由宿主读回并回传，保证续跑沿用同一条验收基线。
-  const suspendInfo = (kind) => ({ kind, summary: finalText, usage: { ...usage }, roundsUsed, rescues: tokenRescues, windowSpent: tokenWindowSpent, budget: tokenBudget, acceptance: acResult.ac || null });
+  const suspendInfo = (kind) => ({ kind, summary: finalText, usage: { ...usage }, roundsUsed, rescues: tokenRescues, windowSpent: tokenWindowSpent, budget: tokenBudget, acceptance: acResult.ac || null, segmentNo, judgeRecords: judgeRecords.slice(-40), loopSignature: recentSigs.slice(-8) });
   // 四处「挂起并落断点」共用同一段守卫：断点保存失败只告警，绝不让收尾路径自己抛出去（与 C-001 同纪律）。
   const saveSuspend = async (kind) => { try { suspendNoticed = await noticeSuspend(suspendInfo(kind)); } catch (e) { console.warn('[agent] 断点保存钩子异常:', e.message); } };
   // P1-1：整任务墙钟闸（wall-clock）——命中后走「暂停 + 收尾文案」，不新增 budgetKind 取值
@@ -3289,11 +3289,11 @@ export async function runAgent({
   // M4：独立 Judge 的账单独记（不与主循环用量混在一起——否则「审查花了多少」永远查不出来）。
   // M5：AC 满足率（acSatisfied / acTotal）。只在 **Judge 真判过** 时才赋值——
   // 未判定就显示「4/4」等于替模型背书，那正是本轮要消灭的自欺。
-  let judgeTokens = 0, judgeCalls = 0, reflections = 0, acTotal = 0, acSatisfied = 0, judgeMissing = 0, judgeError = false, lastMissingKey = ''; // lastMissingKey：上一次判定的缺失项指纹（用于识别「卡住」）
+  let judgeTokens = 0, judgeCalls = 0, reflections = 0, acTotal = 0, acSatisfied = 0, judgeMissing = 0, judgeError = false, lastMissingKey = '', judgeRecords = []; // judgeRecords：每轮判定留痕（随断点落盘，事故后可还原「Judge 每轮怎么判的」）
   // 判定逻辑全在 agent-core/judge.js（输入刻意不含思考过程），这里只接线、记账、留痕。
   const judgeNow = async (kinds) => {
     const r = await runJudges({ chatFn, model, withTimeout, goal: acGoal, acceptance: acResult.ac, ledger: toolLedger, output: finalText, kinds });
-    const hc = checkAgainstLedger({ plan: buildCheckPlan(acResult.ac), ledger: toolLedger }); judgeTokens += r.tokens; judgeCalls += r.calls; const mk = (r.missing_items || []).join('|'); if (mk && mk === lastMissingKey) trace({ type: 'judge_stuck', rounds: roundsUsed, n: r.missing_items.length }); lastMissingKey = mk; // 卡住观测：连续两次完全相同 ⇒ 反思没让模型补齐（只留痕，不擅自改判）
+    const hc = checkAgainstLedger({ plan: buildCheckPlan(acResult.ac), ledger: toolLedger }); judgeTokens += r.tokens; judgeCalls += r.calls; const mk = (r.missing_items || []).join('|'); if (mk && mk === lastMissingKey) trace({ type: 'judge_stuck', rounds: roundsUsed, n: r.missing_items.length }); lastMissingKey = mk; judgeRecords.push({ round: roundsUsed, missing: r.missing_items.length, stuck: mk === lastMissingKey }); if (judgeRecords.length > 40) judgeRecords.shift(); // 卡住观测：连续两次完全相同 ⇒ 反思没让模型补齐（只留痕，不擅自改判）
     // 硬校验优先：① 硬失败并入缺失项（Judge 判满足也翻不了台账事实）；② 判定失败≠没有缺口——硬证据仍要显示，否则 acTotal=0 让 UI 整块不渲染。
     if (hc.failed.length) { r.missing_items = [...new Set([...r.missing_items, ...hc.failed])]; if (!r.judged) { acTotal = hc.failed.length; acSatisfied = 0; judgeMissing = hc.failed.length; } }
     if (r.judged) { acTotal = (acResult.ac?.must?.length || 0) + (acResult.ac?.must_not?.length || 0); acSatisfied = Math.max(0, acTotal - r.missing_items.length); judgeMissing = r.missing_items.length; judgeError = !!r.has_error; }
@@ -3514,8 +3514,11 @@ export async function runAgent({
     // 2026-10-31：撞总上限之前先「交付阶段成果 + 自动续段」——用户要求别硬断开（详见 segmentHandoff.js）。
     // 位置必须在 budgetDecision **之前**：否则「一轮从 90% 跨过 100%」会被总上限闸先抓走，
     // 交接永远轮不到（实测：r12 跨到 60/60，闸先停，第 3 次交接没发生）。
-    if (segmentDecision({ totalCap: totalTokenCap, segmentSpent: spentOf(usage) - segmentBaseSpent, segmentsUsed: segmentNo }) === 'handoff') {
-      ({ segmentNo, base: segmentBaseSpent, notice: renewNotice } = await segmentHandoffStep({ segmentNo, usageSpent: spentOf(usage), baseSpent: segmentBaseSpent, totalCap: totalTokenCap, rounds: roundsUsed, toolCalls: toolLedger.length, todos: lastTodos, ac: acResult.ac, missing: judgeMissing, ledger: toolLedger, persistMessage, convo, trace }));
+    if (segmentDecision({ totalCap: totalTokenCap, segmentSpent: spentOf(usage) - segmentBaseSpent, segmentsUsed: segmentNo, maxSegments: segmentMax, ratio: segmentRatio }) === 'handoff') {
+      // 误报论证：segmentNo 全程只有这一个写入点（交接推进），新值就是本次调用的返回值，
+      // 不存在「基于过期状态赋值」的并发窗口。故就地抑制，而非改写成绕路代码。
+      // eslint-disable-next-line require-atomic-updates
+      ({ segmentNo, base: segmentBaseSpent, notice: renewNotice } = await segmentHandoffStep({ segmentNo, usageSpent: spentOf(usage), baseSpent: segmentBaseSpent, totalCap: totalTokenCap, maxSegments: segmentMax, rounds: roundsUsed, toolCalls: toolLedger.length, todos: lastTodos, ac: acResult.ac, missing: judgeMissing, ledger: toolLedger, persistMessage, convo, trace }));
     }
     let gate = budgetDecision({
       ctxEst, ctxWindow, spent: tokenWindowSpent, budget: tokenBudget,
