@@ -5,6 +5,7 @@ const { initArtifactsIpc } = require('./artifacts');
 const { initStudioIpc } = require('./studio');
 const { initLedgerIpc } = require('./ledger');
 const { initKnowledgeIpc } = require('./knowledgeBase');
+const { initDeviceIpc } = require('./device');
 const kbRuntime = require('../kbRuntime');
 
 // 三个域都只吃 getter（闭包注入），不持有存储：装配顺序解耦；且账本与配额共用同一个 SQLite
@@ -55,6 +56,11 @@ function registerDomainIpc({
     getDb: dbGetter, audit, getWindow: windowGetter, getActor: () => 'owner',
     getFlags: typeof getFlags === 'function' ? getFlags : () => null,
   });
+  // 设备域（2026-10-31）：两条**只读**通道（device:probe / device:targets），供右栏设备面板消费。
+  // 挂在这里而不是 main.js：main.js 的 code 行数已顶到 1178（`BASELINE_800` 精确等值），
+  // 加一行就红。本文件是既定的「只读域装配点」，不持存储、不需要任何 getter——设备数据
+  // 全部来自现场枚举，没有跨模块句柄要注入，故无参数。
+  initDeviceIpc();
 }
 
 module.exports = { registerDomainIpc };

@@ -23,6 +23,8 @@ import TerminalPanel from './components/TerminalPanel';
 import TaskSummaryPanel from './components/TaskSummaryPanel';
 import BrowserPanel from './components/BrowserPanel';
 import SideChatPanel from './components/SideChatPanel';
+// 设备面板（2026-10-31）：硬件探测结果的人读入口。只读——烧写仍走对话里的 device_flash。
+import DevicePanel from './components/DevicePanel';
 import ArtifactPanel from './components/ArtifactPanel';
 import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions'; import TopBarTitle from './components/TopBarTitle'; import DeskPage from './components/DeskPage'; import StudioPage from './components/StudioPage'; import LedgerPage from './components/LedgerPage';
 import { api, setLocalMode, isLocalMode } from './lib/api';
@@ -612,6 +614,10 @@ export default function App() {
         terminalPanel={<TerminalPanel cwd={activeProject?.path} />}
         browserPanel={<BrowserPanel />}
         sidechatPanel={<SideChatPanel model={selectedModel} />}
+        // 设备面板懒探测：右栏所有面板都常驻挂载，若一挂载就探测，
+        // 等于每次启动都替「从不打开设备面板」的用户跑一遍 system_profiler / kmutil。
+        // active 由当前 tab 决定，首次切到该面板才探一次，之后靠面板内的刷新按钮。
+        devicePanel={<DevicePanel active={paneTab === 'device'} />}
       />
       </ErrorBoundary>
 

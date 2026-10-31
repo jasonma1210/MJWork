@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   IconBot, IconFile, IconFolderOpen, IconGlobe, IconMessage,
-  IconMaximize, IconMinimize, IconPlus, IconTerminal, IconX,
+  IconMaximize, IconMinimize, IconPlug, IconPlus, IconTerminal, IconX,
 } from './icons';
 import { useI18n } from '../i18n';
 
@@ -28,6 +28,9 @@ export const PANEL_TABS = [
   { id: 'terminal', labelKey: 'rightPane.tabTerminal', Icon: IconTerminal },
   { id: 'browser', labelKey: 'rightPane.panelBrowser', Icon: IconGlobe },
   { id: 'sidechat', labelKey: 'rightPane.panelSideChat', Icon: IconMessage },
+  // 设备（2026-10-31）：硬件探测结果的**人读**入口。此前 device_probe / device_flash
+  // 的结论只存在于对话里的 JSON 里——能调的人（模型）不需要看，需要看的人（用户）调不到。
+  { id: 'device', labelKey: 'rightPane.panelDevice', Icon: IconPlug },
 ];
 
 // 「+」菜单清单（对齐 Codex）：所有面板均已实现，点击即切到对应 tab。
@@ -38,6 +41,7 @@ export const ADDABLE_PANELS = [
   { id: 'browser', labelKey: 'rightPane.panelBrowser', Icon: IconGlobe, supported: true },
   { id: 'subtasks', labelKey: 'rightPane.panelSummary', Icon: IconBot, supported: true },
   { id: 'sidechat', labelKey: 'rightPane.panelSideChat', Icon: IconMessage, supported: true },
+  { id: 'device', labelKey: 'rightPane.panelDevice', Icon: IconPlug, supported: true },
 ];
 
 // 已支持面板的 id 集合：菜单里点选即切到该 tab
@@ -67,6 +71,7 @@ export default function RightPane({
   terminalPanel,
   browserPanel,
   sidechatPanel,
+  devicePanel,
 }) {
   // 本文件 find/map 回调参数名为 t（标签项），解构改名 tr 避免遮蔽
   const { t: tr } = useI18n();
@@ -94,7 +99,7 @@ export default function RightPane({
   // 用 JS 判定而非容器查询——tailwind.config.js 未装 container-queries 插件，@[..] 变体会静默失效。
   // P1-15（2026-10-26）：tab 数量从 4 增至 7，「图标+文字」需要更宽阈值；低于阈值只显示图标，
   // 避免文字截断挤压右侧工具组（此前 460 是按 4 个 tab 定的，7 个 tab 需约 590px）。
-  // 2026-10-30：移除「变更」后为 6 个，590 继续沿用（偏保守即文字少显示一点，不会挤坏工具组）。
+  // 2026-10-30：移除「变更」后为 6 个；2026-10-31 补「设备」回到 7 个，590 仍然成立。
   const showTabLabels = maximized || width >= 590;
 
   // 收起时用 hidden 而非 return null：
@@ -236,13 +241,16 @@ export default function RightPane({
               此前为条件渲染（{active.id === 'X' && panel}），切 tab 即卸载——
               终端跑过的命令、浏览器页面、diff 行内评论草稿、侧聊上下文全部清空。
               改为：激活时 contents（等价于原直接渲染，panel 根直接成为 flex 子项）、非激活时 hidden。
-              注意：7 个面板全部常驻挂载，遵循本文件「保持上下文」的设计意图（与 artifact 同策略）。 */}
+              注意：7 个面板全部常驻挂载，遵循本文件「保持上下文」的设计意图（与 artifact 同策略）。
+              设备面板也常驻，但它的探测由自身 `active` 闸门控制（首次切到才探），
+              不随挂载就跑 system_profiler——否则等于替从不打开该面板的用户也付这笔开销。 */}
           <div className={active.id === 'files' ? 'contents' : 'hidden'}>{filesPanel}</div>
           <div className={active.id === 'artifact' ? 'contents' : 'hidden'}>{artifactPanel}</div>
           <div className={active.id === 'subtasks' ? 'contents' : 'hidden'}>{subtasksPanel}</div>
           <div className={active.id === 'terminal' ? 'contents' : 'hidden'}>{terminalPanel}</div>
           <div className={active.id === 'browser' ? 'contents' : 'hidden'}>{browserPanel}</div>
           <div className={active.id === 'sidechat' ? 'contents' : 'hidden'}>{sidechatPanel}</div>
+          <div className={active.id === 'device' ? 'contents' : 'hidden'}>{devicePanel}</div>
         </div>
       </div>
     </aside>

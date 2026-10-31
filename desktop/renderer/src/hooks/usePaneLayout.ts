@@ -12,7 +12,10 @@
 import { useEffect, useState } from 'react';
 import { loadJSON } from '../lib/appState';
 
-export type PaneTab = 'files' | 'subtasks' | 'terminal' | 'browser' | 'sidechat' | 'artifact';
+// 新增面板时必须同步这里：RightPane 的 PANEL_TABS 与 ADDABLE_PANELS 都有自己的 id 清单，
+// 而 setPaneTab 的类型只认本联合——漏加的表现是「点了 tab 什么也没发生」（值被类型挡在编译期外，
+// 或在 JS 侧变成字符串逸出，两种都很难从现象追到根因）。
+export type PaneTab = 'files' | 'subtasks' | 'terminal' | 'browser' | 'sidechat' | 'artifact' | 'device';
 
 export interface PaneLayout {
   sidebarOpen: boolean;
