@@ -237,6 +237,26 @@ check('设备面板接线：App 装配 + tab 可达 + 探测懒加载', () => {
   assert.ok(callIdx > guardIdx, 'active 闸门没挡在探测调用之前');
 });
 
+// 2026-10-31：设备面板的 Android 段。「空态」判据必须把 android 算进去。
+// 反转的实际后果：手机在用户态时 VID/PID 可能不在板卡表里（USB 枚举认不出），
+// devices / channels / uf2Volumes 三者皆空 ⇒ 面板显示「未发现设备」，而同一份 probe 结果
+// 里明明写着「检测到 Android 设备 OPD2409」。这是自相矛盾，且比不显示更坏。
+// 这条是对**形式**的断言（判据里有没有那一项）：empty 是组件内的布尔表达式，
+// 没有渲染测试能跑到它；已做变异验证 —— 摘掉 av.kind 那一项 ⇒ 红。
+check('设备面板空态：Android 设备也算「有东西」，不能只按 USB/通道/UF2 三空判空', () => {
+  const panel = read('components/DevicePanel.tsx');
+  const line = panel.slice(panel.indexOf('const empty ='), panel.indexOf('const failed ='));
+  assert.ok(line.includes('const empty ='), '未能界定 empty 判据（断言会空过）');
+  assert.match(line, /av\.kind !== 'device'/, 'empty 判据没把 Android 设备算进去（识别到手机却显示「未发现设备」）');
+  // 顺带锁住 android 段的数据来源：必须是 lib/androidView 的判定结果，而不是组件里另写一套三态。
+  assert.match(panel, /import \{ androidView \} from '\.\.\/lib\/androidView'/,
+    '设备面板没用 lib/androidView 的判定（两套三态迟早漂移）');
+  // 两个渲染分支的存在性。这是**字符代理**，只能证明「代码里挂着这两个分支」，证明不了渲染效果；
+  // 但少了它，「整段 android 区块被删掉」不会有任何测试变红（纯函数测试全绿、面板静悄悄少一块）。
+  assert.match(panel, /av\.kind === 'device' &&/, 'android 有设备时的卡片分支不在（面板不会显示手机信息）');
+  assert.match(panel, /av\.kind === 'unavailable' &&/, 'android 查不到时的提示分支不在（adb 没装时面板一声不吭）');
+});
+
 check('源码内无残留裸色（bg-black/、red-400、green-400、yellow-）', () => {
   const files = fs.readdirSync(path.join(SRC, 'components'))
     .filter((f) => f.endsWith('.jsx') && !f.includes('deprecated'))

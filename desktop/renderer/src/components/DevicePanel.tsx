@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import PanelEmpty from './PanelEmpty';
 import { IconPlug, IconRefresh } from './icons';
 import { useI18n } from '../i18n';
+import { androidView } from '../lib/androidView';
 
 // 设备面板（2026-10-31）：把硬件五层模型的结论从「对话里的一坨 JSON」变成一屏能读的事实。
 //
@@ -66,6 +67,9 @@ interface ProbeResult {
   devices?: UsbDevice[];
   ports?: Array<{ port?: string; chip?: string; driver?: string }>;
   channels?: ChannelTarget[];
+  // 三态（null=查不到 / 空数组=确实没有 / 有设备），判定与显示口径全在 lib/androidView。
+  // 声明成 unknown 是刻意的：它来自 IPC，跨进程边界不假设后端守约。
+  android?: unknown;
   notes?: string[];
   toolchain?: { esptool?: boolean; pyserial?: boolean };
 }
@@ -143,6 +147,7 @@ export default function DevicePanel({ active = false }: { active?: boolean }) {
     void refresh();
   }, [active, loaded, refresh]);
 
+  const av = androidView(probe?.android);
   const devices = Array.isArray(probe?.devices) ? probe.devices : [];
   const channels = Array.isArray(probe?.channels) ? probe.channels : [];
   const uf2Volumes = Array.isArray(targets?.uf2Volumes) ? targets.uf2Volumes : [];
@@ -154,7 +159,10 @@ export default function DevicePanel({ active = false }: { active?: boolean }) {
     ...(Array.isArray(targets?.notes) ? targets.notes : []),
   ])];
 
-  const empty = loaded && !busy && devices.length === 0 && channels.length === 0 && uf2Volumes.length === 0;
+  const empty = loaded && !busy && devices.length === 0 && channels.length === 0 && uf2Volumes.length === 0
+    // Android 设备也算「有东西」：手机在用户态时 USB 枚举可能没认出它（VID/PID 不在表里），
+    // 若只按 devices/channels 判空，会出现「明明识别到手机，面板却说没检测到设备」。
+    && av.kind !== 'device';
   const failed = probe?.ok === false;
 
   return (
@@ -286,6 +294,40 @@ export default function DevicePanel({ active = false }: { active?: boolean }) {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {av.kind === 'unavailable' && (
+          // 查不到 ≠ 没有：adb 没装/未接线时如实说出来，否则用户会以为「手机没被识别」
+          // 而跑去换线。这一行刻意比卡片轻（只是一行提示），因为它不构成结论。
+          <div className="px-2 pb-2 text-caption text-text2 break-all leading-relaxed">
+            {t('device.androidUnavailable')}
+          </div>
+        )}
+
+        {av.kind === 'device' && (
+          <div className="p-2 space-y-1">
+            <div className="text-caption text-text2 px-1">{t('device.sectionAndroid')}</div>
+            <div className="rounded-lg border border-border bg-bg px-2 py-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs truncate flex-1" title={av.name}>{av.name}</span>
+                {av.more > 0 && (
+                  <span className="text-caption text-text2 shrink-0">
+                    {t('device.androidMore', { n: String(av.more) })}
+                  </span>
+                )}
+              </div>
+              {av.meta && (
+                <div className="text-caption text-text2 mt-1 truncate font-mono">{av.meta}</div>
+              )}
+              <div className={`text-caption mt-1 ${av.tone}`}>{av.stateLabel}</div>
+              {av.hint && (
+                <div className="text-caption text-text2 mt-1 break-all leading-relaxed">{av.hint}</div>
+              )}
+              {av.error && (
+                <div className="text-caption text-warn mt-1 break-all leading-relaxed">{av.error}</div>
+              )}
+            </div>
           </div>
         )}
 
