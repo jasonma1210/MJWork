@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 // main/ 是 CJS：用具名 import 会被 cjs-module-lexer 判定失败，这里显式 require。
 const { matchBoard, parseUsbTree, classifyPorts, summarizeProbe } = require('../main/deviceProbe.js');
 const { partitionCandidates, buildFlashPlan, approvalCard } = require('../main/deviceFlash.js');
+const { deviceProbeHandler, parseLinuxUsb, parseWinUsb } = require('../main/tools/deviceProbeTool.js');
 
 let pass = 0;
 let fail = 0;
@@ -84,6 +85,43 @@ check('汇总：什么都没插时提示「数据线 vs 充电线」（最常见
   check('审批卡：不可逆动作标记为 never 档（每次都要弹）', card.level === 'never' && card.reversible === false);
   check('审批卡：缺回滚说明直接抛错（不允许出现无回滚的不可逆卡）',
     (() => { try { approvalCard({ action: 'a', target: 't', impact: 'i', consequence: 'c' }); return false; } catch (e) { return String(e.message).includes('rollback'); } })());
+}
+
+// ── probe handler（2026-10-31）：注入式 exec，真命令形状已覆盖 ──
+{
+  const darwinExec = async (cmd) => {
+    if (cmd.includes('SPUSBDataType')) return { stdout: JSON.stringify({ SPUSBDataType: [{ _name: 'USB2.0-Serial', vendor_id: '0x1a86', product_id: '0x7523' }] }) };
+    if (cmd.startsWith('ls /dev/cu')) return { stdout: '/dev/cu.wchusbserial110\n/dev/cu.QCYMeloBudsN70\n' };
+    if (cmd.startsWith('command -v esptool')) return { stdout: '/opt/anaconda3/bin/esptool.py\n' };
+    return { stdout: '' };
+  };
+  const r = await deviceProbeHandler({ exec: darwinExec, platform: 'darwin' });
+  check('probe(darwin)：认出 CH340 板 + 串口 + esptool 已装',
+    r.ok && r.devices.some((d) => d.board.chip === 'ch340') && r.flashable.length === 1 && r.toolchain.esptool === true,
+    `devices=${r.devices.length} flashable=${r.flashable.length}`);
+
+  const linuxExec = async (cmd) => {
+    if (cmd.includes('/sys/bus/usb')) return { stdout: '1a86 7523 USB2.0-Serial\n303a 1001 USB JTAG\n' };
+    if (cmd.startsWith('ls /dev/ttyUSB')) return { stdout: '/dev/ttyUSB0\n/dev/ttyACM1\n' };
+    return { stdout: '' };
+  };
+  const rl = await deviceProbeHandler({ exec: linuxExec, platform: 'linux' });
+  check('probe(linux)：/sys 三列输出能解析成两块板（CH340 + 原生 USB）',
+    rl.ok && rl.devices.length === 2 && rl.flashable.length >= 1, `devices=${rl.devices.length}`);
+
+  const rw = await deviceProbeHandler({
+    exec: async () => ({ stdout: JSON.stringify([{ FriendlyName: 'USB-SERIAL CH340 (COM3)', InstanceId: 'USB\\VID_1A86&PID_7523\\5&1' }]) }),
+    platform: 'win32',
+  });
+  check('probe(win32)：从 InstanceId 抠出 VID/PID 并认出 CH340',
+    rw.ok && rw.devices.some((d) => d.board.chip === 'ch340'), `devices=${rw.devices.length}`);
+
+  const rFail = await deviceProbeHandler({ exec: async () => { throw new Error('permission denied'); }, platform: 'darwin' });
+  check('probe：单条命令失败不抛，变成 notes 里的可读原因',
+    rFail.ok === true && rFail.notes.some((n) => n.includes('失败')), JSON.stringify(rFail.notes.slice(0, 2)));
+
+  check('probe：不支持的平台明确拒绝（不假装能探测）',
+    (await deviceProbeHandler({ exec: async () => ({ stdout: '' }), platform: 'aix' })).ok === false);
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

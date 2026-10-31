@@ -66,6 +66,9 @@ function parseUsbTree(tree) {
 
 // 串口名 → 桥芯片族（macOS 命名习惯）。用于「没插板子也能从残留端口名判断驱动装没装」。
 const PORT_RULES = [
+  // Linux 命名：ttyACM = CDC ACM（原生 USB 免驱），ttyUSB = USB-串口桥（CH340/CP210x 等，需 udev/组权限）
+  { re: /^\/dev\/ttyACM\d+$/, chip: 'esp32-native', driver: 'builtin' },
+  { re: /^\/dev\/ttyUSB\d+$/, chip: 'ch34x-or-cp210x', driver: 'vendor-vcp' },
   { re: /^\/dev\/(?:cu|tty)\.usbmodem/i, chip: 'esp32-native', driver: 'builtin' },
   { re: /^\/dev\/(?:cu|tty)\.wchusbserial/i, chip: 'ch34x', driver: 'wch-ch34x' },
   { re: /^\/dev\/(?:cu|tty)\.usbserial/i, chip: 'cp210x-or-ftdi', driver: 'vendor-vcp' },
