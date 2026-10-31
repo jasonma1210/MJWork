@@ -361,16 +361,12 @@ check('卡面：L1 / 不可记忆工具全部有专门文案（不得落 default
 // ② 棘轮（只减不增）：其余仍落 default 的工具必须**恰好等于**这份清单。
 // 双向断言的用处相反也成立——补了文案却没从清单删名，同样红（否则清单会烂成一份自我安慰的名单）。
 // 补文案时把名字删掉即可，不需要改断言的其它部分。
-// 余下 10 项都是只读或纯内部动作（检索 / 网络读 / 子代理 / 团队等待），卡面是 JSON 不构成安全缺口，
-// 只是不好看；真要补时从这份清单里删名即可。**有后果的都已补**：工件整章替换、团队广播、对外 PR、设备烧写。
-const KNOWN_JSON_CARD = [
-  'search_plugins', 'pr_list', 'pr_view', 'pr_diff', 'web_search', 'web_fetch',
-  'deep_research', 'spawn_subagent', 'orchestrate_task', 'team_wait',
-];
+// 2026-10-31：这份清单**已清零**（最后 10 个只读检索 / 子代理 / 团队等待也补了文案）。
+// 于是断言从「棘轮：实际集合 === 登记清单」升级成绝对不变量：任何人再让一个工具落进 default 都直接红，
+// 不再有「先记进清单、以后再说」的缓冲。缓冲清单的价值在于允许欠账，欠清了就该把口袋缝上。
 const actualJsonCard = APPROVAL_SURFACE.filter((t) => cardTitle(t).title === t);
-check('卡面棘轮：落 default 的集合 === 登记清单（新增工具落进来即红，补了文案没删名也红）',
-  actualJsonCard.length === KNOWN_JSON_CARD.length && KNOWN_JSON_CARD.every((t) => actualJsonCard.includes(t)),
-  `实际 ${actualJsonCard.length} 条: ${actualJsonCard.join(', ')}`);
+check('卡面：审批面零工具落 default（任何工具都不得把原始 JSON 当卡面）',
+  actualJsonCard.length === 0, `${actualJsonCard.length} 条: ${actualJsonCard.join(', ')}`);
 
 // ④ 只读动作不得印出「写什么」——首版把「端口 ← 固件」套到 backup 上，卡面出现
 // 「/dev/cu.usbmodem1101 ← (未指定固件)」这种自己都读不通的行。卡面文案的质量问题恰恰

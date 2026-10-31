@@ -966,6 +966,81 @@ function approvalSummary(tool, args = {}) {
           + (danger ? '\n\n⚠ 命中敏感动作白名单（支付/删除/发送/验证码类），每次操作都会重新询问，不可被「始终允许」覆盖。' : ''),
       };
     }
+    // ── 2026-10-31：只读检索 / 子代理 / 团队等待的卡面 ──
+    // 这批都是 L2 ⇒ 一样会弹卡。此前落 default，用户看到的是 `{"query":"…"}`。
+    // 「只读」不等于「不用看懂」：web_fetch 会把地址发出去，spawn_subagent / orchestrate_task 会起多个
+    // Agent 并行烧同一份预算，team_wait 会让本次执行收尾让位——这些都不是从 JSON 里能一眼算出来的后果。
+    case 'web_search':
+      return {
+        level: 'L2', title: '联网搜索',
+        detail: `查询：${String(args.query || '(空)')}\n条数上限：${String(args.max_results ?? '默认')}\n\n`
+          + '会把查询词发到搜索引擎（出网）；返回的是公开网页摘要，不是本机数据。',
+      };
+    case 'web_fetch':
+      return {
+        level: 'L2', title: '抓取网页正文',
+        detail: `URL：${String(args.url || '(空)')}\n`
+          + (args.offset || args.limit ? `分片：offset ${String(args.offset ?? 0)} / limit ${String(args.limit ?? '默认')}\n` : '')
+          + '\n会向该地址发起请求（出网）并读取响应正文；需要登录态的页面拿不到内容。',
+      };
+    case 'deep_research': {
+      const sq = Array.isArray(args.subquestions) ? args.subquestions : [];
+      return {
+        level: 'L2', title: '深度研究（会写文件）',
+        detail: `主题：${String(args.topic || '(空)')}\n`
+          + (sq.length ? `子问题：${sq.slice(0, 5).map(String).join('；')}\n` : '')
+          + `来源上限：${String(args.max_sources ?? '默认')}\n\n`
+          + '会多次出网检索，并在工作区 research/ 下写入一份带引用的报告；耗时明显长于单次搜索。',
+      };
+    }
+    case 'search_plugins':
+      return {
+        level: 'L2', title: '搜索可安装插件',
+        detail: `查询：${String(args.query || '(空)')}\n`
+          + `范围：${String(args.types || '本地已装 + 本地市场索引 + 公网源（npm / GitHub）')}\n\n`
+          + '只搜索、不安装；公网源那部分会出网。',
+      };
+    case 'pr_list':
+      return {
+        level: 'L2', title: '列出 PR（只读）',
+        detail: `筛选：state=${String(args.state || 'open')} limit=${String(args.limit ?? '默认')}`
+          + `${args.author ? ` author=${String(args.author)}` : ''}\n\n`
+          + '只读本机 gh 登录态可访问的仓库，不修改任何东西。',
+      };
+    case 'pr_view':
+      return {
+        level: 'L2', title: '查看 PR 详情（只读）',
+        detail: `PR：#${String(args.number ?? '(未指定)')}\n\n`
+          + '读取标题 / 描述 / 增删行数 / CI 状态 / 已有 review，不修改任何东西。',
+      };
+    case 'pr_diff':
+      return {
+        level: 'L2', title: '拉取 PR diff（只读）',
+        detail: `PR：#${String(args.number ?? '(未指定)')}`
+          + `${args.file ? ` 文件：${String(args.file)}` : '（全部文件）'}\n\n`
+          + '只读取 diff 文本；超大 PR 会截断并提示按文件分片。',
+      };
+    case 'spawn_subagent':
+      return {
+        level: 'L2', title: `启动子代理（${String(args.task_type || '通用')}）`,
+        detail: `目标：${String(args.objective || '(空)')}\n\n`
+          + '会起一个独立 Agent 并行执行，它有自己的工具集与上下文，与主任务共用预算。',
+      };
+    case 'orchestrate_task': {
+      const n = Number(args.max_agents) || 0;
+      return {
+        level: 'L2', title: '多 Agent 编排',
+        detail: `目标：${String(args.goal || '(空)')}\n并行上限：${n ? `${n} 个 Agent` : '按拆解结果'}\n\n`
+          + '会拆成 DAG 并行执行、失败自动重试与重规划；参与成员越多，预算消耗越快。',
+      };
+    }
+    case 'team_wait':
+      return {
+        level: 'L2', title: '登记团队等待',
+        detail: `等待任务：${Array.isArray(args.taskIds) ? (args.taskIds.map(String).join('、') || '(空)') : '(空)'}\n`
+          + `超时：${args.timeoutMs ? `${String(args.timeoutMs)} ms` : '默认'}\n\n`
+          + '登记后本次执行立即收尾并让出并发槽位，依赖就绪后会重新排队继续——这不等于任务结束。',
+      };
     default:
       if (tool.startsWith('mcp__')) {
         return { level: 'L3', title: `MCP 工具 ${tool}`, detail: JSON.stringify(args).slice(0, 500) };
