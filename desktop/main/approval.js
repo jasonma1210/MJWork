@@ -649,6 +649,30 @@ function approvalSummary(tool, args = {}) {
         title: '移出暂存区',
         detail: `将把以下文件移出暂存区（工作区改动保留）：\n${String(args.files || '').slice(0, 300)}`,
       };
+    // 2026-10-31：PR 对外动作卡面。此前落 default ⇒ 用户看到的是 JSON。这两个是**以你的名义发到远端**的动作，
+    // 且不可记忆（NON_REMEMBERABLE）⇒ 卡面必须让人一眼认出「发到哪个 PR、什么结论、正文写了什么」。
+    case 'pr_review': {
+      const ev = String(args.event || 'COMMENT').toUpperCase();
+      const label = { APPROVE: '批准（不阻止合入）', REQUEST_CHANGES: '要求修改（会阻止合入）', COMMENT: '只留结论性评论' }[ev] || ev;
+      return {
+        level: 'L3',
+        title: `提交 PR 审查结论：${label}`,
+        detail: `PR：#${String(args.number ?? '(未指定)')}\n结论：${ev} —— ${label}\n`
+          + `审查意见（原文）：\n${String(args.body || '(空)')}\n\n`
+          + '⚠ 这会立即发到远端仓库，以你的身份公开可见并通知订阅者。'
+          + 'REQUEST_CHANGES 在结论被改掉之前会一直阻止该 PR 合入；发错只能再发一条更正，原文仍留在历史里。\n'
+          + '此动作不可沉淀为「始终允许」——每次都要单独确认。',
+      };
+    }
+    case 'pr_comment': {
+      return {
+        level: 'L3',
+        title: '在 PR 下发评论',
+        detail: `PR：#${String(args.number ?? '(未指定)')}\n评论（原文）：\n${String(args.body || '(空)')}\n\n`
+          + '⚠ 公开可见、会通知订阅者；写错只能再发一条更正，原文仍留在历史里。\n'
+          + '此动作不可沉淀为「始终允许」——每次都要单独确认。',
+      };
+    }
     // 2026-10-17：模型侧创建定时任务——文案必须讲清「以后会自己跑」，否则用户会当成一次性动作
     case 'scheduled_create':
       return {
@@ -835,6 +859,45 @@ function approvalSummary(tool, args = {}) {
           + '\n\n⚠ 当前环境无法提供 OS 级沙箱隔离。批准后该命令将以应用完整权限直接执行（无文件/网络边界）。'
           + '本批准仅对这一次命令有效，不会沉淀为「始终允许」规则。',
       };
+    // 2026-10-31：设备烧写卡面。此前落 default ⇒ 用户看到的是一抹 JSON（`{"action":"flash",…,"plan_digest":"…"}`），
+    // 而这是全应用**最不可逆**的动作：写错芯片型号或偏移，板子就起不来了。卡面必须自己讲清
+    // 「写什么、写到哪、走哪条通道、坏了能不能回滚」，而不是把参数原样倒给人看。
+    // 注意 title/detail 都是纯文本渲染（ApprovalCard 用 <pre>，不走 markdown）⇒ 这里不写 `**`。
+    case 'device_flash': {
+      const act = String(args.action || 'plan');
+      const TITLES = {
+        list_targets: '列举可烧写目标',
+        chip_id: '读取芯片身份',
+        plan: '装配烧写计划（不执行）',
+        flash: '写入固件',
+        verify: '回读校验',
+        backup: '整片备份',
+        logs: '抓取启动日志',
+      };
+      const what = TITLES[act] || `设备操作（${act}）`;
+      const segs = Array.isArray(args.segments) ? args.segments : [];
+      const target = args.partition
+        ? `${String(args.partition)}${args.slot ? `_${String(args.slot)}` : ''} 分区${args.serial ? `（设备 ${String(args.serial)}）` : ''}`
+        : args.volume
+          ? `UF2 卷 ${String(args.volume)}`
+          : `${String(args.port || '(未指定端口)')} ← ${args.firmware
+            ? String(args.firmware)
+            : (segs.length ? `${segs.length} 段镜像（${segs.map((s) => String(s?.offset || '?')).join(' / ')}）` : '(未指定固件)')}`;
+      const lines = [`动作：${what}`, `目标：${target}`];
+      if (args.channel) lines.push(`写入通道：${String(args.channel)}`);
+      if (args.chip) lines.push(`芯片参数：${String(args.chip)}`);
+      if (args.expect_vid_pid) lines.push(`身份钉子：${String(args.expect_vid_pid)}（实时枚举里查不到就拒）`);
+      if (act === 'backup') lines.push(`落盘：${String(args.out || '(未指定，会被拒)')}（文件已存在会拒绝覆盖——它通常是唯一的回滚素材）`);
+      if (act === 'flash' || act === 'verify') lines.push(`计划摘要：${String(args.plan_digest || '(缺失，会被拒)')}`);
+      const tail = act === 'flash'
+        ? '\n\n⚠ 会覆盖设备 flash 中对应区域，不会自动回滚。参数已被 plan 摘要锁定，确认后不可改。\n'
+          + '写错芯片型号或偏移的典型结果是「命令成功、板子不启动」——确认无误再点「允许」。'
+          + (args.out ? '' : '\n本次未带备份参数。若设备里原有固件还需要，先拒绝并改用 action=backup。')
+        : act === 'backup'
+          ? '\n\n备份本身只读；但整片读取可能耗时数分钟，期间不要断开设备。'
+          : '\n\n（本次不写设备。）';
+      return { level: 'L1', title: `设备烧写：${what}`, detail: lines.join('\n') + tail };
+    }
     // ── G-CUA：模型侧桌面自动化顶层调用审批卡（computer_use）──
     // 与 cua_action 同结构；文案必须讲清「这是真实操作你的桌面应用」，否则用户会当成只读预览。
     case 'computer_use': {
