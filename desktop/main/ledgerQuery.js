@@ -164,6 +164,8 @@ function queryPage(db, { filters, limit, sort = 'created_at', dimensions = [] } 
   return {
     items,
     summary,
+    // 全库总量（无筛选）：只用于把「筛选为空」与「库里没有」分开，见 unfilteredTotal 注释
+    unfiltered: unfilteredTotal(db, asOf),
     nextCursor,
     normalizedFilters: nf,
     asOf,
@@ -203,6 +205,25 @@ function queryNextPage(db, { cursor, filters, limit, sort = 'created_at' } = {})
   const last = items.length ? items[items.length - 1] : null;
   const nextCursor = last ? encodeCursor({ ...c, c: last.createdAt, i: last.id }) : null;
   return { items, nextCursor, asOf, normalizedFilters: nf };
+}
+
+/**
+ * 全库总量（**不带任何筛选**，但守同一个 asOf）。
+ *
+ * 为什么必须单独给一个数：空态有两种，含义完全相反——
+ *   · 筛选内 0 条，但库里有 N 条 ⇒ 用户的动作是「换个时间范围」；
+ *   · 库里真的 0 条 ⇒ 用户的动作是「去跑一次，或者去查记账链路为什么没写」。
+ * 只报一个 0，用户只能猜是哪一种。本页出现过真实案例：63 条记录全在 9 天前，
+ * 「近 7 天」视图一片空白，用户以为功能坏了。
+ *
+ * 用同一个 asOf 而不是重新取 currentAsOf：否则「空态显示的 N 条」与「点进去看到的列表」
+ * 会对不上（两者之间补记的记录会混进来）。
+ */
+function unfilteredTotal(db, asOf) {
+  const row = db.prepare(
+    'SELECT COUNT(*) AS n, COALESCE(SUM(tokens),0) AS tokens FROM quota_consumptions WHERE id <= ?',
+  ).get(asOf);
+  return { count: safeInt(row && row.n, 0), tokens: safeInt(row && row.tokens, 0) };
 }
 
 /** 汇总：与明细**同一个** nf + asOf ⇒ 合计必然等于翻完所有页的明细之和 */
@@ -291,7 +312,7 @@ function capabilities() {
 }
 
 module.exports = {
-  queryPage, queryNextPage, summarize, normalizeFilters, filtersHash,
+  queryPage, queryNextPage, summarize, normalizeFilters, filtersHash, unfilteredTotal,
   currentAsOf, encodeCursor, decodeCursor, capabilities, rowToItem,
   DEFAULT_LIMIT, MAX_LIMIT, FIELD_SEMANTICS_VERSION,
 };

@@ -3,17 +3,28 @@
 // 为什么这条要进门禁：用户跑完一轮对话、甚至中途取消，工作台「用量流水」一条都看不到。
 // 根因是普通单人对账**从不写** quota_consumptions —— 那本台账此前只由配额闸门（团队派单
 // 经 workerPool）写入。补上回填后，这条链路的失效形态极其安静：
-//   · 反查不到 projectId → 静默 return（没有任何报错）
 //   · usage 为空/为 0 → 静默 return
 //   · 异常被 try/catch 吞掉 → 只有一行 warn
-// 三种都表现为「界面上用量一直是 0，测试全绿」。所以这里把每个分支的结果钉成断言，
+//   · （2026-10-31 已修）反查不到 projectId → 静默 return
+// 前两种都表现为「界面上用量一直是 0，测试全绿」，所以这里把每个分支的结果钉成断言，
 // 而不是只测「happy path 能写进去」。
+//
+// ⚠ 2026-10-31 口径修正（改回去之前先读 main/chatUsageLedger.js 的注释）：
+//   旧口径「拿不到项目就不记账」在真机上把**绝大多数**消耗丢掉了（9 天 36 个会话、chat 记录 0 条），
+//   因为普通对话本来就不属于任何项目空间。现在的判据是「记到未归属哨兵下」，不是「不记」。
+//   ⑫ 是这条链路的端到端断言：真实 sql.js 库 + 真实 QuotaLedger + 真实 queryPage，
+//   因为「每一段都单测过」并不等于「接起来能查到」。
 import assert from 'node:assert';
+import os from 'node:os';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { recordChatUsage } = require('../main/chatUsageLedger');
 const { makeChatUsageDeps } = require('../main/chatUsageWiring');
+const { QuotaLedger, UNBOUND_PROJECT_ID } = require('../main/quotaLedger');
+const ledgerQuery = require('../main/ledgerQuery');
+const { openSqliteJsDb } = require('../main/db/sqljsDb');
 
 let pass = 0;
 let fail = 0;
@@ -57,11 +68,17 @@ check('③ tokens 合计为 0 / usage 缺失 → 不写（避免台账里出现 
   assert.equal(spy.calls.length, 0, `0 token / 无 usage 不应写台账，实际写了 ${spy.calls.length} 条`);
 });
 
-check('④ 反查不到项目 → 不写，且不抛', () => {
+check('④ 反查不到项目 → 记到「未归属」哨兵，而不是丢账（2026-10-31 口径修正）', () => {
+  // 旧口径是「没有项目归属就不写」，理由是「挂不到任何项目视图」。真机实测推翻了它：
+  // 普通对话本来就不属于任何项目空间 ⇒ 绝大多数真实消耗被丢弃（本机 9 天 36 个会话、chat 记录 0 条），
+  // 而首页那页叫「用量流水」。丢账是账本说谎，挂哨兵只是分类不精确。
   const spy = spyRecorder();
   recordChatUsage({ recordUsage: spy.recordUsage, resolveProjectOfConversation: () => null },
     { runId: 'r', usage: { prompt_tokens: 5, completion_tokens: 5 } });
-  assert.equal(spy.calls.length, 0, '没有项目归属时不应写台账（否则会挂到错误的项目视图）');
+  assert.equal(spy.calls.length, 1, '没有项目归属时也必须入账（否则流水页永远是空的）');
+  const { UNBOUND_PROJECT_ID } = require('../main/quotaLedger.js');
+  assert.equal(spy.calls[0].projectId, UNBOUND_PROJECT_ID, '未归属的消耗必须记在哨兵下，不能借用某个真项目');
+  assert.equal(spy.calls[0].tokens, 10);
 });
 
 check('⑤ recordUsage 抛错 → 被吞掉，不中断收尾链路（否则 done 事件发不出去）', () => {
@@ -132,5 +149,45 @@ check('⑪ makeChatUsageDeps.recordUsage：recordChat 抛错 → 返回 0 且不
   assert.equal(out, 0);
 });
 
-console.log(`\nchat-usage-ledger: ${pass}/${pass + fail} 通过`);
-if (fail > 0) process.exit(1);
+// ⑫ 端到端：真实 sql.js 库 + 真实 QuotaLedger + 真实 queryPage —— 证明「写进去了、查得出来、
+//    且不吃配额额度」三件事同时成立。分段单测各自全绿但接起来查不到，是本项目反复踩过的坑。
+(async () => {
+  const db = await openSqliteJsDb(path.join(os.tmpdir(), `chat-usage-e2e-${process.pid}-${Date.now()}.sqlite`));
+  db.exec(`
+    CREATE TABLE quota_consumptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, run_id TEXT, task_id TEXT,
+      member_id TEXT, tokens INTEGER NOT NULL, source TEXT NOT NULL DEFAULT 'round',
+      created_at INTEGER NOT NULL, model TEXT);
+    CREATE TABLE quota_buckets (
+      project_id TEXT PRIMARY KEY, total_limit INTEGER NOT NULL DEFAULT 3000000,
+      window_seconds INTEGER NOT NULL DEFAULT 21600, warn_ratio REAL NOT NULL DEFAULT 0.7,
+      throttle_ratio REAL NOT NULL DEFAULT 0.9, resume_min_tokens INTEGER NOT NULL DEFAULT 100000,
+      resume_hysteresis_ratio REAL NOT NULL DEFAULT 0.85, tier TEXT NOT NULL DEFAULT 'standard',
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    INSERT INTO quota_buckets (project_id, created_at, updated_at)
+      VALUES ('${UNBOUND_PROJECT_ID}', 1, 1);
+  `);
+  const quotaLedger = new QuotaLedger(db);
+  const deps = makeChatUsageDeps(() => quotaLedger, () => null); // 无 projectStore ⇒ 反查必然 null
+
+  recordChatUsage(deps, { runId: 'run-1', usage: { prompt_tokens: 1200, completion_tokens: 800 }, modelId: 'model-a' });
+  recordChatUsage(deps, { runId: 'run-2', usage: { promptTokens: 300, completionTokens: 200 }, modelId: 'model-b' });
+
+  const page = ledgerQuery.queryPage(db, { filters: {}, limit: 100 });
+  check('⑫ 端到端：反查不到项目的对话 → 真的落库，且能在 queryPage 里查到（source=chat / 哨兵项目 / 模型保留）', () => {
+    assert.equal(page.unfiltered.count, 2, `应写入 2 条，实际 ${page.unfiltered.count}`);
+    assert.equal(page.summary.tokens, 2500, `Token 合计应为 2000+500，实际 ${page.summary.tokens}`);
+    const row = page.items.find((x) => x.runId === 'run-1');
+    assert.ok(row, 'run-1 没出现在查询结果里（写进去了但查不出来）');
+    assert.equal(row.source, 'chat');
+    assert.equal(row.projectId, UNBOUND_PROJECT_ID);
+    assert.equal(row.model, 'model-a', '模型名丢了 ⇒ 流水页「哪个模型烧掉多少」永远显示未记录');
+  });
+  check('⑫b 端到端：chat 消耗不进配额窗口（哨兵不能变成绕过额度的后门）', () => {
+    assert.equal(quotaLedger.usedInWindow(UNBOUND_PROJECT_ID), 0,
+      'chat 源必须被 usedInWindow 排除，否则单人闲聊会挤占团队派单额度');
+  });
+
+  console.log(`\nchat-usage-ledger: ${pass}/${pass + fail} 通过`);
+  if (fail > 0) process.exit(1);
+})().catch((e) => { console.error('FATAL', e); process.exit(2); });

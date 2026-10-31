@@ -18,6 +18,24 @@ const MIN_AVAILABLE = 1000;    // 绝对下限：低于此值一律视为不可�
 
 const QUOTA_STATES = ['ok', 'warn', 'throttle', 'suspended'];
 
+// 2026-10-31：没有项目归属的消耗该记在哪 —— 用一个显式哨兵值，而不是「不记」。
+//
+// 背景（真机实测）：quota_consumptions 里 63 条记录全部是 source='round'，时间集中在
+// 2026-10-22 一个十分钟窗口；此后 9 天用户聊了 36 个会话（含当天正在用的那场），
+// **一条 chat 都没入账**。原因不是链路断了，而是 recordChatUsage 在
+// 「会话反查不到项目空间」时直接 return —— 而普通对话本来就不属于任何项目空间。
+// 于是「用量流水」这页对绝大多数用户长期是空的：它叫「用量」，口径却是「项目账」。
+//
+// 为什么用哨兵而不是把 project_id 改成可空：
+//   · 列是 NOT NULL，且 _insert 拒绝空串（空归属=错归属，这条判据要留着）；
+//   · 改可空需要迁移 + 重建三个索引（idx_*_window / _member / _model 都以 project_id 打头），
+//     收益只是一个 NULL 的写法，代价是一次不可回滚的表重建。
+//   · 哨兵是**可筛选的假项目**：用户在项目维度看到「未归属项目」这一行，比看到一片空白
+//     更接近事实。
+// 口径仍然安全：'chat' 源本身被 usedInWindow / memberUsed 等三处 SQL 用 `source <> 'chat'`
+// 排除，所以挂在哨兵下的消耗**不会**进入任何项目配额窗口，不会挤占团队派单额度。
+const UNBOUND_PROJECT_ID = '__unbound__';
+
 function safeNum(v, fallback = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -251,6 +269,7 @@ class QuotaLedger {
    *
    * ⚠ 口径：'chat' 源**不计入**项目配额窗口（usedInWindow/memberUsed 均按 source 过滤），
    * 否则单人闲聊会无端挤占团队任务的派发额度；它只服务于用量展示，不改变配额判定。
+   * 没有项目归属的对话由调用方传 UNBOUND_PROJECT_ID（见该常量处的原因说明）。
    */
   recordChat({ projectId, runId, memberId, tokens, model, at }) {
     return this._insert({ projectId, runId, taskId: null, memberId, tokens, model, source: 'chat', at });
@@ -317,4 +336,4 @@ class QuotaLedger {
   }
 }
 
-module.exports = { QuotaLedger, DEFAULT_GRANT, MIN_AVAILABLE, QUOTA_STATES };
+module.exports = { QuotaLedger, DEFAULT_GRANT, MIN_AVAILABLE, QUOTA_STATES, UNBOUND_PROJECT_ID };

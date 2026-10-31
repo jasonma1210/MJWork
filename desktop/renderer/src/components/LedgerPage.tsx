@@ -34,6 +34,11 @@ interface Summary {
 
 const DAY_MS = 86400000;
 
+// 没有项目归属的对话用量记在这个哨兵值下（见 main/quotaLedger.js 的同名常量）。
+// 两个进程各一份字面量是跨进程契约的常态，但不能靠"记得同步"：
+// test/ledger-query.test.mjs 有一条断言直接比对两侧的值，改一边不改另一边会红。
+const UNBOUND_PROJECT_ID = '__unbound__';
+
 /** 时间区间：闭开区间 [from, to)，与后端口径一致 */
 function rangeToFilters(range: 'today' | '7d' | '30d' | 'all'): { from: number | null; to: number | null } {
   if (range === 'all') return { from: null, to: null };
@@ -51,6 +56,9 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
   const [status, setStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [items, setItems] = useState<LedgerItem[]>([]);
   const [summary, setSummary] = useState<Summary>({ count: 0, tokens: 0 });
+  // 全库总量（不带筛选，同一 asOf）。**null 表示"没拿到"**，不是 0 —— 把未知显示成 0
+  // 会让空态说「库里一条都没有」，而事实可能是查询没跑成。
+  const [unfiltered, setUnfiltered] = useState<{ count: number; tokens: number } | null>(null);
   const [asOf, setAsOf] = useState(0);
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -77,10 +85,14 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
     }))
       .then((raw) => {
         if (id !== reqId.current) return;
-        const res = raw as { ok?: boolean; items?: LedgerItem[]; summary?: Summary; asOf?: number; nextCursor?: string | null } | undefined;
+        const res = raw as {
+          ok?: boolean; items?: LedgerItem[]; summary?: Summary; asOf?: number;
+          nextCursor?: string | null; unfiltered?: { count: number; tokens: number } | null;
+        } | undefined;
         if (!res?.ok) { setStatus('error'); setError(String(res && 'error' in res ? (res as { error?: string }).error : 'UNKNOWN')); return; }
         setItems(res.items || []);
         setSummary(res.summary || { count: 0, tokens: 0 });
+        setUnfiltered(res.unfiltered ?? null);
         setAsOf(Number(res.asOf) || 0);
         setCursor(res.nextCursor || null);
         setStatus((res.items || []).length ? 'ready' : 'empty');
@@ -134,6 +146,12 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
   }
 
   const isEmpty = status === 'empty';
+  // 空态分两种：**筛选内没匹配** 与 **库里真的没有**。这一步就是在区分它们：
+  // 只报一个 0，用户只能猜「是我筛错了还是功能坏了」（真机上发生过：63 条记录全在 9 天前，
+  // 「近 7 天」视图一片空白，被当成 bug 报了）。
+  const libTotal = unfiltered ?? null;
+  const libCount = libTotal ? libTotal.count : 0;
+  const canClear = Boolean(source) || range !== 'all';
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -179,11 +197,15 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
 
         {isEmpty ? (
           <div className="space-y-1 py-6 text-center">
-            <div className="text-sm">{source || range !== 'all' ? t('ledger.noMatch') : t('ledger.noData')}</div>
-            <div className="text-caption text-text2">{source || range !== 'all' ? t('ledger.noMatchHint') : t('ledger.noDataHint')}</div>
-            {(source || range !== 'all') && (
+            <div className="text-sm">{libCount > 0 ? t('ledger.noMatch') : t('ledger.noData')}</div>
+            <div className="text-caption text-text2">
+              {libCount > 0
+                ? t('ledger.noMatchCount', { n: libCount, tokens: libTotal ? libTotal.tokens : 0 })
+                : t('ledger.noDataHint')}
+            </div>
+            {libCount > 0 && canClear && (
               <Button size="xs" variant="ghost" onClick={() => { setSource(''); setRange('all'); }}>
-                {t('ledger.clearFilter')}
+                {t('ledger.viewAllTime')}
               </Button>
             )}
           </div>
@@ -233,7 +255,12 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
                 {items.map((it) => (
                   <tr key={it.id} className="border-t border-border">
                     <td className="py-1 tabular-nums">{it.createdAt ? new Date(it.createdAt).toLocaleString() : t('ledger.notRecorded')}</td>
-                    <td className="py-1 truncate">{it.projectId ?? t('ledger.notRecorded')}</td>
+                    <td className="py-1 truncate">
+                      {/* 哨兵值不是真实项目：直接显示 __unbound__ 会让人以为数据库里存了个怪项目 */}
+                      {it.projectId === UNBOUND_PROJECT_ID
+                        ? t('ledger.unboundProject')
+                        : (it.projectId ?? t('ledger.notRecorded'))}
+                    </td>
                     <td className="py-1 truncate">{it.taskId ?? t('ledger.notRecorded')}</td>
                     <td className="py-1 truncate">{it.runId ?? t('ledger.notRecorded')}</td>
                     <td className="py-1">{it.source ?? t('ledger.notRecorded')}</td>

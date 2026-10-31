@@ -11,14 +11,19 @@
 //    source 过滤，所以这里入账**不会**吃掉团队派单的额度，只服务于「用量流水」展示。
 //  · 取消的运行也要入账：引擎无论成功还是中断都会带累计 usage 调 onDone，用户实测反馈
 //    「我取消了，但用量没出来」，因此不做 aborted 过滤。
-//  · 拿不到项目就跳过：没有归属的消耗进不了任何项目视图，猜一个项目比不记更糟。
+//  · **（2026-10-31 修正）不再要求 projectId 非空**：无归属的对话由 chatUsageLedger 传
+//    哨兵 UNBOUND_PROJECT_ID 下来。此前的 `if (!projectId) return 0` 是「账本一片空白」的
+//    另一半原因——两层各自都判一次「没有项目就不记」，任一层保留都足以把账记没。
 //  · 异常一律吞掉只打 warn：这段跑在收尾链路里，抛错会让 done 事件发不出去、客户端卡 loading。
 function makeChatUsageDeps(getQuotaLedger, getProjectStore) {
   return {
     recordUsage: ({ projectId, runId, tokens, modelName } = {}) => {
       try {
         const ledger = getQuotaLedger();
-        if (!ledger || !projectId || !(tokens > 0)) return 0;
+        if (!ledger || !(tokens > 0)) return 0;
+        // projectId 由上层保证已归一（要么真项目，要么哨兵）。仍显式判空：空归属写进去
+        // 会被 quotaLedger._insert 静默拒绝（return 0），那样失败就是无声的。
+        if (!projectId) return 0;
         // modelName 必须透传：此前这里只解构三个字段，账本行的 model 恒为空 ⇒
         // 「哪个模型烧掉多少」在流水页永远显示「未记录」（只能靠扫消息表反推）。
         return ledger.recordChat({ projectId, runId, memberId: null, tokens, model: String(modelName || '').trim() });

@@ -236,6 +236,53 @@ async function buildDb() {
     assert.equal(miss.model, null);
   });
 
+  check('T18 「筛选内 0 条」与「库里 0 条」必须能分开（空态要能说清是哪一种）', () => {
+    // 真机案例：63 条记录全在 9 天前，「近 7 天」视图一片空白 → 被当成功能坏了报上来。
+    // 只回一个 count=0，界面就只能说「没有数据」，而事实是「你这段时间没有，但库里有」。
+    const p = ledger.queryPage(db, { filters: { from: 100000, to: 200000 }, limit: 100 });
+    assert.equal(p.summary.count, 0, '夹具失效：这个时间范围内本不该有记录');
+    // 真值取自一条**独立的**聚合 SQL（不是拿 summarize 跟 unfilteredTotal 互相比对——
+    // 那样两个函数一起写错也照样相等）。
+    const truth = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(tokens),0) AS t FROM quota_consumptions').get();
+    assert.ok(p.unfiltered, 'queryPage 必须回 unfiltered 总量（否则空态无法区分两种「0 条」）');
+    assert.equal(p.unfiltered.count, Number(truth.n), `全库应为 ${truth.n} 条，实际 ${p.unfiltered.count}`);
+    assert.equal(p.unfiltered.tokens, Number(truth.t), `全库 Token 合计应为 ${truth.t}，实际 ${p.unfiltered.tokens}`);
+    assert.ok(p.unfiltered.count > 0, '本夹具必须造出「筛选 0 条但库里有」，否则断言空过');
+    // 无筛选时两个数必须一致：不一致说明「空态说的 N 条」和「点进去看到的列表」不是同一批数据
+    const all = ledger.queryPage(db, { filters: {}, limit: 100 });
+    assert.equal(all.unfiltered.count, all.summary.count);
+    assert.equal(all.unfiltered.tokens, all.summary.tokens);
+  });
+
+  check('T19 未归属哨兵：主进程常量与渲染层字面量必须一致（跨进程契约不能靠「记得同步」）', () => {
+    const { UNBOUND_PROJECT_ID } = require('../main/quotaLedger.js');
+    assert.ok(UNBOUND_PROJECT_ID, 'main/quotaLedger.js 必须导出 UNBOUND_PROJECT_ID');
+    const tsx = fs.readFileSync(
+      path.join(import.meta.dirname, '..', 'renderer', 'src', 'components', 'LedgerPage.tsx'), 'utf8',
+    );
+    // 从**赋值语句**里抽字面量，而不是全文 includes（注释里写一遍就会假绿）
+    const m = /const UNBOUND_PROJECT_ID = '([^']+)'/.exec(tsx);
+    assert.ok(m, '渲染层未声明 UNBOUND_PROJECT_ID，本次断言会空过');
+    assert.equal(m[1], UNBOUND_PROJECT_ID, `两侧哨兵值不一致：渲染层 ${m[1]} / 主进程 ${UNBOUND_PROJECT_ID}`);
+  });
+
+  check('T20 空态必须把「全库总量」显示出来（后端给了数，界面不展示等于没修）', () => {
+    const tsx = fs.readFileSync(
+      path.join(import.meta.dirname, '..', 'renderer', 'src', 'components', 'LedgerPage.tsx'), 'utf8',
+    );
+    // 截取空态分支再断言：只在别处（比如摘要区）出现 unfiltered 不算数——
+    // 「断言写在能被另一份数据满足的位置」是本项目踩过的典型空过。
+    const a = tsx.indexOf('{isEmpty ? (');
+    const b = tsx.indexOf(') : (', a);
+    assert.ok(a >= 0 && b > a, '未能界定空态分支范围（断言会空过）');
+    const emptyBlock = tsx.slice(a, b);
+    assert.match(emptyBlock, /ledger\.noMatchCount/, '空态没有报出全库总量（用户仍然只知道「0 条」）');
+    assert.match(emptyBlock, /libCount/, '空态没有用到全库总量');
+    assert.match(emptyBlock, /ledger\.viewAllTime/, '空态没有给出「看全部时间」的出路');
+    // 光有 UI 不够：后端回了 unfiltered，前端不读就永远是 0（表现为「库里一条都没有」的假话）
+    assert.match(tsx, /setUnfiltered\(res\.unfiltered/, '响应里的 unfiltered 没有被写入状态，空态计数恒为 0');
+  });
+
   console.log(`\nledger-query: ${pass} 通过 / ${fail} 失败`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('FATAL', e); process.exit(2); });
