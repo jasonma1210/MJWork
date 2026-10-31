@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { parseJudge, buildJudgePrompt, buildReflection, runJudges, JUDGE_EVERY_DEFAULT, MAX_REFLECTIONS, FINAL_PUSH_MAX } from '../agent-core/judge.js';
 import { parseAcceptance, hasAcceptance, buildAcceptancePrompt, resolveAcceptance, AC_MAX_ITEMS, AC_MAX_ITEM_CHARS } from '../agent-core/acceptance.js';
 import { runAgent } from '../agent-core/index.js';
-import { pathsIn, buildCheckPlan, checkAgainstLedger } from '../agent-core/hardCheck.js';
+import { pathsIn, buildCheckPlan, checkAgainstLedger, commandsIn } from '../agent-core/hardCheck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -332,7 +332,7 @@ check('㉚ 空缺失项 → 空指令（不注入一条没有内容的「系统�
     && pathsIn('升级到 v1.0.0 版本').length === 0);
   const plan = buildCheckPlan({ must: ['输出报告 report.md'], must_not: ['不要改 config/app.json'] });
   check('硬校验：must → required，must_not → forbidden',
-    JSON.stringify(plan) === JSON.stringify({ required: ['report.md'], forbidden: ['config/app.json'] }), JSON.stringify(plan));
+    JSON.stringify(plan) === JSON.stringify({ required: ['report.md'], forbidden: ['config/app.json'], commands: [] }), JSON.stringify(plan));
   const miss = checkAgainstLedger({ plan, ledger: [{ name: 'read_file', args: { path: 'report.md' } }] });
   check('硬校验：只有读没有写 ⇒ 判「未满足」（读不算产出，forbidden 未触碰故只报 1 条）',
     miss.failed.length === 1 && miss.checked === 2, JSON.stringify(miss.failed));
@@ -342,6 +342,19 @@ check('㉚ 空缺失项 → 空指令（不注入一条没有内容的「系统�
   const viol = checkAgainstLedger({ plan, ledger: [{ name: 'edit_file', args: { path: 'config/app.json' } }, { name: 'write_file', args: { path: 'report.md' } }] });
   check('硬校验：改了 must_not 点名的文件 ⇒ 报「违反」',
     viol.failed.length === 1 && viol.failed[0].includes('不要改'), JSON.stringify(viol.failed));
+  // 命令类（opt-in）：默认关——历史夹具里满是「跑通 npm test」，默认开会把它们全打成未满足。
+  check('硬校验·命令类：默认关（不改变既有行为），显式 opt-in 才生效',
+    buildCheckPlan({ must: ['跑通 npm test'], must_not: [] }).commands.length === 0
+    && JSON.stringify(buildCheckPlan({ must: ['跑通 npm test'], must_not: [] }, { commands: true }).commands) === JSON.stringify(['npm test']));
+  check('硬校验·命令类：台账真跑过才算过（`npm test -- --run` 视同 npm test）',
+    checkAgainstLedger({ plan: buildCheckPlan({ must: ['跑通 npm test'] }, { commands: true }), ledger: [{ name: 'shell', args: { command: 'npm test -- --run' } }] }).failed.length === 0);
+  check('硬校验·命令类：只跑了 npm install 不算「npm test 通过」',
+    (() => {
+      const r = checkAgainstLedger({ plan: buildCheckPlan({ must: ['跑通 npm test'] }, { commands: true }), ledger: [{ name: 'shell', args: { command: 'npm install' } }] });
+      return r.failed.length === 1 && r.failed[0].includes('npm test');
+    })());
+  check('硬校验·命令类：命令提取只认验证入口（npm/pnpm/pytest…），不把普通句子当命令',
+    commandsIn('跑通 npm test，然后看看 build 目录').length === 1 && commandsIn('读一下 package.json').length === 0);
   check('硬校验：AC 里没有可判定的路径 ⇒ checked=0（全部交 Judge，不硬凑）',
     checkAgainstLedger({ plan: buildCheckPlan({ must: ['代码要清晰'], must_not: [] }), ledger: [] }).checked === 0);
 }

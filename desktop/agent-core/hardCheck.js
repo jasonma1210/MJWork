@@ -33,19 +33,38 @@ export function pathsIn(text, max = 4) {
   return out;
 }
 
+// 命令类验收：只在**显式 opt-in** 时启用（默认关）。
+// 为什么不默认开：验收文本里「跑通 npm test」这类句子很常见，一旦默认要求台账里真有该调用，
+// 所有历史夹具与「模型用别的方式验证过」的合理情形都会被打成未满足——误报比漏报更伤。
+// 命令白名单：只认常见的验证入口，避免把 `npm install` 之类当成「验收通过」。
+const CMD_RE = /\b(npm|pnpm|yarn|npx|pytest|cargo|go|make|tsc|vitest|jest|mvn|gradle)\s+[\w:.-]+(?:\s+[\w:.-]+)?/g;
+// 只读一条命令的「动作词」用于匹配（`npm run build` 与 `npm run build -- x` 视为同一条）
+export function commandsIn(text, max = 3) {
+  const out = [];
+  for (const m of String(text || '').matchAll(CMD_RE)) {
+    const c = String(m[0]).replace(/\s+/g, ' ').trim();
+    if (!out.includes(c)) out.push(c);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 /**
- * 生成校验计划（纯函数）。返回 { required: string[], forbidden: string[] }
+ * 生成校验计划（纯函数）。返回 { required, forbidden, commands }
  *   required  = must 里点名、台账必须出现写动作的路径
  *   forbidden = must_not 里点名、台账不得出现写动作的路径
+ *   commands  = must 里点名的验证命令（仅 opts.commands=true 时填充）
  */
-export function buildCheckPlan(acceptance) {
+export function buildCheckPlan(acceptance, { commands = false } = {}) {
   const must = Array.isArray(acceptance?.must) ? acceptance.must : [];
   const mustNot = Array.isArray(acceptance?.must_not) ? acceptance.must_not : [];
   const required = [];
   for (const item of must) for (const p of pathsIn(item)) if (!required.includes(p)) required.push(p);
   const forbidden = [];
   for (const item of mustNot) for (const p of pathsIn(item)) if (!forbidden.includes(p)) forbidden.push(p);
-  return { required, forbidden };
+  const cmds = [];
+  if (commands) for (const item of must) for (const c of commandsIn(item)) if (!cmds.includes(c)) cmds.push(c);
+  return { required, forbidden, commands: cmds };
 }
 
 const norm = (p) => String(p || '').replace(/^\.?\/+/, '').replace(/\\/g, '/');
@@ -62,7 +81,7 @@ const norm = (p) => String(p || '').replace(/^\.?\/+/, '').replace(/\\/g, '/');
 export function checkAgainstLedger({ plan, ledger } = {}) {
   const req = Array.isArray(plan?.required) ? plan.required : [];
   const forb = Array.isArray(plan?.forbidden) ? plan.forbidden : [];
-  if (!req.length && !forb.length) return { failed: [], checked: 0 };
+  if (!req.length && !forb.length && !(Array.isArray(plan?.commands) && plan.commands.length)) return { failed: [], checked: 0 };
   const writes = [];
   for (const e of Array.isArray(ledger) ? ledger : []) {
     if (!WRITE_TOOLS.has(String(e?.name || ''))) continue;
@@ -70,6 +89,19 @@ export function checkAgainstLedger({ plan, ledger } = {}) {
     if (p) writes.push(p);
   }
   const failed = [];
+  // 命令类：台账里必须有一条 shell 类调用包含了这条命令（且不是失败），
+  // 否则「跑通 npm test」这句验收就是无据的。宁可漏（台账形状不可靠时放行）不可误报。
+  const SHELL_TOOLS = new Set(['shell', 'run_command', 'exec', 'bash']);
+  const ranCmds = [];
+  for (const e of Array.isArray(ledger) ? ledger : []) {
+    if (!SHELL_TOOLS.has(String(e?.name || ''))) continue;
+    if (e?.ok === false || e?.result?.ok === false) continue;
+    const c = String(e?.args?.command || '').replace(/\s+/g, ' ').trim();
+    if (c) ranCmds.push(c);
+  }
+  for (const cmd of (Array.isArray(plan?.commands) ? plan.commands : [])) {
+    if (!ranCmds.some((c) => c.includes(cmd))) failed.push(`工具台账里没有执行过 \`${cmd}\`（验收要求该命令通过）`);
+  }
   for (const want of req) {
     const hit = writes.some((w) => w === norm(want) || w.endsWith(`/${norm(want)}`) || norm(want).endsWith(`/${w}`));
     if (!hit) failed.push(`工具台账里没有对 \`${want}\` 的写入记录（验收要求涉及该文件）`);
@@ -78,5 +110,5 @@ export function checkAgainstLedger({ plan, ledger } = {}) {
     const hit = writes.some((w) => w === norm(bad) || w.endsWith(`/${norm(bad)}`));
     if (hit) failed.push(`工具台账显示 \`${bad}\` 被修改过，但验收明确要求不要改它`);
   }
-  return { failed: failed.slice(0, 3), checked: req.length + forb.length };
+  return { failed: failed.slice(0, 3), checked: req.length + forb.length + (Array.isArray(plan?.commands) ? plan.commands.length : 0) };
 }

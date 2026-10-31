@@ -2478,7 +2478,7 @@ export async function runAgent({
   rolePreset,
   sandboxPolicy, memories = [], chatRetryBaseMs = 1000,
   toolHandlers, sessionDir, planMode = false,
-  maxTotalRounds = AGENT_HARD_ROUND_CAP, tokenBudget = 0, totalTokenCap = TASK_TOTAL_TOKEN_CAP, segmentMax = MAX_SEGMENTS, segmentRatio = SEGMENT_HANDOFF_RATIO,
+  maxTotalRounds = AGENT_HARD_ROUND_CAP, tokenBudget = 0, totalTokenCap = TASK_TOTAL_TOKEN_CAP, segmentMax = MAX_SEGMENTS, segmentRatio = SEGMENT_HANDOFF_RATIO, checkCommands = false,
   // 无人值守通道（定时任务/Worker）：收尾文案里不能出现「发送继续」——那边没有人能发。
   unattended = false,
   resumeContext = '',
@@ -3309,7 +3309,7 @@ export async function runAgent({
   // 判定逻辑全在 agent-core/judge.js（输入刻意不含思考过程），这里只接线、记账、留痕。
   const judgeNow = async (kinds) => {
     const r = await runJudges({ chatFn, model, withTimeout, goal: acGoal, acceptance: acResult.ac, ledger: toolLedger, output: finalText, kinds });
-    const hc = checkAgainstLedger({ plan: buildCheckPlan(acResult.ac), ledger: toolLedger }); judgeTokens += r.tokens; judgeCalls += r.calls; const mk = (r.missing_items || []).join('|'); if (mk && mk === lastMissingKey) trace({ type: 'judge_stuck', rounds: roundsUsed, n: r.missing_items.length }); lastMissingKey = mk; judgeRecords.push({ round: roundsUsed, missing: r.missing_items.length, stuck: mk === lastMissingKey }); if (judgeRecords.length > 40) judgeRecords.shift(); // 卡住观测：连续两次完全相同 ⇒ 反思没让模型补齐（只留痕，不擅自改判）
+    const hc = checkAgainstLedger({ plan: buildCheckPlan(acResult.ac, { commands: checkCommands }), ledger: toolLedger }); judgeTokens += r.tokens; judgeCalls += r.calls; const mk = (r.missing_items || []).join('|'); if (mk && mk === lastMissingKey) trace({ type: 'judge_stuck', rounds: roundsUsed, n: r.missing_items.length }); lastMissingKey = mk; judgeRecords.push({ round: roundsUsed, missing: r.missing_items.length, stuck: mk === lastMissingKey }); if (judgeRecords.length > 40) judgeRecords.shift(); // 卡住观测：连续两次完全相同 ⇒ 反思没让模型补齐（只留痕，不擅自改判）
     // 硬校验优先：① 硬失败并入缺失项（Judge 判满足也翻不了台账事实）；② 判定失败≠没有缺口——硬证据仍要显示，否则 acTotal=0 让 UI 整块不渲染。
     if (hc.failed.length) { r.missing_items = [...new Set([...r.missing_items, ...hc.failed])]; if (!r.judged) { acTotal = hc.failed.length; acSatisfied = 0; judgeMissing = hc.failed.length; } }
     if (r.judged) { acTotal = (acResult.ac?.must?.length || 0) + (acResult.ac?.must_not?.length || 0); acSatisfied = Math.max(0, acTotal - r.missing_items.length); judgeMissing = r.missing_items.length; judgeError = !!r.has_error; }
