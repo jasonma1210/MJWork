@@ -21,6 +21,36 @@ const { FASTBOOT_CHANNEL_ALIASES } = require('./deviceFastboot');
 // ——这是「工具链不替你说」的那一类错误，必须在这里拦。
 const DFU_ALLOWED_EXT = ['.bin', '.dfu'];
 
+// `.dfu`（DfuSe）容器里带元素表与地址，**dfu-util 0.9 才认**。0.8 及更早会把容器头当裸字节
+// 写进 flash：设备照单全收、命令返回 0，而固件是废的（正是本项目最忌讳的静默损坏）。
+// 所以带 .dfu 时必须先问版本，低于 0.9 直接拒，并说清「去升级」而不是让用户对着
+// 一句 "Error during download get_status" 猜。
+const DFU_MIN_DFUSE = { major: 0, minor: 9 };
+
+/**
+ * 解析 `dfu-util --version` 的输出。
+ * 真机形状（0.9 / 0.10 / 0.11 一致）：
+ *   `dfu-util 0.11` + 空行 + `Copyright 2005-2009 ...`
+ * 少数打包版写成 `dfu-util version 0.9`，故中间词可选。
+ * @returns {{ok:true, major:number, minor:number, version:string, raw:string, dfuseOk:boolean}|{ok:false, error:string}}
+ */
+function parseDfuVersion(text) {
+  const t = String(text ?? '');
+  const m = /dfu-util(?:\s+version)?\s+(\d+)\.(\d+)/i.exec(t);
+  if (!m) {
+    return {
+      ok: false,
+      error: `无法从输出识别 dfu-util 版本：${t.slice(0, 160) || '（空）'}。`
+        + '若它其实能正常工作，可忽略本提示（只是没法替你判 DfuSe 支持）',
+    };
+  }
+  const major = Number(m[1]);
+  const minor = Number(m[2]);
+  const dfuseOk = major > DFU_MIN_DFUSE.major
+    || (major === DFU_MIN_DFUSE.major && minor >= DFU_MIN_DFUSE.minor);
+  return { ok: true, major, minor, version: `${major}.${minor}`, raw: t.split('\n')[0].trim(), dfuseOk };
+}
+
 // dfu-util 的 `-l` 输出（v0.9–0.11 真机形状）：
 //   Found DFU: [0483:df11] ver=2200, devnum=3, cfg=1, intf=0, path="20-1", alt=0,
 //     name="@Internal Flash  /0x08000000/040*001Ka,004*001Kg", serial="FFFFFFFEFFFF"
@@ -331,6 +361,7 @@ function resolveFlashRoute({ channel = '', fmt = {}, port = '' } = {}) {
 
 module.exports = {
   DFU_ALLOWED_EXT, FLASH_ALT_RE, DFU_FLASH_VERDICTS, DFU_CHANNEL_ALIASES, ESPTOOL_CHANNEL_ALIASES,
+  DFU_MIN_DFUSE, parseDfuVersion,
   parseDfuList, pickTarget, pickAlt, parseDfuFlash, resolveFlashRoute,
   normalizeAddr, dfuPlanDigest, buildDfuArgv, buildDfuPlan,
 };

@@ -21,6 +21,7 @@ const fs = require('fs');
 const { execFile } = require('child_process');
 const {
   parseDfuList, pickTarget, pickAlt, buildDfuPlan, parseDfuFlash, DFU_FLASH_VERDICTS,
+  parseDfuVersion, DFU_MIN_DFUSE,
 } = require('../deviceDfu');
 const { parseVidPid } = require('../deviceFlash');
 
@@ -63,6 +64,41 @@ async function dfuList({ run = defaultDfuRun } = {}) {
   if (r && r.spawnError === 'ENOENT') return { ok: false, installed: false, targets: [], error: NO_TOOL_ERROR };
   const parsed = parseDfuList(`${r?.stdout || ''}\n${r?.stderr || ''}`);
   return { ...parsed, installed: parsed.ok ? true : null, exitCode: r?.code };
+}
+
+// 版本只探一次（每个进程）：`--version` 是纯读、结果不会在一次会话里变，
+// 而 flash 路径上多一次子进程调用就多一次可能卡住的地方。
+const VERSION_CACHE = new Map();
+
+/** 仅供测试：清掉版本缓存，让同一次进程里能分别验证「0.8 拒 / 0.11 放」两条分支。 */
+function resetDfuVersionCacheForTest() {
+  VERSION_CACHE.clear();
+}
+
+/**
+ * 问 dfu-util 的版本（只读）。判据是**输出**里的 `dfu-util X.Y`，不是退出码：
+ * 部分发行版把 --version 写成返回 1 或把版本打到 stderr。
+ * 返回 `{ ok, installed, version, dfuseOk, error? }`；installed=false 表示确认没装（ENOENT）。
+ */
+async function dfuVersion({ run = defaultDfuRun, cache = VERSION_CACHE } = {}) {
+  if (cache.has('dfu-util')) return cache.get('dfu-util');
+  let out;
+  let r;
+  try {
+    r = await run(['dfu-util', '--version']);
+  } catch (e) {
+    out = { ok: false, installed: null, error: `dfu-util --version 调用失败：${String(e && e.message ? e.message : e).slice(0, 160)}` };
+    cache.set('dfu-util', out);
+    return out;
+  }
+  if (r && r.spawnError === 'ENOENT') {
+    out = { ok: false, installed: false, error: NO_TOOL_ERROR };
+  } else {
+    const parsed = parseDfuVersion(`${r?.stdout || ''}\n${r?.stderr || ''}`);
+    out = parsed.ok ? { ...parsed, installed: true } : { ...parsed, installed: null };
+  }
+  cache.set('dfu-util', out);
+  return out;
 }
 
 /** 失败档 → 下一步动作。每一档的下一步都不同，压成一句「失败」等于把定位工作丢回给用户。 */
@@ -118,6 +154,28 @@ async function dfuChannelHandler(args = {}, deps = {}) {
   if (!st.isFile()) return { ...base, error: `固件路径不是文件：${firmware}` };
   if (!st.size) return { ...base, error: `固件是空文件（0 字节）：${firmware}` };
 
+  // ── .dfu 的版本门槛（2026-10-31）──────────────────────────────────────────
+  // 放在枚举设备**之前**：工具太旧时「有没有设备」根本无关，先枚举只会让人以为问题在硬件。
+  // 判据是 DfuSe 容器支持（0.9+），不是「版本越新越好」——.bin 路径不受此限，不能顺手拦死。
+  const preWarn = [];
+  if (/\.dfu$/i.test(firmware)) {
+    const ver = await dfuVersion({ run, cache: deps.versionCache });
+    if (ver.installed === false) return { ...base, error: NO_TOOL_ERROR };
+    if (ver.ok && !ver.dfuseOk) {
+      return {
+        ...base, installed: true, dfuVersion: ver.version,
+        error: `dfu-util ${ver.version} 不支持 DfuSe 容器（需要 ${DFU_MIN_DFUSE.major}.${DFU_MIN_DFUSE.minor}+）：`
+          + '.dfu 文件里带元素表与地址，旧版会把**容器头部**当裸固件写进 flash ——'
+          + '设备照单全收、命令返回 0，而板子跑的是废固件。'
+          + '先 brew upgrade dfu-util（或从 dfu-util.sourceforge.net 装新版），或改用 .bin + offset。',
+      };
+    }
+    if (ver.ok) preWarn.push(`dfu-util ${ver.version}（DfuSe 支持：${ver.dfuseOk ? '是' : '否'}）`);
+    // 版本读不到不拦：拦它会因为「发行版把版本写到别处」而废掉整条通道，
+    // 而真正写坏的风险已经由「只接受 .bin/.dfu + 地址必须显式」两道闸压住了。
+    else preWarn.push('读不到 dfu-util 版本：无法替你确认 DfuSe 支持，若烧完板子不启动请先升级到 0.9+');
+  }
+
   const listed = await dfuList({ run });
   if (!listed.ok) return { ...base, error: listed.error, installed: listed.installed };
   const picked = pickTarget(listed.targets);
@@ -146,7 +204,7 @@ async function dfuChannelHandler(args = {}, deps = {}) {
   });
   if (!built.ok) return { ...base, error: built.error, warnings: built.warnings };
 
-  const warnings = [...built.warnings, ...(args.port ? [`DFU 不经串口：port=${args.port} 已忽略（DFU 设备没有串口节点）`] : [])];
+  const warnings = [...preWarn, ...built.warnings, ...(args.port ? [`DFU 不经串口：port=${args.port} 已忽略（DFU 设备没有串口节点）`] : [])];
   if (Array.isArray(args.segments) && args.segments.length) {
     warnings.push('DFU 通道只写单一文件：segments 已忽略（多段烧写走 esptool 通道）');
   }
@@ -222,4 +280,7 @@ async function dfuChannelHandler(args = {}, deps = {}) {
   };
 }
 
-module.exports = { dfuChannelHandler, dfuList, defaultDfuRun, explainFailure, NO_TOOL_ERROR, DFU_TIMEOUT_MS };
+module.exports = {
+  dfuChannelHandler, dfuList, dfuVersion, defaultDfuRun, explainFailure, NO_TOOL_ERROR,
+  DFU_TIMEOUT_MS, resetDfuVersionCacheForTest,
+};

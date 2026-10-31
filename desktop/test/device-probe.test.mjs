@@ -31,9 +31,9 @@ const {
 const { uf2ChannelHandler, isAllowedVolumePath } = require('../main/tools/deviceUf2Tool.js');
 const {
   parseDfuList, pickTarget, pickAlt, parseDfuFlash, resolveFlashRoute, buildDfuPlan,
-  dfuPlanDigest, normalizeAddr, DFU_FLASH_VERDICTS,
+  dfuPlanDigest, normalizeAddr, DFU_FLASH_VERDICTS, parseDfuVersion, DFU_MIN_DFUSE,
 } = require('../main/deviceDfu.js');
-const { dfuChannelHandler, dfuList } = require('../main/tools/deviceDfuTool.js');
+const { dfuChannelHandler, dfuList, dfuVersion, resetDfuVersionCacheForTest } = require('../main/tools/deviceDfuTool.js');
 const {
   parseFastbootDevices, parseGetvar, pickDevice, unlockState, resolvePartition,
   fbPlanDigest, parseFastbootFlash, buildFbPlan, FB_VERDICTS,
@@ -1803,6 +1803,78 @@ const hostExec = async (cmd) => {
   check('DFU 能力：没装 dfu-util 时 runnable=false 并给出安装指引（能跑 ≠ 已接线，两个条件都要）',
     withoutTool.targets[0].runnable === false
     && withoutTool.targets[0].todo.some((t) => t.includes('brew install dfu-util')));
+
+  // ⑪ 版本门槛（2026-10-31）：.dfu 是 DfuSe 容器，dfu-util 0.9 才认元素表。
+  // 0.8 及更早会把**容器头**当裸固件写进 flash —— 设备照单全收、返回 0，板子跑的是废固件。
+  // 这一段是「DFU 真机验证路径」的前置：先把「工具太旧」这类假故障在写之前排掉。
+  check('DFU 版本解析：`dfu-util 0.11` 认出 0.11 且判 DfuSe 可用（--version 的首行形状）',
+    parseDfuVersion('dfu-util 0.11\n\nCopyright 2005-2009 Weston Schmidt, Harald Welte and OpenMoko Inc.\n').version === '0.11'
+    && parseDfuVersion('dfu-util 0.11\n').dfuseOk === true);
+  check('DFU 版本解析：0.9 是 DfuSe 的边界（含），0.8 判不可用——差一就写坏固件',
+    parseDfuVersion('dfu-util 0.9\n').dfuseOk === true
+    && parseDfuVersion('dfu-util 0.8\n').dfuseOk === false
+    && DFU_MIN_DFUSE.minor === 9);
+  check('DFU 版本解析：中间词「version」可有可无（打包版写法不一致）',
+    parseDfuVersion('dfu-util version 0.10\n').version === '0.10');
+  check('DFU 版本解析：输出不可识别时带原始片段，且明说「只是没法替你判 DfuSe」',
+    parseDfuVersion('').ok === false && String(parseDfuVersion('').error).includes('无法从输出识别')
+    && String(parseDfuVersion('boom\n').error).includes('可忽略本提示'));
+  const verNoTool = await (async () => {
+    resetDfuVersionCacheForTest();
+    return dfuVersion({ run: async () => ({ code: 1, stdout: '', stderr: '', spawnError: 'ENOENT' }) });
+  })();
+  check('DFU 版本探测：没装时 installed=false 并给安装指引（ENOENT 不能与「版本读不到」同形）',
+    verNoTool.installed === false && String(verNoTool.error).includes('brew install dfu-util'));
+  // 判据是**输出**而不是退出码：部分发行版把 --version 写到 stderr 或返回非零。
+  resetDfuVersionCacheForTest();
+  const verStderr = await dfuVersion({ run: async () => ({ code: 1, stdout: '', stderr: 'dfu-util 0.11\n' }) });
+  check('DFU 版本探测：版本打到 stderr、退出码非零时仍认得出（判据是输出，不是退出码）',
+    verStderr.ok === true && verStderr.version === '0.11');
+  // 缓存本身也要验：flash 路径上多一次 `--version` 就多一个可能卡住的地方。
+  resetDfuVersionCacheForTest();
+  let verCalls = 0;
+  const counted = async () => { verCalls += 1; return { code: 0, stdout: 'dfu-util 0.11\n', stderr: '' }; };
+  await dfuVersion({ run: counted });
+  await dfuVersion({ run: counted });
+  check('DFU 版本探测：同一进程只探一次（缓存生效，第二次不再起子进程）', verCalls === 1, `calls=${verCalls}`);
+
+  // 门槛的**行为**：0.8 + .dfu 必须在写之前拒，且拒绝结论不能靠「跑一遍看结果」
+  const verRun = (vout, { listOut = LIST_OK, flashOut = FLASH_OK } = {}) => async (argv) => {
+    if (argv.includes('--version')) return { code: 0, stdout: vout, stderr: '' };
+    if (argv.includes('-l')) return { code: 0, stdout: listOut, stderr: '' };
+    return { code: 0, stdout: flashOut, stderr: '' };
+  };
+  resetDfuVersionCacheForTest();
+  const dfuOldSeen = [];
+  const dfuOld = await dfuChannelHandler({ action: 'plan', firmware: '/a/fw.dfu', offset: '0x08000000' }, {
+    run: async (argv) => { dfuOldSeen.push(argv.join(' ')); return verRun('dfu-util 0.8\n')(argv); },
+    stat: statOk,
+  });
+  check('DFU 版本门槛：0.8 烧 .dfu 时**在枚举设备之前**就拒绝，并说清「容器头会被当裸固件写进去」',
+    dfuOld.ok === false && String(dfuOld.error).includes('不支持 DfuSe')
+    && String(dfuOld.error).includes('容器头部')
+    && !dfuOldSeen.some((c) => c.includes('-l')), dfuOldSeen.join(' | '));
+  resetDfuVersionCacheForTest();
+  const dfuNew = await dfuChannelHandler({ action: 'plan', firmware: '/a/fw.dfu', offset: '0x08000000' }, {
+    run: verRun('dfu-util 0.11\n'), stat: statOk,
+  });
+  check('DFU 版本门槛：0.11 烧 .dfu 正常放行，并把版本写进 warnings（证据随结果一起给出）',
+    dfuNew.ok === true && dfuNew.warnings.some((w) => w.includes('0.11') && w.includes('DfuSe')));
+  resetDfuVersionCacheForTest();
+  let binVerAsked = false;
+  const dfuBinOld = await dfuChannelHandler({ action: 'plan', firmware: '/a/fw.bin', offset: '0x08000000' }, {
+    run: async (argv) => { if (argv.includes('--version')) binVerAsked = true; return verRun('dfu-util 0.8\n')(argv); },
+    stat: statOk,
+  });
+  check('DFU 版本门槛：.bin 不查 DfuSe 版本也不拦（裸二进制不依赖容器解析，不能顺手废掉旧版用户）',
+    dfuBinOld.ok === true && binVerAsked === false, `asked=${binVerAsked}`);
+  resetDfuVersionCacheForTest();
+  const dfuNoVer = await dfuChannelHandler({ action: 'plan', firmware: '/a/fw.dfu', offset: '0x08000000' }, {
+    run: verRun('something else entirely\n'), stat: statOk,
+  });
+  check('DFU 版本门槛：版本读不到时不拦但告警（拦它会因「发行版把版本写到别处」废掉整条通道）',
+    dfuNoVer.ok === true && dfuNoVer.warnings.some((w) => w.includes('读不到 dfu-util 版本')));
+  resetDfuVersionCacheForTest();
 }
 
 // ── L4d：Android fastboot 通道（2026-10-31）──────────────────────────────────
