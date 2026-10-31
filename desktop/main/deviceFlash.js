@@ -79,6 +79,9 @@ function parseOffset(text) {
 const IMAGE_FORMATS = [
   { ext: 'bin', channel: 'esptool-serial', note: '裸二进制，esptool 直接写' },
   { ext: 'uf2', channel: 'uf2-copy', note: 'UF2 是 512 字节块容器：只能拷到 bootloader 盘，当裸二进制写会写坏 flash' },
+  // .dfu 是 DfuSe 容器（自带元素表与地址），只能由 dfu-util 解析；esptool 写进去的是头部字节。
+  // 2026-10-31 随 L4 DFU 通道登记：此前 .dfu 落在「未登记扩展名」里只告警，等于放行写坏。
+  { ext: 'dfu', channel: 'dfu-util', note: 'DfuSe 容器（带元素表）：只能由 dfu-util 写，esptool 写进去的是容器头部字节' },
   { ext: 'hex', channel: null, note: 'Intel HEX 是文本：esptool 只收裸二进制，先用 objcopy -I ihex -O binary in.hex out.bin 转换' },
   { ext: 'img', channel: 'disk', note: '整盘镜像（SD 卡/eMMC）：走磁盘通道（list_targets），不写串口 flash' },
 ];

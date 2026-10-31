@@ -12,8 +12,9 @@
 // 用户会以为板子坏了，然后去重刷、换线、装驱动——每一步都在错误的假设上。
 //
 // 另一个必须报的字段是 implemented：机器上装了 dfu-util **不等于**本项目支持 DFU 烧写。
-// 本版本只有 esptool 串口通道接了执行器（device_flash），其余通道只是「判定出来了」，
-// 执行器要等 L4。不区分这两件事，模型就会对用户说「可以烧了」。
+// 2026-10-31 实况：esptool 串口 / UF2 拷贝 / dfu-util 三条已接执行器（分别见 deviceFlashTool、
+// deviceUf2Tool、deviceDfuTool），其余通道只是「判定出来了」。不区分这两件事，
+// 模型就会对用户说「可以烧了」。
 //
 // 文档 §3 的关键原则（本文件按此排序）：
 //   ① 优先用官方 ROM bootloader（出厂固化，最不容易变砖）——所以 esptool/DFU/UF2 排在调试器前；
@@ -66,7 +67,11 @@ const CHANNELS = [
     install: 'brew install dfu-util',
     actions: ['list', 'upload', 'download'],
     needsPort: false,
-    implemented: false,
+    // 2026-10-31 由 false 改 true：main/tools/deviceDfuTool.js 已把 plan/flash 落地
+    // （device_flash 按 channel=dfu 或 .dfu 扩展名分流）。判据是「代码里真有写入路径」，
+    // 且**只有** plan/flash —— 回读校验与整片备份刻意没接线（dfu-util 的 -U 长度语义
+    // 依赖设备实现，本机没有 DFU 板可验），这条限制写在 deviceDfuTool 的错误文案里。
+    implemented: true,
     doc: '§3「STM32 → 能进 DFU（BOOT0+RST）→ USB DFU」/ §2.3',
     note: '设备已经枚举成 0483:df11 就说明在 ROM 下载模式，无需再握手',
   },
@@ -78,7 +83,12 @@ const CHANNELS = [
     install: '',
     actions: ['copy'],
     needsPort: false,
-    implemented: false,
+    // 2026-10-31 由 false 改 true：L4 批（fc0e44e）已把 UF2 写入通道落地
+    // （main/tools/deviceUf2Tool.js 的 uf2ChannelHandler + device_flash 按扩展名分流），
+    // 但标志一直留在 false ⇒ 探测/设备面板会对着插好的 Pico 说「本版本未接线」，
+    // 而命令其实跑得通。**说明与实际相反比缺少功能更糟**：用户会因为这句话不敢试。
+    // 判据仍是「代码里真有这条写入路径」，不是「我们希望有」。
+    implemented: true,
     doc: '§3「RP2040/RP2350 → BOOTSEL 按住 → UF2 拖拽」/ §6',
     note: '最不容易变砖：bootloader 在 ROM 里，设备自己完成写入',
   },

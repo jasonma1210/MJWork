@@ -41,6 +41,10 @@ const { listDisks } = require('../diskList');
 const { PROBES, defaultExec, parseLinuxUsb, parseWinUsb, resolveEsptoolFromPath } = require('./deviceProbeTool');
 const { uf2ChannelHandler, readVolumes } = require('./deviceUf2Tool');
 const { isUf2Volume } = require('../deviceUf2');
+// DFU 通道（2026-10-31）：纯逻辑在 deviceDfu.js，执行器在 deviceDfuTool.js。
+// 这里只做分流，不重复任何 DFU 判据——`resolveFlashRoute` 是「走哪条通道」的唯一判据。
+const { resolveFlashRoute } = require('../deviceDfu');
+const { dfuChannelHandler } = require('./deviceDfuTool');
 const {
   CAPTURE_SCRIPT, VERDICTS, parseCapture, expectTokens, analyzeLog, previewOf,
 } = require('../deviceSerial');
@@ -329,22 +333,41 @@ async function deviceFlashHandler(args = {}, deps = {}) {
   // 只认裸二进制，硬写进去等于把容器字节灌进 flash（板子起不来，而 esptool 仍返回 0）。
   // 所以哪怕模型传了 port 也想走串口，只要固件是 .uf2 就改走 UF2 通道——选错通道不该能写坏设备。
   const fmt = resolveImageFormat(firmware);
-  if (fmt.channel === 'uf2-copy' && (action === 'plan' || action === 'flash')) {
+  // 通道判据收敛到 deviceDfu.resolveFlashRoute 一处：`.bin` 是 esptool 与 DFU **共用**的裸二进制
+  // （esptool 用 offset 参数、DFU 用 `-s addr`），光看扩展名判不出来 ⇒ 必须允许显式 channel。
+  // 而 `.uf2` / `.dfu` 是容器，只有一条通道能收 ⇒ 扩展名优先于显式 channel（容器字节写错地方
+  // 设备不会报错）。两条判据合在一个纯函数里，避免「扩展名分支」与「channel 分支」各写一套后漂移。
+  const route = resolveFlashRoute({ channel: args.channel, fmt, port });
+  if (route.error) return { ok: false, action, error: route.error };
+  const routeWarnings = route.warnings;
+  if (route.channel === 'uf2-copy' && (action === 'plan' || action === 'flash')) {
     return uf2ChannelHandler({ ...args, action }, deps);
   }
-  if (fmt.channel === 'uf2-copy' && (action === 'verify' || action === 'backup')) {
+  if (route.channel === 'uf2-copy' && (action === 'verify' || action === 'backup')) {
     return {
       ok: false, action, channel: 'uf2-copy',
       error: `UF2 通道不支持 ${action}：bootloader 盘只写不读，没有回读校验也没有整片备份。`
         + '要留回滚素材，请在设备处于串口下载模式时用 action=backup（esptool 通道）。',
     };
   }
+  if (route.channel === 'dfu-util') {
+    if (action !== 'plan' && action !== 'flash') {
+      return {
+        ok: false, action, channel: 'dfu-util',
+        error: `DFU 通道不支持 ${action}：它只接 plan / flash。DFU 设备枚举成 0483:df11，`
+          + '没有串口节点，所以 chip_id / logs / verify / backup 都不适用——'
+          + '这些动作要等板子进串口下载模式（esptool 通道）。这次没有对设备做任何操作。',
+      };
+    }
+    const r = await dfuChannelHandler({ ...args, action }, deps);
+    return { ...r, warnings: [...routeWarnings, ...(r.warnings || [])] };
+  }
   // 已知的「不能走串口」格式（.hex 文本 / .img 整盘镜像）在**解析工具之前**就拒。
   // 放在后面的话，机器上没装 esptool 时用户看到的是「没找到 esptool」——而他手里的文件
   // 本来就不该走这条路，先装工具等于白装一次。错误信息要指向真正的下一步。
   // 注意 .hex 的 channel 是 null（没有任何通道支持它），不是 'disk'——判据要用「不是这两条通道」，
   // 而不是「channel 非空」：后者会把 .hex 漏过去。
-  if (fmt.known && fmt.channel !== 'esptool-serial' && fmt.channel !== 'uf2-copy'
+  if (fmt.known && fmt.channel !== 'esptool-serial' && fmt.channel !== 'uf2-copy' && fmt.channel !== 'dfu-util'
       && (action === 'plan' || action === 'flash')) {
     return { ok: false, action, error: `格式与通道不匹配：${fmt.why}（${firmware}）` };
   }

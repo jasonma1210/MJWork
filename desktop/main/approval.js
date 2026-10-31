@@ -375,6 +375,10 @@ const {
 //（为 D-801 的注释腾出 800 行软档余量，语义逐字等价）；本文件继续 re-export，消费方零改动。
 const { isReadonlySql } = require('./sqlReadonly');
 
+// 2026-10-31：DFU 通道的地址归一化与通道别名复用 deviceDfu 那一份判据。
+// 审批卡上写的地址必须与**实际执行的 argv** 逐字一致，否则用户核对的是一串「看起来对」的字。
+const { normalizeAddr, DFU_CHANNEL_ALIASES } = require('./deviceDfu');
+
 function toolLevel(tool, args = {}) {
   if (READONLY_TOOLS.has(tool)) return null;
   // 期 3：notify 不进审批面——它是「告知用户」的原语（长任务完成时提醒用户回来看），
@@ -530,6 +534,15 @@ function approvalTarget(tool, args = {}) {
     if (act === 'logs') return `日志 ${port}`.trim();
     if (act === 'backup') return `${port} → ${String(args.out || '')}`.trim();
     const fw = String(args.firmware || '');
+    // DFU 通道（2026-10-31）：既没有串口也没有卷，用户唯一能核对的是「哪块设备 + 写在哪个地址」。
+    // 不写这一支会落到下面默认拼接，卡面变成「 ← fw.bin」——目标看着像空的，而这次写入不可逆。
+    // 地址用 normalizeAddr 与 argv 对齐（0x8000000 与 0x08000000 是同一处，但卡上要写满 8 位）。
+    const chan = String(args.channel || '').toLowerCase();
+    if (/\.dfu$/i.test(fw) || DFU_CHANNEL_ALIASES.includes(chan)) {
+      const id = String(args.expect_vid_pid || 'DFU 设备');
+      const at = normalizeAddr(args.offset) || '未给地址';
+      return `${id} @${at} ← ${fw}`.trim();
+    }
     // UF2 通道没有串口，唯一能让人核对的是「哪个卷 ← 哪个文件」。
     // 审批卡只渲染 tool + target（ApprovalCard 不展参数）⇒ 目标卷必须出现在这里，
     // 否则用户看到的是「← fw.uf2」，根本没法确认会写到哪块盘。

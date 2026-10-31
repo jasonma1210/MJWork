@@ -36,8 +36,9 @@ export const DEVICE_TOOL_SCHEMAS = [
 export const DEVICE_FLASH_SCHEMAS = [
   { type: 'function', function: {
     name: 'device_flash',
-    description: '把固件烧到开发板。**通道按固件格式自动选**：.bin→esptool 串口，.uf2→UF2（拷到 bootloader 盘，无需串口）；'
-      + '.hex/.img 直接拒绝并给转换指引。只烧 .bin/.uf2，不做磁盘镜像、不格式化介质。'
+    description: '把固件烧到开发板。**通道按固件格式自动选**：.bin→esptool 串口（DFU 板须显式传 channel=dfu），'
+      + '.uf2→UF2（拷到 bootloader 盘，无需串口），.dfu→dfu-util；.hex/.img 直接拒绝并给转换指引。'
+      + '只烧 .bin/.uf2/.dfu，不做磁盘镜像、不格式化介质。'
       + '烧写按序、不可跳档：plan → flash（需 plan_digest）→ verify，digest 锁「人确认过的参数」，缺失或不符即拒。'
       + 'backup 应放在 flash **之前**，否则覆盖后没有回滚素材。'
       + 'chip_id 用于 device_probe 报 probe-required 时由工具自己问身份，别让用户手敲命令。'
@@ -93,6 +94,13 @@ export const DEVICE_FLASH_SCHEMAS = [
         expect_vid_pid: {
           type: 'string',
           description: '可选身份钉子，如 "1a86:7523"。给了就必须在实时枚举里出现，否则拒绝。',
+        },
+        channel: {
+          type: 'string',
+          enum: ['esptool', 'dfu'],
+          description: '写入通道。`.bin` 是 esptool 与 DFU 共用的裸二进制，光看扩展名判不出来：'
+            + 'DFU 设备（枚举成 0483:df11、无串口）必须显式传 dfu，并给 offset（STM32 主 flash 通常是 0x08000000，'
+            + '写 0x0 会落错区域）。`.uf2`/`.dfu` 按扩展名自动分流，不用传。',
         },
         seconds: { type: 'integer', description: 'logs 可选：抓多少秒，缺省 8，夹在 2–30。' },
         expect: {

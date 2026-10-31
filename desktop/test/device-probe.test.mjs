@@ -29,6 +29,11 @@ const {
   parseUf2, isUf2Volume, pickUf2Volume, buildUf2Plan, uf2PlanDigest, UF2_VOLUME_MARKER,
 } = require('../main/deviceUf2.js');
 const { uf2ChannelHandler, isAllowedVolumePath } = require('../main/tools/deviceUf2Tool.js');
+const {
+  parseDfuList, pickTarget, pickAlt, parseDfuFlash, resolveFlashRoute, buildDfuPlan,
+  dfuPlanDigest, normalizeAddr, DFU_FLASH_VERDICTS,
+} = require('../main/deviceDfu.js');
+const { dfuChannelHandler, dfuList } = require('../main/tools/deviceDfuTool.js');
 
 let pass = 0;
 let fail = 0;
@@ -965,8 +970,16 @@ const hostExec = async (cmd) => {
     EXECUTOR_NAMES.filter((n) => !channelExecutors.includes(n)).sort().join(',')
     === UNASSIGNED_EXECUTORS.slice().sort().join(','),
     EXECUTOR_NAMES.filter((n) => !channelExecutors.includes(n)).join(','));
-  check('L3 自检：只有 esptool 通道标记 implemented（多标一个就等于对用户承诺了没实现的烧写）',
-    CHANNELS.filter((c) => c.implemented).map((c) => c.id).join(',') === 'esptool-serial');
+  check('L3 自检：标记 implemented 的通道必须恰好是「代码里真有写入路径」的那几条', 
+    // 2026-10-31：uf2-copy 由「未实现」更正为「已实现」——它是最容易被漏的一类，
+    // 因为 UF2 不需要外部执行器，implemented=false 不会让任何命令失败，只会让
+    // 探测对着插好的 Pico 说「本版本未接线」（说明与实际相反）。
+    // 判据不变：多标一个 = 对用户承诺了没实现的烧写；少标一个 = 把已有能力说成没有。
+    // 2026-10-31 再改：dfu-util 也进集合（deviceDfuTool 已落地 plan/flash）。这条断言的价值正在于
+    // **逼人回来改它**——每加一条写入路径都必须回这里重新声明一次，并想清楚「真的能跑吗」。
+    // 字符串按 CHANNELS 的表序，不按改动时间序（曾写成 uf2-copy,dfu-util 而红）。
+    CHANNELS.filter((c) => c.implemented).map((c) => c.id).join(',') === 'esptool-serial,dfu-util,uf2-copy',
+    CHANNELS.filter((c) => c.implemented).map((c) => c.id).join(','));
 
   // ② 执行器探测：三种「没有」必须分开
   const exOk = parseExecutors(`HAVE=esptool\nHAVE=adb\n${EXECUTOR_PROBE_SENTINEL}`);
@@ -994,23 +1007,33 @@ const hostExec = async (cmd) => {
   check('L3：需握手的通道必须给出「先跑 chip_id」这个动作（否则用户会直接烧错协议）',
     bridgeChip.targets[0].todo.some((t) => t.includes('chip_id')));
 
-  // ④ 非串口通道：implemented=false 时绝不能报 runnable（否则模型会说「可以烧了」）
+  // ④ 非串口通道：implemented 决定 runnable（2026-10-31 起 dfu-util 也已接线 ⇒ 期望值随之翻）
   const dfu = resolveChannels({ bridges: [br({ vid: '0483', pid: 'df11', kind: 'dfu' })], executors: EXEC_ALL });
   // 这里刻意分开两个判据：targetReady（设备在位、不需要串口）与 runnable（本版本能不能真的执行）。
   // 合成一个布尔值就会让「L4 接好 dfu-util 后仍然不可执行」这种 bug 无从观察。
-  check('L3：DFU 通道识别为 dfu-util 且 certain，设备在位但本版本未实现 ⇒ 不可执行',
+  check('L3：DFU 通道识别为 dfu-util 且 certain，设备在位且已接线 ⇒ 可执行',
     dfu.targets[0].channel === 'dfu-util' && dfu.targets[0].confidence === 'certain'
     && dfu.targets[0].needsPort === false && dfu.targets[0].targetReady === true
-    && dfu.targets[0].implemented === false && dfu.targets[0].runnable === false,
+    && dfu.targets[0].implemented === true && dfu.targets[0].runnable === true,
     `${dfu.targets[0].channel}/ready=${dfu.targets[0].targetReady}/impl=${dfu.targets[0].implemented}/run=${dfu.targets[0].runnable}`);
   check('L3：非串口通道不该被「没有串口」判死（needsPort=false 时目标视为就绪）',
     dfu.targets[0].needsPort === false && dfu.targets[0].targetReady === true);
+  // 夹具必须用**仍未接线**的通道（SWD）：这条断言原来拿 DFU 当「未实现」样本，
+  // DFU 接线后它其实在验证一条已实现的通道——断言还在、语义已经跑了。
+  const swd = resolveChannels({ bridges: [br({ vid: '0483', pid: '374b', kind: 'debug-probe' })], executors: EXEC_ALL });
   check('L3：未实现的通道要点明「只能给结论，不能执行」（不能只写 implemented=false 让人自己体会）',
-    dfu.notes.some((n) => n.includes('只能给出结论，不能执行')), JSON.stringify(dfu.notes));
+    swd.targets[0].implemented === false && swd.notes.some((n) => n.includes('只能给出结论，不能执行')),
+    JSON.stringify(swd.notes));
   const uf2 = resolveChannels({ bridges: [br({ vid: '2e8a', pid: '0003', kind: 'uf2' })], executors: EXEC_ALL });
   check('L3：UF2 不需要外部执行器（纯拷贝），installed 视为 true 而不是「缺工具」',
     uf2.targets[0].channel === 'uf2-copy' && uf2.targets[0].executor === null && uf2.targets[0].installed === true
     && uf2.targets[0].targetReady === true);
+  // 2026-10-31 补：implemented 转正之后，UF2 目标必须真的报 runnable。
+  // 只改标志不加这条，就等于「改了数据没验行为」——而 runnable 正是模型/面板据以
+  // 判断「现在能不能动手」的那一位（executor 为 null、needsPort 为 false 两条特殊
+  // 分支任一写错，runnable 都会是 false 而上面那条断言照样绿）。
+  check('L3：UF2 目标在位时必须报 runnable（不需要执行器、不需要串口这两个特例都要走过）',
+    uf2.targets[0].runnable === true, `${uf2.targets[0].runnable}`);
   const probeDev = resolveChannels({ bridges: [br({ vid: '0483', pid: '3748', kind: 'debug-probe' })], executors: EXEC_ALL });
   check('L3：调试探针走 SWD 兜底通道', probeDev.targets[0].channel === 'openocd-swd');
 
@@ -1521,6 +1544,258 @@ const hostExec = async (cmd) => {
     approval.toolLevel('device_flash', { action: 'logs' }) === 'L1'
     && approval.toolLevel('device_flash', { action: 'chip_id' }) === 'L1');
   check('L5 审批目标：卡面是「日志 <口>」', approval.approvalTarget('device_flash', { action: 'logs', port: '/dev/cu.x' }) === '日志 /dev/cu.x');
+}
+
+// ── L4c：DFU 通道（2026-10-31）────────────────────────────────────────────────
+// 目标：把「STM32 能进 DFU 但本版本不会烧」变成「能烧，且错了会在写之前拒绝」。
+// 下面两段 `-l` / `-D` 输出是 dfu-util 0.9–0.11 的**已知形状**（本机没有 STM32 板，
+// 造不出来就只能标注来源，不能假装实测过——与 chip_id 那段同一纪律）。
+{
+  const approval = require('../main/approval.js');
+  const LIST_OK = [
+    'dfu-util 0.11',
+    '',
+    'Copyright 2005-2009 Weston Schmidt, Harald Welte and OpenMoko Inc.',
+    'Please report bugs to http://sourceforge.net/p/dfu-util/tickets/',
+    '',
+    'Found DFU: [0483:df11] ver=2200, devnum=3, cfg=1, intf=0, path="20-1", alt=0, '
+      + 'name="@Internal Flash  /0x08000000/064*0002Kg", serial="FFFFFFFEFFFF"',
+    'Found DFU: [0483:df11] ver=2200, devnum=3, cfg=1, intf=0, path="20-1", alt=1, '
+      + 'name="@Option Bytes  /0x1FFFF800/01*016 e", serial="FFFFFFFEFFFF"',
+  ].join('\n');
+  const FLASH_OK = [
+    'dfu-util 0.11',
+    'Opening DFU capable USB device...',
+    'Device ID 0483:df11',
+    'Claiming USB DFU Interface...',
+    'Setting Alternate Interface #0 ...',
+    'Determining device status...',
+    'DFU state(2) = dfuIDLE, status(0) = No error condition is present',
+    'DfuSe interface name: "Internal Flash  "',
+    'Downloading element to address = 0x08000000, size = 8192',
+    'Erase   [=========================] 100%         8192 bytes',
+    'Download\t[=========================] 100%         8192 bytes',
+    'Download done.',
+    'File downloaded successfully',
+    'Submitting leave request...',
+    'Transitioning to dfuMANIFEST state',
+  ].join('\n');
+
+  // ① 解析：一块板子的多个 alt 必须归到同一个设备，而不是变成「两块板」
+  const parsed = parseDfuList(LIST_OK);
+  check('DFU 解析：同一块板的多个 alt 归到一个设备（按 vid:pid|serial|path 去重）',
+    parsed.ok === true && parsed.targets.length === 1 && parsed.targets[0].alts.length === 2,
+    `targets=${parsed.targets?.length} alts=${parsed.targets?.[0]?.alts?.length}`);
+  check('DFU 解析：「没插设备」与「输出不可识别」必须分开（前者去查 BOOT0，后者去修工具）',
+    parseDfuList('dfu-util: No DFU capable USB device available\n').note === 'no-device'
+    && parseDfuList('Segmentation fault\n').ok === false
+    && String(parseDfuList('Segmentation fault\n').error || '').includes('无法区分'));
+
+  // ② 挑目标 / 挑 alt：两个致命错误都在这里拦
+  const twoDev = parseDfuList(`${LIST_OK}\nFound DFU: [0483:df11] ver=2200, devnum=4, cfg=1, intf=0, `
+    + 'path="20-2", alt=0, name="@Internal Flash  /0x08000000/064*0002Kg", serial="111111111111"');
+  check('DFU 挑目标：两块板同时在线时拒绝，而不是「挑第一块」（烧错板子不可逆，且枚举顺序不稳定）',
+    pickTarget(twoDev.targets).ok === false && String(pickTarget(twoDev.targets).error).includes('只接一块'));
+  check('DFU 挑目标：一个都没有时指向「怎么让板子进 DFU」，不是空错误',
+    String(pickTarget([]).error || '').includes('BOOT0'));
+  const altPick = pickAlt(parsed.targets[0]);
+  check('DFU 挑 alt：认 Internal Flash 而不是 alt=0 —— STM32 的 alt=1 常是 Option Bytes，写进去=锁板',
+    altPick.ok === true && altPick.alt === 0 && /Internal Flash/.test(altPick.name), `alt=${altPick.alt}`);
+  // 上面那条在本夹具里**分不出「认出」与「取第一个」**（真机上 Internal Flash 就是 alt=0，
+  // 两者同解）。变异实测确认过这个空过：把 pickAlt 改成 `alts.slice(0,1)` 它照样绿。
+  // 所以另加一条把顺序颠倒的夹具：主 flash 在 alt=1 时必须仍然选中它。
+  const swapped = pickAlt({ alts: [{ alt: 0, name: '@Option Bytes  /0x1FFFF800' }, { alt: 1, name: '@Internal Flash  /0x08000000' }] });
+  check('DFU 挑 alt：主 flash 不在 alt=0 时也必须认出它（否则「取第一个」能冒充「认出主 flash」）',
+    swapped.ok === true && swapped.alt === 1, `alt=${swapped.alt}`);
+  const ambig = pickAlt({ alts: [{ alt: 0, name: '@Flash' }, { alt: 1, name: '@Flash 2' }] });
+  check('DFU 挑 alt：两个都像主 flash 时拒绝并列出候选（宁可停下也不猜）',
+    ambig.ok === false && ambig.candidates.length === 2);
+  // 反向：`@Internal Flash` + `@External Flash`（带外部 QSPI 的板子真有这对）必须能认出主 flash，
+  // 不能因为"有两个 flash 字样的 alt"就拒绝——那是把合法板拦死。
+  const extPair = pickAlt({ alts: [{ alt: 0, name: '@Internal Flash  /0x08000000' }, { alt: 1, name: '@External Flash  /0x90000000' }] });
+  check('DFU 挑 alt：Internal / External 并存时选 Internal（主 flash 判据不能退化成「见到 flash 就拒绝」）',
+    extPair.ok === true && extPair.alt === 0);
+  const onlyOne = pickAlt({ alts: [{ alt: 0, name: '@DFU' }] });
+  check('DFU 挑 alt：只有一个 alt 且名字不含 flash 时取它（没有歧义可犯，不能把这类板拦死）',
+    onlyOne.ok === true && onlyOne.alt === 0);
+
+  // ③ 地址：0x8000000 / 8000000 / 0x08000000 必须归一成同一个（卡面与 argv 要逐字一致）
+  check('DFU 地址归一：0x08000000 / 0x8000000 / 8000000 是同一处，统一补满 8 位',
+    normalizeAddr('0x08000000') === '0x08000000' && normalizeAddr('0x8000000') === '0x08000000'
+    && normalizeAddr('8000000') === '0x08000000' && normalizeAddr('乱写') === '');
+
+  // ④ 通道路由：.bin 两条通道都用，只能靠显式 channel；容器格式扩展名优先
+  const R = (o) => resolveFlashRoute(o);
+  check('DFU 路由：.bin 不传 channel 时仍走 esptool（新通道不得改变旧路径）',
+    R({ fmt: resolveImageFormat('/a/fw.bin') }).channel === 'esptool-serial');
+  check('DFU 路由：.bin + channel=dfu 走 DFU（STM32 的裸 bin 只能靠显式声明认出来）',
+    R({ channel: 'dfu', fmt: resolveImageFormat('/a/fw.bin'), port: '/dev/cu.x' }).channel === 'dfu-util'
+    && R({ channel: 'dfu', fmt: resolveImageFormat('/a/fw.bin'), port: '/dev/cu.x' }).warnings.length === 1);
+  check('DFU 路由：.dfu 容器按扩展名自动走 DFU（即使调用方说 esptool）',
+    R({ channel: 'esptool', fmt: resolveImageFormat('/a/fw.dfu') }).channel === 'dfu-util');
+  check('DFU 路由：.uf2 + channel=esptool 仍走 UF2 并告警（容器字节写进 flash 不会报错，只会写坏）',
+    R({ channel: 'esptool', fmt: resolveImageFormat('/a/fw.uf2') }).channel === 'uf2-copy'
+    && R({ channel: 'esptool', fmt: resolveImageFormat('/a/fw.uf2') }).warnings.length === 1);
+  check('DFU 路由：未知 channel 直接拒绝并列出可用值（拼错不能静默退回 esptool）',
+    Boolean(R({ channel: 'dfuu', fmt: resolveImageFormat('/a/fw.bin') }).error));
+  check('DFU 格式闸：.dfu 走 esptool 被拒（容器头部字节不是固件本体）',
+    esptoolFormatCheck('/a/b.dfu').ok === false && /dfu-util/.test(esptoolFormatCheck('/a/b.dfu').error));
+
+  // ⑤ 计划：地址必须显式给，扩展名必须是 DFU 接收的两种
+  const T = parseDfuList(LIST_OK).targets[0];
+  const planBase = { target: T, alt: 0, altName: '@Internal Flash', addr: '0x08000000', firmware: '/a/fw.bin', fileSize: 8192 };
+  const built = buildDfuPlan(planBase);
+  check('DFU 计划：argv 带 :leave（否则「成功」只代表字写进去了，设备还停在 bootloader）',
+    built.ok === true && built.argv.join(' ').includes('-s 0x08000000:leave')
+    && built.argv.join(' ').includes('-D /a/fw.bin'), built.argv?.join(' '));
+  check('DFU 计划：没给地址就拒绝（猜一个=写到别的区域，设备不报错）',
+    buildDfuPlan({ ...planBase, addr: '' }).ok === false
+    && String(buildDfuPlan({ ...planBase, addr: '' }).error).includes('offset'));
+  check('DFU 计划：.hex / .uf2 拒绝（DFU 只收裸 bin 与 .dfu 容器）',
+    buildDfuPlan({ ...planBase, firmware: '/a/fw.hex' }).ok === false
+    && buildDfuPlan({ ...planBase, firmware: '/a/fw.uf2' }).ok === false);
+  check('DFU 计划：摘要把 target/alt/地址/文件都压进去——换任何一项摘要都必须变',
+    dfuPlanDigest({ vid: '0483', pid: 'df11', alt: 0, addr: '0x08000000', firmware: '/a/fw.bin', fileSize: 8192 })
+    === dfuPlanDigest({ vid: '0483', pid: 'df11', alt: 0, addr: '0x08000000', firmware: '/a/fw.bin', fileSize: 8192 })
+    && dfuPlanDigest({ vid: '0483', pid: 'df11', alt: 1, addr: '0x08000000', firmware: '/a/fw.bin', fileSize: 8192 })
+      !== built.digest
+    && dfuPlanDigest({ vid: '0483', pid: 'df11', alt: 0, addr: '0x08001000', firmware: '/a/fw.bin', fileSize: 8192 })
+      !== built.digest);
+  check('DFU 计划：0x0 允许但必须告警（多数 STM32 主 flash 在 0x08000000）',
+    buildDfuPlan({ ...planBase, addr: '0x0' }).warnings.some((w) => w.includes('0x08000000')));
+
+  // ⑥ 执行器：注入假 run，不碰真实设备
+  const statOk = () => ({ isFile: () => true, size: 8192 });
+  const runs = (listOut, flashOut, code = 0) => async (argv) => (
+    argv.includes('-l') ? { code: 0, stdout: listOut } : { code, stdout: flashOut }
+  );
+  const dfuDeps = { run: runs(LIST_OK, FLASH_OK), stat: statOk };
+  const noTool = await dfuList({ run: async () => ({ code: 1, stdout: '', stderr: '', spawnError: 'ENOENT' }) });
+  check('DFU 执行器：没装 dfu-util 时明说装什么（ENOENT 不能与「设备没插」同形）',
+    noTool.ok === false && noTool.installed === false && String(noTool.error).includes('brew install dfu-util'));
+  const p1 = await dfuChannelHandler({ action: 'plan', firmware: '/a/fw.bin', offset: '0x08000000' }, dfuDeps);
+  check('DFU 执行器：plan 不执行写入（argv 只装配出来给人看），并带审批卡与摘要',
+    p1.ok === true && p1.channel === 'dfu-util' && p1.argv[0] === 'dfu-util'
+    && Boolean(p1.plan_digest) && Boolean(p1.card && p1.card.target && p1.card.consequence));
+  const noDev = await dfuChannelHandler({ action: 'plan', firmware: '/a/fw.bin', offset: '0x08000000' },
+    { run: runs('dfu-util: No DFU capable USB device available\n', ''), stat: statOk });
+  check('DFU 执行器：没有设备时指向「先让板子进 DFU」，而不是把「没插」报成工具坏了',
+    noDev.ok === false && String(noDev.error).includes('BOOT0'));
+  const notWired = await dfuChannelHandler({ action: 'verify', firmware: '/a/fw.bin' }, dfuDeps);
+  check('DFU 执行器：verify/backup 明说「未接线 + 为什么」（回读长度语义没在真机验过）',
+    notWired.ok === false && String(notWired.error).includes('不支持 verify'));
+  const noDigest = await dfuChannelHandler({ action: 'flash', firmware: '/a/fw.bin', offset: '0x08000000' }, dfuDeps);
+  check('DFU 执行器：flash 缺 plan_digest 直接拒绝（不能跳档）',
+    noDigest.ok === false && String(noDigest.error).includes('plan_digest'));
+  const badDigest = await dfuChannelHandler(
+    { action: 'flash', firmware: '/a/fw.bin', offset: '0x08000000', plan_digest: 'deadbeefdeadbeef' }, dfuDeps);
+  check('DFU 执行器：plan_digest 不符时拒绝（确认后改过参数的第二次点击不会执行）',
+    badDigest.ok === false && String(badDigest.error).includes('不匹配'));
+  const movedAddr = await dfuChannelHandler(
+    { action: 'flash', firmware: '/a/fw.bin', offset: '0x08001000', plan_digest: p1.plan_digest }, dfuDeps);
+  check('DFU 执行器：换地址后旧摘要失效（否则「确认 0x08000000、实际写 0x08001000」能过关）',
+    movedAddr.ok === false && String(movedAddr.error).includes('不匹配'));
+  const idMismatch = await dfuChannelHandler(
+    { action: 'plan', firmware: '/a/fw.bin', offset: '0x08000000', expect_vid_pid: '1a86:7523' }, dfuDeps);
+  check('DFU 执行器：expect_vid_pid 与在位的 DFU 设备不符时拒绝',
+    idMismatch.ok === false && String(idMismatch.error).includes('身份不符'));
+  const f1 = await dfuChannelHandler(
+    { action: 'flash', firmware: '/a/fw.bin', offset: '0x08000000', plan_digest: p1.plan_digest }, dfuDeps);
+  check('DFU 执行器：写成功要同时看到 File downloaded successfully + leave 请求（不是「退出码 0」）',
+    f1.ok === true && f1.verdict === 'ok' && f1.downloaded === true && f1.leftBootloader === true && f1.wroteBytes === 8192,
+    `${f1.verdict}/${f1.wroteBytes}`);
+
+  // ⑦ 结果判定：五种失败各有各的下一步
+  const verdictOf = (out, code = 1) => parseDfuFlash(out, { exitCode: code }).verdict;
+  check('DFU 判定：退出码 0 但没有任何成功证据 → 判 no-evidence（「看起来成功了」是最危险的一档）',
+    verdictOf('dfu-util 0.11\nOpening DFU capable USB device...\n', 0) === DFU_FLASH_VERDICTS.noEvidence);
+  check('DFU 判定：错误分类能分开「设备没了 / 地址越界 / 传输中断」',
+    verdictOf('dfu-util: Cannot open DFU device 0483:df11\n') === DFU_FLASH_VERDICTS.device
+    && verdictOf('dfu-util: Address 0x08000000 out of range\n') === DFU_FLASH_VERDICTS.addr
+    && verdictOf('dfu-util: Error during download get_status\n') === DFU_FLASH_VERDICTS.transfer);
+  check('DFU 判定：有成功行但退出码非零 → 仍判失败（两者矛盾时取更保守的那个）',
+    verdictOf('Download done.\nFile downloaded successfully\n', 74) === DFU_FLASH_VERDICTS.error);
+  const noLeave = await dfuChannelHandler(
+    { action: 'flash', firmware: '/a/fw.bin', offset: '0x08000000', plan_digest: p1.plan_digest },
+    { run: runs(LIST_OK, 'Download done.\nFile downloaded successfully\n'), stat: statOk });
+  check('DFU 判定：写成功但设备没接受 leave → 报成功 + 告警（否则用户看到「烧成功但板子不动」）',
+    noLeave.ok === true && noLeave.warnings.some((w) => w.includes('leave')));
+  const dev = await dfuChannelHandler(
+    { action: 'flash', firmware: '/a/fw.bin', offset: '0x08000000', plan_digest: p1.plan_digest },
+    { run: runs(LIST_OK, 'dfu-util: Cannot open DFU device 0483:df11\n'), stat: statOk });
+  check('DFU 判定：设备中途掉线时提示「重插后重走 plan，旧摘要作废」',
+    dev.ok === false && String(dev.error).includes('作废'));
+
+  // ⑧ 与 device_flash 的分流：模型只需传 channel，不用知道内部通道名
+  const fdeps = {
+    platform: 'darwin',
+    exec: async () => ({ stdout: '' }),
+    run: runs(LIST_OK, FLASH_OK),
+    stat: statOk,
+  };
+  const dPlan = await deviceFlashHandler({ action: 'plan', firmware: '/a/fw.bin', channel: 'dfu', offset: '0x08000000' }, fdeps);
+  check('DFU 分流：device_flash + channel=dfu + .bin → DFU 通道（不会被「没找到 esptool」挡住）',
+    dPlan.ok === true && dPlan.channel === 'dfu-util', `${dPlan.ok}/${dPlan.channel || dPlan.error}`);
+  const dFlash = await deviceFlashHandler({
+    action: 'flash', firmware: '/a/fw.bin', channel: 'dfu', offset: '0x08000000', plan_digest: dPlan.plan_digest,
+  }, fdeps);
+  check('DFU 分流：flash 走同一条摘要（plan 拿到的 digest 在 flash 上成立，一次确认两处可用）',
+    dFlash.ok === true && dFlash.verdict === 'ok', `${dFlash.ok}/${dFlash.error}`);
+  const dDfuExt = await deviceFlashHandler({ action: 'plan', firmware: '/a/fw.dfu', offset: '0x08000000' },
+    { ...fdeps, stat: () => ({ isFile: () => true, size: 16384 }) });
+  check('DFU 分流：.dfu 不传 channel 也自动走 DFU（容器格式只有一条通道能收）',
+    dDfuExt.ok === true && dDfuExt.channel === 'dfu-util');
+  const dVerify = await deviceFlashHandler({ action: 'verify', firmware: '/a/fw.bin', channel: 'dfu' }, fdeps);
+  check('DFU 分流：verify 走 DFU 时明说该通道只接 plan/flash，并指出改走 esptool',
+    dVerify.ok === false && String(dVerify.error).includes('只接 plan / flash'), String(dVerify.error).slice(0, 40));
+  // .uf2 + channel=dfu：扩展名必须赢（容器字节写进 flash 不会报错，只会把板子写坏）。
+  // 夹具是一个结构合法的单块 UF2（三个魔数 + 块号 0/1），不是随便一段字节。
+  const uf2Block = () => {
+    const b = Buffer.alloc(512);
+    b.writeUInt32LE(0x0a324655, 0); b.writeUInt32LE(0x9e5d5157, 4);
+    b.writeUInt32LE(0, 8); b.writeUInt32LE(0x10000000, 12);
+    b.writeUInt32LE(256, 16); b.writeUInt32LE(0, 20); b.writeUInt32LE(1, 24);
+    b.writeUInt32LE(0x0fe47c6b, 508);
+    return b;
+  };
+  const uf2Fs = {
+    statSync: () => ({ isFile: () => true, size: 512 }),
+    readFileSync: () => uf2Block(),
+    readdirSync: (p) => (p === '/Volumes/RPI-RP2' ? ['INFO_UF2.TXT'] : []),
+    existsSync: () => true,
+    statfsSync: () => {
+      throw new Error('statfs stub: 只用于让 freeBytes 走「未知」分支');
+    },
+  };
+  const dUf2Wrong = await deviceFlashHandler(
+    { action: 'plan', firmware: '/a/fw.uf2', channel: 'dfu', volume: '/Volumes/RPI-RP2' },
+    { platform: 'darwin', exec: async () => ({ stdout: '' }), run: runs(LIST_OK, FLASH_OK), fsx: uf2Fs, now: () => 0, sleep: async () => {} },
+  );
+  check('DFU 分流：.uf2 传 channel=dfu 时仍走 UF2 且真的 plan 成功（扩展名优先，选错通道不该能写坏设备）',
+    dUf2Wrong.ok === true && dUf2Wrong.channel === 'uf2-copy', `${dUf2Wrong.ok}/${dUf2Wrong.channel || dUf2Wrong.error}`);
+
+  // ⑨ 审批：卡面只渲染 tool + target，DFU 没有串口/卷，只能在 target 里塞身份 + 地址
+  check('DFU 审批目标：卡面是「vid:pid @地址 ← 文件」（否则用户看到的是「 ← fw.bin」，等于没有目标）',
+    approval.approvalTarget('device_flash', {
+      action: 'flash', firmware: '/a/fw.bin', channel: 'dfu', offset: '0x8000000', expect_vid_pid: '0483:df11',
+    }) === '0483:df11 @0x08000000 ← /a/fw.bin');
+  check('DFU 审批目标：.dfu 扩展名也能识别（不靠模型每次都记得传 channel）',
+    approval.approvalTarget('device_flash', { action: 'flash', firmware: '/a/fw.dfu', offset: '0x08000000' })
+      === 'DFU 设备 @0x08000000 ← /a/fw.dfu');
+  check('DFU 审批：flash 是 L1（硬地板：任何档位都弹卡，不接受「始终允许」）',
+    approval.toolLevel('device_flash', { action: 'flash', channel: 'dfu' }) === 'L1'
+    && approval.isRememberable('device_flash') === false);
+
+  // ⑩ implemented 翻转的**用户可见效果**：一块 DFU 板从「未接线」变成「能烧」
+  const dfuBridge = { vid: '0483', pid: 'df11', name: 'STM32 系统 DFU 模式', kind: 'dfu', verdict: 'not-serial', ports: [] };
+  const withTool = resolveChannels({ bridges: [dfuBridge], executors: parseExecutors(`HAVE=dfu-util\n${EXECUTOR_PROBE_SENTINEL}`) });
+  const withoutTool = resolveChannels({ bridges: [dfuBridge], executors: parseExecutors(`HAVE=esptool\n${EXECUTOR_PROBE_SENTINEL}`) });
+  check('DFU 能力：装了 dfu-util 时 DFU 设备 runnable=true（implemented 翻转的实际效果）',
+    withTool.targets[0].channel === 'dfu-util' && withTool.targets[0].implemented === true
+    && withTool.targets[0].runnable === true, JSON.stringify(withTool.targets[0]?.todo));
+  check('DFU 能力：没装 dfu-util 时 runnable=false 并给出安装指引（能跑 ≠ 已接线，两个条件都要）',
+    withoutTool.targets[0].runnable === false
+    && withoutTool.targets[0].todo.some((t) => t.includes('brew install dfu-util')));
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
