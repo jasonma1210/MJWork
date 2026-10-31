@@ -9,6 +9,8 @@
 // 依赖经 init 注入（避免与 main.js 循环 require）：loadAgentCore: () => Promise<agentCore> —— ESM 动态 import（main.js 已有）；
 //   createToolHandlers: ({ sender, signal }) => obj  —— 每次运行的工具处理器（含流式 chat）
 const runTrace = require('./runTrace');
+// M7（2026-10-30）§6.4：事后任务报告（userData/reports/<runId>.json，写失败只告警）。
+const runReport = require('./runReport');
 // T3-1：大工具结果卸载——tool_call 事件超限字段落临时文件，IPC 只传句柄
 const bigPayload = require('./bigPayload');
 // P2-8 / V-L1：V 层（评估接口）宿主编排——L1 日志对账 + annotate（不续跑、零额外模型调用）
@@ -56,6 +58,10 @@ const { applyRolePreset } = require('./rolePresetApply');
 // rolePresetApply（第八轮 D-808），本文件不再直接引入 modelShape，避免同一转换出现第二处。
 // G-CUA：无人值守/交互路径的「界面自动化 opt-in」来源——与审批档/沙箱同源（用户设置）。
 const approvalSettings = require('./approvalSettings');
+// M6（2026-10-30）§2：双模式路由（single / plan 自动判定）——独立小调用，纯判定不改执行语义。
+const taskRouter = require('./taskRouter');
+// M6 冷却表：conversationId → 上次「自动判 plan」的时刻。防「连环要确认」（见 taskRouter.routeGate）。
+const autoPlanAt = new Map();
 
 // 用户最近一次选择的审批档。Worker 子任务经 deps.getApprovalMode() 读它来继承用户设置。不做持久化：这是「本会话的当前选择」，重启后回到默认档是正确行为。
 let currentUserApprovalMode = 'on-request';
@@ -420,6 +426,9 @@ function startAgentRun(payload, sender) {
     // P0-1 收纳判据：本轮是否真有工具执行（纯闲聊不写记忆）。onToolCall 逐条累加。
     // budgetRounds − persistedRounds = 尚未记账的轮数（兜底收尾据此决定取真值还是 0，见 !doneSent 分支）
     let toolCallCount = 0; let budgetRounds = 0; let persistedRounds = 0;
+    // M6：本次运行的路由判定结果（'' = 没判/未开启）。随 done 事件下发，让界面能说明
+    // 「为什么这次只给了计划」——否则用户只会觉得模型不干活。
+    let routeMode = '';
     // v1（2026-10-19）：意图驱动的 MCP 动态加载——在组装 engineParams **之前**、有界等待完成。
     // 位置有意选在此处：此处已能拿到本轮会话文本（payload.messages）与主进程 mcp 能力，
     // 且尚未把 mcpTools 交给引擎；失败 fail-open 返回空数组，绝不阻塞本轮启动。
@@ -454,8 +463,17 @@ function startAgentRun(payload, sender) {
       // systemPrompt/toolNames 进引擎；审批档/沙箱在此取「角色与用户设置更严格者」后覆盖
       rolePreset: payload.rolePreset || undefined,
       planMode: !!payload.planMode,
+      // M3/M4（2026-10-30）：AC 提取与独立 Judge 的开关。渲染层一直在下发
+      // `acceptance:true` + `acceptanceCriteria`，但**没进这个白名单** ⇒ 引擎侧恒为
+      // 默认值 false ⇒ M3/M4/M5 在真机上全是死的（只有单测直调 runAgent 才生效）。
+      // 本文件的历史教训（见上方 P1-6 注释）就是同一形状：白名单漏登记 = 真机全废。
+      acceptance: !!payload.acceptance,
+      acceptanceCriteria: payload.acceptanceCriteria || null,
       conversationId: payload.conversationId,
       tokenBudget: payload.tokenBudget || 0,
+      // 契约已登记 totalTokenCap，但此前没进白名单 ⇒ 渲染层若下发会被静默丢弃、闸门悄悄回落到默认值。
+      // undefined 时让引擎用自己的默认（20M），不要用 0 覆盖成「无上限」。
+      totalTokenCap: Number(payload.totalTokenCap) > 0 ? Number(payload.totalTokenCap) : undefined,
       // A-06：整任务墙钟显式放行——渲染层可下发 runWallClockMs（缺省 undefined ⇒ 引擎默认值）。
       // 与 Worker 通道的「maxRounds + runWallClockMs 都显式」保持一致，不再依赖隐式默认对齐。
       runWallClockMs: Number(payload.runWallClockMs) > 0 ? Number(payload.runWallClockMs) : undefined,
@@ -518,6 +536,28 @@ function startAgentRun(payload, sender) {
           handlers[key] = (...a) => deps.runScope.run({ runId }, () => fn(...a));
         }
       }
+      // M6（2026-10-30）§2 / §2.5：双模式自动路由——在**启动之前**判一次，
+      // 判定只决定「要不要先把任务清单给用户确认」（复用既有规划模式：只读 + 先出计划），
+      // 不改任何执行语义。三个跳过条件：手动已开规划（尊重显式选择）/ 断点续跑（方向已确认过）/
+      // 渲染层未开启。路由失败的语义见 taskRouter.resolveRoute 里的论证（不改变用户原本的预期）。
+      const convKey = String(payload.conversationId || 'local');
+      const gate = taskRouter.routeGate({
+        autoRoute: !!payload.autoRoute, planMode: !!payload.planMode,
+        resumeContext: payload.resumeContext || '', lastAutoPlanAt: autoPlanAt.get(convKey) || 0,
+      });
+      const route = await taskRouter.resolveRoute({
+        enabled: gate.enabled,
+        chatFn: handlers.chat,
+        model: payload.model,
+        goal: taskRouter.goalFromMessages(engineParams.messages),
+      });
+      if (route.plan) {
+        engineParams.planMode = true;
+        // 只在**自动**判 plan 时记冷却；手动规划模式不进冷却（用户自己的选择不该被节流）
+        if (gate.enabled) { if (autoPlanAt.size > 200) autoPlanAt.clear(); autoPlanAt.set(convKey, Date.now()); }
+      }
+      routeMode = route.mode;
+      runTrace.appendTraceEvent(runId, { type: 'route', mode: route.mode, source: route.source, plan: route.plan, skip: gate.reason, tokens: route.tokens, error: route.error });
       // P2-8 / V-L1（J2）：收尾的异步部分（L1 对账 → 落库 → emit done）。
       // 为什么单独抽出来：引擎的 onDone 是**同步回调契约**（不 await、不看返回值），
       // 把 async 函数直接挂在 onDone 上会让 Promise 逃逸——一旦将来有人在里面抛错，
@@ -528,7 +568,10 @@ function startAgentRun(payload, sender) {
       // 事件、UI 永久停在 running。当前 finishRun 每步都有 try/catch，实际不可达，
       // 但这条不变量不该只靠"没人改动"来维持（P3：第二轮审查）。
       let doneEmitted = false;
-      const finishRun = async (ft, usage, aborted) => {
+      // M2（2026-10-30）：第 4 参 final = 引擎终态真值（stopReason / rounds / toolCalls /
+      // checkpointSaved）。渲染层凭它判「暂停 vs 未完成 vs 完成」并显示进度，不再嗅探文案。
+      // 缺参（旧引擎 / 兜底路径）一律按「无真值」处理，字段保持可选——不倒逼调用方造假。
+      const finishRun = async (ft, usage, aborted, final = null) => {
         console.warn(`[agentRun] 完成 runId=${runId} 耗时=${Math.round((Date.now() - startedAt) / 1000)}s aborted=${!!aborted} usage=${usage ? `in=${usage.prompt_tokens}/out=${usage.completion_tokens}` : 'null'} textLen=${(ft || '').length}`);
         let outText = ft;
         let vVerdict = null; // P0-1：L1 判定结果（BLOCK = 自述与执行记录对不上，结论不可信，不沉淀）
@@ -567,11 +610,39 @@ function startAgentRun(payload, sender) {
         // V08：只有 durable 刷盘成功才宣称 mainPersisted:true；
         // 失败/未落库时如实上报（渲染层据此本地补显 + 提示保存状态），绝不假成功
         const dur = confirmDurable(accepted);
-        emit('done', { finalText: outText, usage, aborted, mainPersisted: dur.persisted, persistState: dur.state });
+        // M2：终态真值随 done 事件下发（引擎未给时三个字段保持缺省，UI 侧按「无」渲染）。
+        emit('done', {
+          finalText: outText, usage, aborted, mainPersisted: dur.persisted, persistState: dur.state,
+          stopReason: String(final?.stopReason || ''),
+          rounds: Number(final?.rounds) || 0,
+          toolCalls: Number(final?.toolCalls) || 0,
+          checkpointSaved: final?.checkpointSaved === true,
+          // M4/M5：Judge 用量与 AC 满足率——契约已登记、引擎已产出，宿主这一跳漏了就全链断
+          // （渲染层拿到恒 0 的 acTotal ⇒ 进度块永不显示，现象与「Judge 没判」完全一致）。
+          judgeTokens: Number(final?.judgeTokens) || 0,
+          judgeCalls: Number(final?.judgeCalls) || 0,
+          acTotal: Number(final?.acTotal) || 0,
+          acSatisfied: Number(final?.acSatisfied) || 0,
+          // M6：路由判定结果（'single'/'plan'/'unsure'/'error'/''）——界面据此说明
+          // 「这次为什么先给计划」，而不是让用户以为模型不肯干活。
+          routeMode,
+          // 2026-10-31：Judge 结论与额度余量（同批下发，漏一个 UI 就少一块真相）
+          judgeMissing: Number(final?.judgeMissing) || 0,
+          judgeError: final?.judgeError === true,
+          totalCap: Number(final?.totalCap) || 0,
+          totalSpent: Number(final?.totalSpent) || 0,
+          roundCap: Number(final?.roundCap) || 0,
+        });
         doneEmitted = true;
 
         // 用量账本回填（含取消的运行）：口径与额度豁免说明见 main/chatUsageLedger.js
         recordChatUsage(deps, { runId, usage, conversationId: payload.conversationId, projectPath: payload.projectPath, modelId: payload?.model?.model?.model_id || '' });
+        // M7（设计文档 §6.4）：事后任务报告。位置在 done 已发出之后——报告是**复盘资料**，
+        // 不是结果本身，所以它晚于结果落地；写失败由 runReport 内部兜住（只告警、绝不改结局）。
+        runReport.writeRunReport({
+          runId, conversationId: payload.conversationId, model: payload?.model?.model?.model_id || '',
+          final, usage, aborted, routeMode, finalText: outText, startedAt, endedAt: Date.now(),
+        });
       };
       const cb = {
         // 中间轮（assistant+tool_calls / tool 结果）主进程直接落库，再照常推事件
@@ -607,6 +678,10 @@ function startAgentRun(payload, sender) {
               budget: info?.budget || 0,
               model: payload?.model?.model?.model_id || '',
               cwd: payload?.cwd || '',
+              // M3：AC 随断点落盘——「继续」时由渲染层读回并回传，续跑沿用同一条验收基线
+              //（每续一段换一套标准等于没有标准）。没有 AC 时写 null，不写 undefined
+              //（JSON 落盘会丢键，读回时「没这个键」与「有但为 null」要能区分）。
+              acceptance: info?.acceptance || null,
             });
           } catch (e) {
             console.warn('[agentRunner] 断点保存失败:', e.message);
@@ -650,9 +725,9 @@ function startAgentRun(payload, sender) {
         // doneSent 在同步段置真，因此下方「引擎未触发 onDone」的兜底分支不会重复发 done。
         // 顺序很关键：BLOCK 时 finalText 末尾会多一段对账提示，用户看到的与落库的必须是同一份
         // 文本——否则重进会话提示就消失了（「只在屏幕上有」的假观测）。
-        onDone: (ft, usage, aborted) => {
+        onDone: (ft, usage, aborted, final) => {
           doneSent = true;
-          finishRun(ft, usage, aborted).catch((e) => {
+          finishRun(ft, usage, aborted, final).catch((e) => {
             console.warn(`[agentRun] 收尾流程异常（已产出的结果仍会随下方兜底/前序事件送达） runId=${runId}:`, e?.message || e);
             // 兜底：finishRun 在 emit('done') 之前失败时，渲染层收不到任何终止事件
             // （doneSent 已置真 → 下方"引擎未触发 onDone"的兜底分支不会再补发 done）。

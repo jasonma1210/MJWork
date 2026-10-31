@@ -20,6 +20,29 @@ export interface RunSummary {
   model: string;
   endedAt: number;
   contextTokens?: number | null;
+  /** M2（2026-10-30）：引擎给的「为什么停」（空串/缺省 = 正常完成）。取值见 STOP_REASONS。 */
+  stopReason?: string;
+  /** 本 run 实际执行的轮数（引擎终态真值，不是 UI 猜的） */
+  rounds?: number;
+  /** 本 run 的工具动作条数 */
+  toolCalls?: number;
+  /** 断点是否真的落盘——决定收尾条给不给「结束本轮」（没断点就没东西可丢） */
+  checkpointSaved?: boolean;
+  /** M4：独立 Judge 的账单（审查花了多少 token / 几次调用） */
+  judgeTokens?: number;
+  judgeCalls?: number;
+  /** M5：验收标准满足率。acTotal=0 ⇒ 无基线或未判定，收尾条**不渲染**进度（不显示 0/0）。 */
+  acTotal?: number;
+  acSatisfied?: number;
+  /** M6：路由判定结果（'plan' = 自动判定为复杂目标，本轮只出计划；空串 = 未判）。 */
+  routeMode?: string;
+  /** 2026-10-31：Judge 结论（缺几项 / 有无事实性错误） */
+  judgeMissing?: number;
+  judgeError?: boolean;
+  /** 2026-10-31：额度余量（上限 / 已用 / 轮次上限） */
+  totalCap?: number;
+  totalSpent?: number;
+  roundCap?: number;
 }
 
 /** 一次运行的可见状态快照。切回会话时据此重建 UI。 */

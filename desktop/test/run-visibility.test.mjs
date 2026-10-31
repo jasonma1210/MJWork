@@ -52,7 +52,8 @@ check('P0-7 视图层把 loading 作为 running 传入 renderMessages',
 
 // ── B. 收尾条出口 ──
 // 形态说明（F-005）：解构后接了 `: RunFooterProps` ⇒ 收尾用 `\}[^)]*\)`，其余逐字不动。
-check('P0-7 RunFooter 接收改动计数与回调', /export function RunFooter\(\{\s*summary,\s*live,\s*changedCount = 0,\s*onOpenChanges,\s*onRevertRun\s*\}[^)]*\)/.test(streamSrc));
+check('P0-7 RunFooter 接收改动计数与回调（并保留过程折叠位）',
+  /export function RunFooter\(\{\s*summary,\s*live,\s*changedCount = 0,\s*onOpenChanges,\s*onRevertRun,\s*process\s*\}[^)]*\)/.test(streamSrc));
 check('P0-7 收尾条渲染「查看 N 个改动」（i18n key）', /tr\('message\.viewChanges', \{ n: changedCount \}\)/.test(streamSrc));
 check('P0-7 计数来自真实产出文件列表（runFiles.length）', /changedCount=\{runFiles\.length\}/.test(streamSrc));
 check('P0-7 改动入口在结束态才出现（不干扰运行中布局）',
@@ -169,8 +170,13 @@ check('思考正文接 safeUrlTransform（新增 markdown 渲染面不得绕过�
   /urlTransform=\{safeUrlTransform\}/.test(rpSrc));
 check('MessageStream 已改用 ReasoningPanel，旧的默认展开 details 块已移除',
   /<ReasoningPanel/.test(streamSrc) && !/<details className="mb-3 max-w-3xl" open>/.test(streamSrc));
-check('思考内容运行结束后仍保留（不再受 loading 门控）',
-  /<ReasoningPanel text=\{reasoningText\} loading=\{loading\}/.test(streamSrc));
+// 2026-10-30 语义升级（用户需求：结束后只留结论，过程默认收起）：
+// 思考内容不再「平铺在正文下方」，而是作为收尾条的过程折叠区（默认收起）保留下来。
+// 两条都要锁：① 结束态实例确实存在（内容不丢）；② 它挂在 RunFooter 的 process 上（默认收起）。
+check('思考内容运行结束后仍保留（作为收尾条的过程折叠区，loading=false 的实例）',
+  /<ReasoningPanel text=\{reasoningText\} loading=\{false\}/.test(streamSrc));
+check('思考内容默认收起：经 RunFooter 的 process 折叠区渲染，而非直接铺在正文下',
+  /process=\{!loading/.test(streamSrc) && /ReasoningPanel/.test(streamSrc));
 
 // 产物折叠（用户需求 2）
 check('产物面板默认收起（defaultOpen 默认 false）', /defaultOpen = false/.test(streamSrc));
@@ -192,6 +198,114 @@ for (const k of ['runSoundTitle', 'runSoundOn', 'runSoundOnDesc', 'runSoundOff',
 const settingsSrc = read('renderer', 'src', 'components', 'SettingsModal.jsx');
 check('设置页确有提示音开关，且写入的是 runSound 的同一个 setter',
   /RUN_SOUND_OPTIONS\.map/.test(settingsSrc) && /setRunSoundEnabled\(o\.id === 'on'\)/.test(settingsSrc));
+
+// ── E. 暂停后的动作（2026-10-30，设计文档 §6.1：halt 之后必须给「继续 / 终止」）──
+// 判据口径：不只看按钮存在，还要看「动作真的落到既有链路上」——
+// 继续必须走唯一发送漏斗（否则会多出第二条恢复实现），结束本轮必须真的清断点
+// （断点判定是「有断点就恢复」，不清就会污染用户下一个全新问题）。
+const chatAreaSrc = read('renderer', 'src', 'components', 'ChatArea.jsx');
+// 2026-10-30 M2 修正：两个动作**不再共用同一个门控**。
+// 引擎停下的形态有「有断点 / 没断点」两种（轮次上限、空转熔断就没有断点），
+// 没断点时给「结束本轮」会让 toast 说「已丢弃断点」——对不存在的东西撒谎。
+// 因此：继续 = suspended | incomplete；结束本轮 = 仅 suspended（真有断点）。
+check('「继续」对两种未完形态都给（suspended 有断点 / incomplete 无断点）',
+  /\(summary\.status === 'suspended' \|\| summary\.status === 'incomplete'\) && \([\s\S]{0,400}?mjcode:continue-run/.test(streamSrc));
+check('「结束本轮」只在真有断点的 suspended 下给（incomplete 不得出现）',
+  /summary\.status === 'suspended' && \([\s\S]{0,400}?mjcode:discard-checkpoint/.test(streamSrc)
+  && !/incomplete[\s\S]{0,300}?mjcode:discard-checkpoint/.test(streamSrc));
+check('「继续」走唯一发送漏斗 sendOrDispatchRef（不新起第二条恢复路径）',
+  /onContinue = \(\) => \{ sendOrDispatchRef\.current\?\.\(t\('message\.resumeRun'\)\); \}/.test(chatAreaSrc));
+check('「结束本轮」真的清断点（checkpointClear），且失败有提示',
+  /onDiscard = async \(\) => \{[\s\S]{0,500}?checkpointClear[\s\S]{0,400}?checkpointDiscardFailed/.test(chatAreaSrc));
+for (const k of ['resumeRun', 'discardCheckpoint', 'checkpointDiscarded', 'checkpointDiscardFailed']) {
+  check(`message.${k} 双语齐备`, !!zhMessage[k] && !!enMessage[k], `zh=${zhMessage[k] || '-'} / en=${enMessage[k] || '-'}`);
+}
+
+// ── F. 停止原因与进度可见（M2，2026-10-30；设计文档 §6.1/§6.2）──
+// 事故原型：长任务跑到一半停下，UI 只能靠 finalText 里有没有「断点已保存」这串中文
+// 来反推「是不是暂停」。引擎改一个字、换一种停止形态（轮次上限/空转熔断），
+// UI 就把「没跑完」显示成「已完成」——用户以为任务做完了。
+// 判据口径：状态必须由引擎给的 stopReason 判定，且四种停止原因都得有话说。
+check('M2 状态由引擎终态真值判定（读 meta.stopReason，不再嗅探文案）',
+  /const stopReason = String\(meta\?\.stopReason \|\| ''\)/.test(runHookSrc)
+  && /status: aborted \? 'aborted' : \(stopReason \? \(checkpointSaved \? 'suspended' : 'incomplete'\) : 'done'\)/.test(runHookSrc));
+// 反向断言要小心自指：本文件与源码注释里都可能出现「断点已保存」字样，
+// 故只钉**代码形态**（finalText 上不得再有任何 includes 判定），不钉那串中文。
+check('M2 状态判定不再读 finalText（旧的中文子串嗅探已彻底移除）',
+  !/finalText\.includes\(/.test(runHookSrc) && !/finalText\)\.includes\(/.test(runHookSrc));
+check('M2 runSummary 携带 stopReason / rounds / toolCalls / checkpointSaved',
+  /stopReason,\s*\n\s*rounds: Number\(meta\?\.rounds\) \|\| 0,\s*\n\s*toolCalls: Number\(meta\?\.toolCalls\) \|\| 0,\s*\n\s*checkpointSaved,/.test(runHookSrc));
+// 2026-10-31：读数改为「有轮次上限时显示 n/cap、否则显示 n」——门控（rounds>0 才渲染）
+// 与「不拿 0 占位」的意图不变，只是多了一个分支。
+check('M2 收尾条渲染进度读数「第 N 轮 · M 个动作」（rounds>0 才渲染，避免 0 占位）',
+  /\{rounds > 0 && \([\s\S]{0,200}?tr\('message\.roundsAndActions', \{ n: rounds, m: toolCalls \}\)/.test(streamSrc));
+check('M2 收尾条渲染停止原因，且只认引擎枚举（未知值不渲染，宁缺不编）',
+  /const STOP_LABEL: Record<string, string> = \{[\s\S]{0,500}?'total-cap'[\s\S]{0,300}?\};/.test(streamSrc)
+  && /const stopLabel = summary\.stopReason \? STOP_LABEL\[summary\.stopReason\] : ''/.test(streamSrc));
+// 五种停止原因都要有对应文案：少一个，UI 就只能显示「任务未跑完」而不说为什么。
+for (const k of ['Context', 'TotalCap', 'Wallclock', 'Rounds', 'Repeat']) {
+  check(`M2 message.stopReason${k} 双语齐备`, !!zhMessage[`stopReason${k}`] && !!enMessage[`stopReason${k}`],
+    `zh=${zhMessage[`stopReason${k}`] || '-'} / en=${enMessage[`stopReason${k}`] || '-'}`);
+}
+for (const k of ['statusIncomplete', 'roundsAndActions']) {
+  check(`M2 message.${k} 双语齐备`, !!zhMessage[k] && !!enMessage[k], `zh=${zhMessage[k] || '-'} / en=${enMessage[k] || '-'}`);
+}
+// 桥接层：引擎 → 主进程 → 渲染层，任何一层漏传都会让上面全部退化成「猜」
+const bridgeSrc = read('renderer', 'src', 'lib', 'agent.js');
+check('M2 桥接层透传终态真值（stopReason/rounds/toolCalls/checkpointSaved 四字段齐全）',
+  /stopReason: String\(evt\.data\.stopReason \|\| ''\)/.test(bridgeSrc)
+  && /rounds: Number\(evt\.data\.rounds\) \|\| 0/.test(bridgeSrc)
+  && /toolCalls: Number\(evt\.data\.toolCalls\) \|\| 0/.test(bridgeSrc)
+  && /checkpointSaved: evt\.data\.checkpointSaved === true/.test(bridgeSrc));
+const runnerSrc = read('main', 'agentRunner.js');
+check('M2 主进程把终态真值随 done 事件下发（含 checkpointSaved）',
+  /stopReason: String\(final\?\.stopReason \|\| ''\)/.test(runnerSrc)
+  && /checkpointSaved: final\?\.checkpointSaved === true/.test(runnerSrc));
+
+// ── G. 进度口径 = AC 满足率（M5，2026-10-30；设计文档 §6.2）──
+// 「跑了几轮」不等于「做到了几成」。真正的进度只有「验收标准满足了多少」；
+// 而没有基线 / Judge 未判定时必须**不显示**，显示 0/0 是假装知道进度。
+check('M5 收尾条渲染 AC 满足率', /tr\('message\.acProgress', \{ done: acSatisfied, total: acTotal \}\)/.test(streamSrc));
+check('M5 acTotal 为 0 时整块不渲染（不显示 0/0，也不显示满分）',
+  /\{acTotal > 0 && \([\s\S]{0,120}?message\.acProgress/.test(streamSrc));
+check('M5 runSummary 携带 acTotal / acSatisfied（不靠 UI 自己猜）',
+  /acTotal: Number\(meta\?\.acTotal\) \|\| 0/.test(runHookSrc) && /acSatisfied: Number\(meta\?\.acSatisfied\) \|\| 0/.test(runHookSrc));
+check('M5 桥接层透传 acTotal / acSatisfied',
+  /acTotal: Number\(evt\.data\.acTotal\) \|\| 0/.test(bridgeSrc) && /acSatisfied: Number\(evt\.data\.acSatisfied\) \|\| 0/.test(bridgeSrc));
+// 宿主这一跳最容易漏：契约登记了、引擎产出了、桥接也读了，只要 main 的 emit('done')
+// 没带上，渲染层拿到恒 0 的 acTotal ⇒ 进度块永不显示，而现象与「Judge 没判」一模一样。
+// 上面四条分层断言全绿也盖不住这个洞，故此处单独钉住主进程下发点。
+// ── H. Judge 结论 + 额度余量可见（2026-10-31）──
+// 事故形状：收尾条只报「验收 2/4」。用户看不出「差的是一条还是三条」「有没有事实性错误」，
+// 也只在撞闸那一刻才知道有 20M 这条线存在（此前 18 万 tokens 就以为快撞顶了）。
+check('H1 收尾条渲染「缺 N 项」（acTotal>0 时才成立：没基线就没有「缺」）',
+  /\{acTotal > 0 && judgeMissing > 0 && \([\s\S]{0,120}?message\.judgeMissing/.test(streamSrc));
+check('H2 事实性出入单独标红（比缺项更严重：属于「说做了但没做」）',
+  /\{judgeError && <span className="text-danger">\{tr\('message\.judgeError'\)\}/.test(streamSrc));
+check('H3 额度百分比常驻，且 totalCap=0 时不渲染（不假装有闸）',
+  /\{totalCap > 0 && \([\s\S]{0,240}?message\.quotaPct/.test(streamSrc));
+check('H4 额度超 80% 转 warn 色（靠上限时用户该看见）',
+  /quotaPct >= 80 \? 'text-warn' : 'text-text2'/.test(streamSrc));
+check('H5 轮次读数带上限（第 n/cap 轮）——余量不再黑箱',
+  /roundCap > 0[\s\S]{0,80}?message\.roundsAndActionsCap/.test(streamSrc));
+check('H6 runSummary 携带五个新字段（UI 不自己猜）',
+  ['judgeMissing', 'judgeError', 'totalCap', 'totalSpent', 'roundCap']
+    .every((k) => new RegExp(`${k}: (Number\\(meta\\?\\.${k}\\) \\|\\| 0|meta\\?\\.${k} === true)`).test(runHookSrc)));
+check('H7 桥接层透传五个新字段',
+  ['judgeMissing', 'judgeError', 'totalCap', 'totalSpent', 'roundCap'].every((k) => new RegExp(`${k}: `).test(bridgeSrc)));
+check('H8 主进程把五个新字段随 done 下发', ['judgeMissing', 'judgeError', 'totalCap', 'totalSpent', 'roundCap'].every((k) => new RegExp(`${k}: (Number\\(final\\?\\.${k}\\) \\|\\| 0|final\\?\\.${k} === true)`).test(runnerSrc)));
+check('H9 五条文案双語齐备',
+  ['judgeMissing', 'judgeError', 'quotaPct', 'quotaTitle', 'roundsAndActionsCap']
+    .every((k) => !!zhMessage[k] && !!enMessage[k]),
+  ['judgeMissing', 'judgeError', 'quotaPct', 'quotaTitle', 'roundsAndActionsCap'].map((k) => `${k}:${zhMessage[k] ? 'zh' : '-'}/${enMessage[k] ? 'en' : '-'}`).join(' '));
+
+check('M5 主进程把 AC 满足率 + Judge 记账随 done 事件下发',
+  /acTotal: Number\(final\?\.acTotal\) \|\| 0/.test(runnerSrc)
+  && /acSatisfied: Number\(final\?\.acSatisfied\) \|\| 0/.test(runnerSrc)
+  && /judgeTokens: Number\(final\?\.judgeTokens\) \|\| 0/.test(runnerSrc)
+  && /judgeCalls: Number\(final\?\.judgeCalls\) \|\| 0/.test(runnerSrc));
+check('M5 message.acProgress 双语齐备', !!zhMessage.acProgress && !!enMessage.acProgress,
+  `zh=${zhMessage.acProgress || '-'} / en=${enMessage.acProgress || '-'}`);
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);

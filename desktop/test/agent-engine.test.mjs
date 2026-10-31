@@ -214,7 +214,8 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
     onMessage: () => {},
     onSuspend: (info) => { renewSuspended = { ...info }; return true; },
     onBudget: (s) => renewReports.push(s),
-    onDone: (text, usage) => { renewDone = { text, usage }; },
+    // M2：第 4 参 = 引擎终态真值（UI 判状态的唯一依据，不再嗅探文案）
+    onDone: (text, usage, aborted, final) => { renewDone = { text, usage, final }; },
   });
   const renewRoundCalls = chatCalls.filter((c) => Array.isArray(c.tools) && c.tools.length > 0);
   // 9 次 = 8 轮工具调用 + 1 次收尾请求。收尾请求同样带 tools 参数（请求级注入），
@@ -232,6 +233,21 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
     renewReports.filter((r) => r.running === true).length >= 8
     && renewReports[renewReports.length - 1]?.running === false,
     `共 ${renewReports.length} 条`);
+  // ── M2（2026-10-30）：终态真值——「为什么停 / 跑到哪」由引擎给，不靠 UI 猜 ──
+  // ① 正常收尾的 stopReason 必须是空串（不是 'rounds'、也不是 undefined）：
+  //    UI 拿它判「已完成」，引擎编一个理由出来就等于把正常完成说成异常中断。
+  // ② 进度读数（rounds / toolCalls）必须是真实跑出来的数，不能是 0。
+  const renewFinal = renewReports[renewReports.length - 1];
+  check('M2 终态快照带 stopReason（正常收尾为空串，不是 undefined/编造值）',
+    renewFinal?.stopReason === '', JSON.stringify(renewFinal?.stopReason));
+  check('M2 终态快照带真实进度（rounds>0 且 toolCalls>0，不是 0 占位）',
+    Number(renewFinal?.rounds) > 0 && Number(renewFinal?.toolCalls) > 0,
+    `rounds=${renewFinal?.rounds} toolCalls=${renewFinal?.toolCalls}`);
+  check('M2 正常收尾的 checkpointSaved 为 false（没停就没断点）',
+    renewFinal?.checkpointSaved === false, JSON.stringify(renewFinal?.checkpointSaved));
+  check('M2 onDone 第 4 参同步带 stopReason（与终态快照同口径）',
+    renewDone?.final?.stopReason === '' && Number(renewDone?.final?.rounds) > 0,
+    JSON.stringify(renewDone?.final));
 
   // ── 测试 N2：累计撞总上限 → 真挂起（防失控的最后一道线）──
   reset();
@@ -242,6 +258,7 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
   }));
   let capDone = null;
   let capSuspended = null;
+  const capReports = [];
   await runAgent({
     messages: [{ role: 'user', content: '跑飞任务' }],
     model,
@@ -250,7 +267,8 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
     totalTokenCap: 200,
     onMessage: () => {},
     onSuspend: (info) => { capSuspended = { ...info }; return true; },
-    onDone: (text) => { capDone = { text }; },
+    onBudget: (s) => capReports.push(s),
+    onDone: (text, usage, aborted, final) => { capDone = { text, final }; },
   });
   check('累计消耗撞总上限时挂起（kind=tokens，带用量与轮数）',
     capSuspended?.kind === 'tokens' && capSuspended?.roundsUsed >= 3 && capSuspended?.usage?.prompt_tokens >= 180,
@@ -259,6 +277,16 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
     String(capDone?.text).includes('防失控总上限') === true
     && String(capDone?.text).includes('断点已保存') === true,
     String(capDone?.text).slice(-160));
+  // M2：这条是本轮事故的原型场景——用户看到的「184145 / 总上限」必须是引擎真值，
+  // 而不是 UI 从文案里嗅出来的。stopReason 必须是 'total-cap'（唯一允许说总上限的分支），
+  // 且 checkpointSaved 必须等于 onSuspend 的真实落盘结果（本场景返回 true）。
+  const capFinal = capReports[capReports.length - 1];
+  check('M2 总上限挂起的终态快照 stopReason === "total-cap"（不是 "context"/空串）',
+    capFinal?.stopReason === 'total-cap', JSON.stringify(capFinal?.stopReason));
+  check('M2 总上限挂起的 onDone 终态 stopReason 与快照一致',
+    capDone?.final?.stopReason === 'total-cap', JSON.stringify(capDone?.final?.stopReason));
+  check('M2 checkpointSaved 反映真实落盘结果（本场景 onSuspend 返回 true）',
+    capDone?.final?.checkpointSaved === true, JSON.stringify(capDone?.final?.checkpointSaved));
 
   // ── 测试 O：断点恢复注入——resumeContext 进 system 消息（不进持久化历史）──
   reset();

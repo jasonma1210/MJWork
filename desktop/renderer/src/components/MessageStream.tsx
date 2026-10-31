@@ -6,8 +6,10 @@ import remarkGfm from 'remark-gfm';
 import { safeUrlTransform, toExternalHref } from '../lib/safeUrl';
 import { MermaidDiagram } from './MermaidDiagram';
 import { toast } from './feedback';
-import { useI18n } from '../i18n'; // T3-2：i18n
-import { IconChevronDown, IconChevronRight, IconCopy, IconCpu, IconDownload, IconExternalLink, IconFile, IconFolder, IconGitBranch, IconPlus, IconSpinner } from './icons';
+import { useI18n } from '../i18n';
+// 2026-10-31：文件提及与操作菜单外置到 lib/fileMentions.ts（MessageStream 撞 800 code 行软档）
+import { isFilePathLike, fileActionItems, openFileEverywhere } from '../lib/fileMentions'; // T3-2：i18n
+import { IconChevronDown, IconChevronRight, IconCopy, IconCpu, IconFile, IconGitBranch, IconSpinner } from './icons';
 import { ToolTraceGroup } from './tools/ToolTrace';
 import Button from './ui/Button';
 import Dot from './ui/Dot';
@@ -67,7 +69,10 @@ export interface ContextUsage {
 
 /** 本轮概览：结束态（RunFooter 固定收尾条）。
  *  字段全部**必填**：三处构造点（useAgentRun 成功/异常分支、lib/runLifecycle）每次都写全，
- *  声明成可选会逼消费方到处写 `|| 0` 兜底（把契约模糊化成运行时猜测）。 */
+ *  声明成可选会逼消费方到处写 `|| 0` 兜底（把契约模糊化成运行时猜测）。
+ *  M2（2026-10-30）：stopReason / rounds / toolCalls / checkpointSaved 是引擎终态真值，
+ *  异常收尾与历史重放拿不到（那两种形态下「为什么停」另有语义），故可选——
+ *  声明成必填会把「没有真值」逼成「填 0 假装有」，正是本轮要消灭的谎报。 */
 export interface RunSummary {
   status: string;
   durationMs: number;
@@ -75,6 +80,30 @@ export interface RunSummary {
   tokensOut: number;
   model: string;
   endedAt: number;
+  /** 引擎给的「为什么停」：空串/缺省 = 正常完成。取值见 agent-core/exhaustedNotice.js 的 STOP_REASONS。 */
+  stopReason?: string;
+  /** 本 run 实际执行的轮数（引擎终态真值） */
+  rounds?: number;
+  /** 本 run 的工具动作条数 */
+  toolCalls?: number;
+  /** 断点是否真落盘——决定给不给「结束本轮」 */
+  checkpointSaved?: boolean;
+  /** M4：独立 Judge 的账单 */
+  judgeTokens?: number;
+  judgeCalls?: number;
+  /** M5：验收标准满足率。acTotal=0 ⇒ 不渲染（未判定不得显示成 0/0 或满分） */
+  acTotal?: number;
+  acSatisfied?: number;
+  /** M6：路由判定结果。'plan' ⇒ 本轮是「自动判定为复杂目标 → 先出计划」，
+   *  界面必须说明原因，否则用户只看到一份计划、以为模型不肯动手。 */
+  routeMode?: string;
+  /** 2026-10-31：Judge 结论（缺几项 / 有无事实性错误）——只有 acTotal>0 时才有意义 */
+  judgeMissing?: number;
+  judgeError?: boolean;
+  /** 2026-10-31：额度余量（上限 / 已用 / 轮次上限） */
+  totalCap?: number;
+  totalSpent?: number;
+  roundCap?: number;
 }
 
 /** 本轮概览：运行态（每秒刷新） */
@@ -91,9 +120,6 @@ export interface RunLive {
  *  「Property 'ok' does not exist on type '{}'」（unknown 被真值判断窄化成 {}）。这里用一次断言
  *  把 unknown 收成结果形状，调用点保持 `r.ok === false` 的自然写法，不必每处散落 as。
  *  精确桥面接口（每个方法一个签名）是 F-005 之后的独立项，届时本函数可整体删除。 */
-function asBridgeResult(r: unknown): { ok?: boolean; error?: string; canceled?: boolean } {
-  return (r && typeof r === 'object' ? r : {}) as { ok?: boolean; error?: string; canceled?: boolean };
-}
 
 // C1：窗口切片步长（条）。ChatArea 首屏初始化与 MessageStream「加载更早」共用同一口径。
 export const MSG_WINDOW = 50;
@@ -230,15 +256,19 @@ export default function MessageStream({
           onOpenChanges={() => window.dispatchEvent(new CustomEvent('mjcode:open-diff'))}
           // 撤回逻辑在 ChatArea（它持有基线 SHA 与会话信息），这里只负责派发
           onRevertRun={runFiles.length > 0 ? () => window.dispatchEvent(new CustomEvent('mjcode:revert-run')) : undefined}
+          // 2026-10-30 用户需求：运行结束后，思考内容收进收尾条的过程折叠区（默认收起）。
+          // 只在「有思考内容且已结束」时传——运行中另有实时思考行（见下），避免两处同时出现。
+          process={!loading && String(reasoningText || '').length > 0
+            ? <ReasoningPanel text={reasoningText} loading={false} chars={receivedChars} />
+            : null}
         />
         {/* 用户需求 2：整段回复的最末尾放「查看所有产物 (N)」，点开才是文件卡片——
             位置放在收尾条之后，即「一句话说完、数字看完、产物要看自己点」。 */}
         <RunOutputFiles files={runFiles} onOpenFile={onOpenFile} cwd={cwd} />
         {/* T1-1+T1-2：运行态工具轨迹已并入最后一轮块（答复正文之上），此处不再重复渲染 */}
-        {/* 用户需求 1（2026-10-30）：思考内容默认折叠成一行灰字「正在思考中…」，点击才展开正文；
-            运行结束后仍保留该行（此前只在 loading 期间渲染，思考路径一结束就查不到了）。
-            单独成组件是为了守住本文件的行数软档，且思考折叠与工具折叠用同一套视觉语言。 */}
-        <ReasoningPanel text={reasoningText} loading={loading} elapsedSec={elapsedSec} chars={receivedChars} />
+        {/* 运行中：思考行留在正文上方（要能实时看见它在想）；结束后已收进上面的过程折叠区，
+            不再额外渲染（否则「已完成」条下面会再冒出一行，位置与语义都错）。 */}
+        {loading && <ReasoningPanel text={reasoningText} loading elapsedSec={elapsedSec} chars={receivedChars} />}
         {streamingText && (
           <div className="mb-4 max-w-3xl">
             <div className="text-xs text-text2 mb-1">MJ Nexus <span className="animate-pulse">▋</span></div>
@@ -309,12 +339,20 @@ export interface RunFooterProps {
   changedCount?: number;
   onOpenChanges?: () => void;
   onRevertRun?: () => void;
+  /**
+   * 收尾条的「过程折叠区」（2026-10-30 用户需求）：运行结束后，思考/工具轨迹这类过程性内容
+   * 默认收进收尾条后面的一行「查看处理过程」，点开才铺开——用户先看结论，想复盘再展开。
+   * 运行中不传（思考行留在正文上方实时可见）。
+   */
+  process?: ReactNode;
 }
 
-export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRevertRun }: RunFooterProps) {
+export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRevertRun, process }: RunFooterProps) {
   // 组件内已有局部变量 t（定时器），i18n 译函数改名 tr 避免遮蔽
   const { t: tr } = useI18n();
   const [, tick] = useState(0);
+  // 过程折叠区的展开态：默认收起（用户先看结论），点击才铺开思考/轨迹
+  const [procOpen, setProcOpen] = useState(false);
   useEffect(() => {
     if (!live) return undefined;
     const t = setInterval(() => tick((n) => n + 1), 1000);
@@ -358,10 +396,37 @@ export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRe
     done: { label: tr('message.statusDone'), cls: 'text-success', dot: 'bg-success' },
     aborted: { label: tr('message.statusAborted'), cls: 'text-warn', dot: 'bg-warn' },
     suspended: { label: tr('message.statusSuspended'), cls: 'text-warn', dot: 'bg-warn' },
+    // M2：引擎停下了但**没有断点**（轮次上限 / 空转熔断 / 断点落盘失败）。
+    // 与 suspended 分开说才诚实：前者「回复继续即可从断点续跑」，后者「没有断点，只是没跑完」。
+    incomplete: { label: tr('message.statusIncomplete'), cls: 'text-warn', dot: 'bg-warn' },
     error: { label: tr('message.statusError'), cls: 'text-danger', dot: 'bg-danger' },
   };
   const st = (summary.status && STATUS[summary.status]) || STATUS.done;
   const total = (summary.tokensIn || 0) + (summary.tokensOut || 0);
+  // M2：停止原因必须显式说出来——「为什么停」是长任务里用户唯一真正想知道的读数。
+  // 只认引擎给的枚举，不认自由文本：未知值一律不渲染（宁缺也不能编）。
+  const STOP_LABEL: Record<string, string> = {
+    context: tr('message.stopReasonContext'),
+    'total-cap': tr('message.stopReasonTotalCap'),
+    wallclock: tr('message.stopReasonWallclock'),
+    rounds: tr('message.stopReasonRounds'),
+    repeat: tr('message.stopReasonRepeat'),
+  };
+  const stopLabel = summary.stopReason ? STOP_LABEL[summary.stopReason] : '';
+  const rounds = summary.rounds || 0;
+  const toolCalls = summary.toolCalls || 0;
+  const acTotal = summary.acTotal || 0;
+  const acSatisfied = summary.acSatisfied || 0;
+  // M6：自动判定为「复杂目标」（plan / 拿不准按 plan 处理）时本轮只出计划。
+  // 手动规划不在此列（那种情况 routeMode 是 'single'）——只解释**自动**那一次。
+  const autoPlan = summary.routeMode === 'plan' || summary.routeMode === 'unsure';
+  // 2026-10-31：Judge 结论与额度余量（都只在有值时才渲染，不拿 0 冒充「已判/没闸」）
+  const judgeMissing = summary.judgeMissing || 0;
+  const judgeError = summary.judgeError === true;
+  const totalCap = summary.totalCap || 0;
+  const totalSpent = summary.totalSpent || 0;
+  const roundCap = summary.roundCap || 0;
+  const quotaPct = totalCap > 0 ? (totalSpent / totalCap) * 100 : 0;
   return (
     <div className="mb-4 max-w-3xl">
       <div className={chip}>
@@ -375,6 +440,40 @@ export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRe
             {tr('message.totalTokens', { n: total.toLocaleString() })}
           </span>
         )}
+        {/* M2：进度读数「第 N 轮 · M 个动作」——长任务里「跑了多久/做到哪」是判断
+            是否值得继续的唯一依据。两个数字都为 0（异常收尾拿不到真值）时整块不渲染。 */}
+        {rounds > 0 && (
+          <span>{roundCap > 0
+            ? tr('message.roundsAndActionsCap', { n: rounds, cap: roundCap, m: toolCalls })
+            : tr('message.roundsAndActions', { n: rounds, m: toolCalls })}</span>
+        )}
+        {/* M5：进度口径改成 AC 满足率（设计文档 §6.2）——「跑了几轮」不代表「做到了几成」。
+            acTotal=0（无验收基线或 Judge 未判定）时整块不渲染：显示 0/0 是假装知道进度。 */}
+        {acTotal > 0 && (
+          <span>{tr('message.acProgress', { done: acSatisfied, total: acTotal })}</span>
+        )}
+        {/* 2026-10-31：光有「验收 2/4」说不清还差什么——缺项数要说出来；
+            审查发现事实性出入时单独标红（那比缺项更严重，属于「说做了但没做」）。 */}
+        {acTotal > 0 && judgeMissing > 0 && (
+          <span className="text-warn">{tr('message.judgeMissing', { n: judgeMissing })}</span>
+        )}
+        {judgeError && <span className="text-danger">{tr('message.judgeError')}</span>}
+        {/* 2026-10-31：额度余量常驻——此前用户只在撞闸那一刻才知道有闸。
+            80% 起转 warn 色；totalCap=0（未启用总闸）时不渲染，不假装有闸。 */}
+        {totalCap > 0 && (
+          <span
+            className={quotaPct >= 80 ? 'text-warn' : 'text-text2'}
+            title={tr('message.quotaTitle', { used: totalSpent.toLocaleString(), cap: totalCap.toLocaleString() })}
+          >
+            {tr('message.quotaPct', { pct: quotaPct >= 1 ? String(Math.round(quotaPct)) : quotaPct.toFixed(1) })}
+          </span>
+        )}
+        {/* M6（设计文档 §2/§2.5）：自动判定为复杂目标 ⇒ 本轮只出计划、不动手。
+            必须把原因说出来：用户看到的是一份「没改任何东西」的答复，
+            不解释就会被当成模型偷懒或工具坏了（同理见 M2 的停止原因）。 */}
+        {autoPlan && <span>{tr('message.routeAutoPlan')}</span>}
+        {/* M2：停止原因（引擎真值）。文案与收尾正文同源，用户不必去正文里找为什么停。 */}
+        {stopLabel && <span className="text-warn">{stopLabel}</span>}
         {summary.model && <span className="truncate">· {summary.model}</span>}
         {summary.endedAt && <span>· {new Date(summary.endedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>}
         {/* P0-7（2026-10-22）：收尾条此前只有「状态/耗时/token/模型」四个读数，
@@ -394,7 +493,38 @@ export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRe
             {tr('message.revertRun')}
           </Button>
         )}
+        {/* 暂停后的两个动作（设计文档 §6.1：halt 之后必须给「继续 / 终止」二选一）：
+            · 继续 = 走唯一发送漏斗发一条「继续」，断点由既有链路自动消费（不需要用户手打）；
+            · 结束本轮 = 显式丢弃断点。为什么必须有它：断点判定是「有断点就恢复」，
+              若用户暂停后改了主意、直接问别的事，旧断点会被注入成上下文（污染下一轮）。
+            两者都经 CustomEvent 交给 ChatArea——收尾条不需要知道会话与 IPC 细节。 */}
+        {/* 「继续」对两种未完形态都成立（有断点走断点，没断点就是接着做）；
+            「结束本轮」只给**真有断点**的那种——没有断点就没有可丢弃的东西，
+            给了只会让 toast 说「已丢弃断点」（对不存在的东西撒谎）。 */}
+        {(summary.status === 'suspended' || summary.status === 'incomplete') && (
+          <Button variant="accent-ghost" size="xs"
+            onClick={() => window.dispatchEvent(new CustomEvent('mjcode:continue-run'))}>
+            {tr('message.resumeRun')}
+          </Button>
+        )}
+        {summary.status === 'suspended' && (
+          <Button variant="ghost" size="xs"
+            onClick={() => window.dispatchEvent(new CustomEvent('mjcode:discard-checkpoint'))}>
+            {tr('message.discardCheckpoint')}
+          </Button>
+        )}
+        {/* 过程折叠开关：与「查看本轮改动」同为收尾条上的动作，位置固定在行尾。
+            文案与箭头都随状态切换——用户不必猜这一下是展开还是收起。 */}
+        {process && (
+          <Button variant="accent-ghost" size="xs" onClick={() => setProcOpen((v) => !v)}
+            title={procOpen ? tr('message.processCollapse') : tr('message.processExpand')}>
+            {procOpen ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />}
+            {procOpen ? tr('message.processCollapse') : tr('message.processExpand')}
+          </Button>
+        )}
       </div>
+      {/* 展开区：缩进与正文同左缘，视觉上「属于本轮」而不是另一段落 */}
+      {process && procOpen && <div className="mt-2">{process}</div>}
     </div>
   );
 }
@@ -409,94 +539,6 @@ export function RunFooter({ summary, live, changedCount = 0, onOpenChanges, onRe
 // 助手正文里的「文件提及」→ 可点击打开（右侧预览栏）。
 // 判定规则（纯字符串，不探磁盘）：含路径分隔符，或扩展名在已知代码/文档白名单内。
 // 之所以要白名单而不能只看「有点号」：`v1.0.0`、`3.14` 这类版本号/数字会被误判成文件。
-const CODE_EXT = new Set([
-  'md', 'markdown', 'mdx', 'txt', 'json', 'jsonl', 'yml', 'yaml', 'toml', 'ini', 'env', 'conf',
-  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'swift',
-  'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'php', 'sh', 'bash', 'zsh', 'ps1', 'bat', 'sql',
-  'csv', 'tsv', 'log', 'lock', 'css', 'scss', 'less', 'html', 'htm', 'xml', 'svg', 'vue', 'svelte',
-  'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'docx', 'xlsx', 'pptx',
-]);
-
-function isFilePathLike(text: string): boolean {
-  const s = String(text || '').trim();
-  if (!s || s.length > 200 || /\s/.test(s)) return false;
-  if (/^https?:\/\//i.test(s)) return false;
-  const m = s.match(/\.([A-Za-z0-9]{1,8})$/);
-  if (!m) return false;
-  const ext = m[1].toLowerCase();
-  if (CODE_EXT.has(ext)) return true;
-  // 带目录的路径即使扩展名不在白名单也当作文件（如 docs/build.out）
-  return /[\\/]/.test(s);
-}
-
-/** 文件操作的 5 项菜单（左键 = 在右侧预览栏打开；右键 /「…」= 本菜单）。
- *  顺序与分组固定（对标 WorkBuddy）：打开文件夹 │ 在默认应用中打开 ┃ 添加到对话框 │ 复制路径 ┃ 另存为。
- *  三处入口（本轮产出卡片 / 正文文件 chip / 右栏标签）共用这一份——
- *  此前正文 chip 只有 3 项（少「在默认应用中打开」「复制路径」），产出卡片另一套 3 项，
- *  同一份文件在不同入口能做的事不一样（用户实测反馈「要的效果一个都没有实现」）。 */
-function fileActionItems(target: string, cwd: string | undefined, t: (k: string) => string) {
-  const path = String(target || '').trim();
-  // 统一失败出口：三个动作失败都不该静默（用户点完什么都没发生 = 最差形态）
-  const warn = (err: unknown, key = 'filePreview.openFailed') => {
-    console.warn('[message] file action failed:', err);
-    toast({ message: t(key) });
-  };
-  return [
-    {
-      id: 'reveal', label: t('message.revealInFolder'), icon: IconFolder,
-      onClick: async () => {
-        try {
-          const r = asBridgeResult(await window.mjcode?.revealPath?.({ path, cwd }));
-          if (r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
-        } catch (err) { warn(err); }
-      },
-    },
-    {
-      id: 'openDefault', label: t('message.openWithDefault'), icon: IconExternalLink,
-      onClick: async () => {
-        try {
-          // 必须带 cwd：相对路径由主进程按项目根解析（与工具层同一语义），否则一律「路径不存在」
-          const r = asBridgeResult(await window.mjcode?.openPath?.({ path, cwd }));
-          if (r.ok === false) toast({ message: String(r.error || t('filePreview.openFailed')) });
-        } catch (err) { warn(err); }
-      },
-    },
-    { separator: true },
-    {
-      id: 'addToChat', label: t('message.addToChat'), icon: IconPlus,
-      onClick: () => window.dispatchEvent(new CustomEvent('mjcode:add-attachment', { detail: { path } })),
-    },
-    {
-      id: 'copyPath', label: t('message.copyPath'), icon: IconCopy,
-      onClick: async () => {
-        try { await navigator.clipboard.writeText(path); toast({ message: t('message.pathCopied') }); }
-        catch (err) { warn(err, 'message.copyFailed'); }
-      },
-    },
-    { separator: true },
-    {
-      id: 'saveAs', label: t('message.saveAs'), icon: IconDownload,
-      onClick: async () => {
-        try {
-          const r = asBridgeResult(await window.mjcode?.saveFileAs?.({ path, cwd }));
-          // 用户在系统对话框点取消不算失败，不弹错误
-          if (r.ok === false && !r.canceled) toast({ message: String(r.error || t('filePreview.openFailed')) });
-        } catch (err) { warn(err); }
-      },
-    },
-  ];
-}
-
-/** 打开文件到右侧预览栏。
- *  优先用 App 传下来的回调；回调缺失时退回窗口事件总线 mjcode:open-file ——
- *  团队流 / 看板回放等渲染路径没有透传 onOpenFile，只靠 props 会让点击静默无效。
- *  openFileInPane 自身按路径去重，两条通道并存也不会重复开标签。 */
-function openFileEverywhere(onOpenFile: ((p: string) => void) | undefined, raw: string) {
-  const p = String(raw || '').trim();
-  if (!p) return;
-  if (typeof onOpenFile === 'function') { onOpenFile(p); return; }
-  window.dispatchEvent(new CustomEvent('mjcode:open-file', { detail: { path: p } }));
-}
 
 /** 本轮产出文件：任务结束后列出本轮被写入/修改的文件（左键在右侧预览栏打开；右键出操作菜单）
  *  2026-10-30：默认收起成一行「查看所有产物 (N)」，点开才铺卡片；defaultOpen 供渲染冒烟直测展开分支。 */

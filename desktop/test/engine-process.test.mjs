@@ -145,7 +145,12 @@ await check('onSuspend：cbReq 送达主进程且收尾文案含断点提示', a
   });
   assert.ok(suspendSeen, '主进程 onSuspend 未收到 cbReq');
   assert.equal(suspendSeen.kind, 'tokens');
-  assert.equal(chatCalls, 4, `应 3 次续期+1 轮撞总上限共 4 轮，实际 ${chatCalls}`);
+  // 2026-10-31 语义变更（用户要求「别硬断开」）：撞总上限不再立刻挂起，而是**先交付阶段小结
+  // 再自动续段**（段内 90% 交接，最多 3 段），段数用满后才挂起。每轮 1000 tokens、总上限 2000
+  // ⇒ 每段 2 轮（1800 触发交接）× 4 段 = 8 次调用后才挂起。
+  // 旧断言写死 2 轮，锁的是「撞顶立刻停」——那正是用户抱怨的「跑一半突然断开、要手动继续」。
+  // 仍必须挂起（这是真兜底），且仍带断点：下面两条断言不变。
+  assert.equal(chatCalls, 8, `应在自动续段用满后才挂起（8 次调用），实际 ${chatCalls}`);
   assert.match(finalText, /断点已保存/, '收尾文案应含断点提示');
 });
 

@@ -45,8 +45,11 @@ export function createRunLifecycleCallbacks(d: RunLifecycleDeps) {
     onSuspended: (info: any) => {
       rs.suspended = info || null;
       if (!isActiveThread()) return;
+      // M2（2026-10-30）：断点**没存成**时就别说「已保存」——`saved` 是主进程的真实落盘结果。
+      // 与 useAgentRun 的成功分支同一口径：有断点 suspended（可结束本轮），没断点 incomplete。
       setRunSummary({
-        status: 'suspended',
+        status: info?.saved === true ? 'suspended' : 'incomplete',
+        checkpointSaved: info?.saved === true,
         durationMs: rs.startedAt ? Date.now() - rs.startedAt : 0,
         tokensIn: info?.usage?.prompt_tokens || 0,
         tokensOut: info?.usage?.completion_tokens || 0,

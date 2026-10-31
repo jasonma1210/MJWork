@@ -74,12 +74,34 @@ interface Checkpoint {
   summary?: string;
   rescues?: number;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
+  /** M3：随断点落盘的验收标准（AC）。「继续」时回传给引擎，续跑沿用同一条基线。 */
+  acceptance?: { must?: string[]; must_not?: string[] } | null;
 }
 
 /** onDone 的持久化元信息：主进程模式恒带 mainPersisted，进程内回退模式没有该字段 */
 interface DoneMeta {
   mainPersisted?: boolean;
   persistState?: string;
+  /** M2（2026-10-30）：引擎终态真值——「为什么停 / 跑了几轮 / 做了几个动作 / 断点是否落盘」 */
+  stopReason?: string;
+  rounds?: number;
+  toolCalls?: number;
+  checkpointSaved?: boolean;
+  /** M4：独立 Judge 的账单（审查花了多少 token / 几次调用） */
+  judgeTokens?: number;
+  judgeCalls?: number;
+  /** M5：验收标准满足率（acTotal=0 ⇒ 无基线/未判定，收尾条不渲染进度） */
+  acTotal?: number;
+  acSatisfied?: number;
+  /** M6：路由判定结果（'plan' 且非手动时为「自动判定」，收尾条据此说明为什么先给计划） */
+  routeMode?: string;
+  /** 2026-10-31：最近一次 Judge 结论——缺几项 / 有无事实性错误（UI 说「还差什么」） */
+  judgeMissing?: number;
+  judgeError?: boolean;
+  /** 2026-10-31：额度余量（上限 / 已用 / 轮次上限）——让「什么时候会撞闸」不再黑箱 */
+  totalCap?: number;
+  totalSpent?: number;
+  roundCap?: number;
   [k: string]: unknown;
 }
 
@@ -475,11 +497,18 @@ export default function useAgentRun(d: UseAgentRunDeps) {
     // 关键词（继续/接着/接下来…）降级为**辅助信号**：仅用于「用户表达了继续意图但本会话无断点」
     // 这一情形留痕，便于排查「用户以为该恢复却没恢复」。判定逻辑见 shared/resumeIntent.mjs（有单测）。
     let resumeContext = '';
+    // M3：从断点读回的验收标准（AC）。非空时回传给引擎 ⇒ 续跑不再重新提取。
+    let resumeAcceptance: { must?: string[]; must_not?: string[] } | null = null;
     const checkpointKey = String(currentThread.id || 'local');
     try {
       const cp = asObj<Checkpoint>(await window.mjcode?.checkpointGet?.(checkpointKey));
       const decision = resumeDecision({ hasCheckpoint: !!cp, messageText: content });
+      // M3：断点里带回来的 AC 直接作为本轮的验收基线（引擎见到它就不会再提取一次）。
+      // 「继续」沿用同一条标准是本机制的立足点——每续一段重抽一套，等于没有标准。
       if (decision.resume && cp) {
+        resumeAcceptance = (cp.acceptance && (cp.acceptance.must?.length || cp.acceptance.must_not?.length))
+          ? cp.acceptance
+          : null;
         if (cp.kind === 'engine-exit') {
           // T3-7：引擎子进程异常退出的断点——已完成的消息与工具结果均已落库，
           // 续跑只需接续历史（中断时引擎来不及产出摘要，summary 为空）
@@ -508,6 +537,16 @@ export default function useAgentRun(d: UseAgentRunDeps) {
       }
     } catch (err) {
       console.warn('[chat] checkpoint read failed, continuing normally:', err);
+    }
+    // M3：断点带回的 AC 也要让模型看见——续跑时它必须知道「完成线在哪」，
+    // 否则只会接着做，不知道做到哪一步算完（这正是长任务越续越飘的根因之一）。
+    if (resumeAcceptance) {
+      const acItems = [
+        ...(resumeAcceptance.must || []),
+        ...(resumeAcceptance.must_not || []).map((s) => `禁止：${s}`), // i18n-literal
+      ];
+      resumeContext += '\n\n本任务的验收标准（沿用中断前那一份，不要另立标准）：' // i18n-literal
+        + `\n${acItems.map((s) => `- ${s}`).join('\n')}`; // i18n-literal
     }
     abortRef.current = new AbortController();
     // 运行保活：本轮运行登记进注册表（runId 由渲染层指定，主进程事件/流式标签全用它）
@@ -569,8 +608,32 @@ export default function useAgentRun(d: UseAgentRunDeps) {
       rs.done = true;
       rs.settledAt = Date.now();
       rs.streaming = ''; rs.reasoning = '';
+      // M2（2026-10-30）：状态由引擎终态真值判定，不再嗅探 finalText 的中文子串。
+      // 旧写法在 finalText 里搜那句「断点已保存」的中文子串，有两个致命点：
+      //   ① 引擎改一个字（或换语言）UI 就判错——「任务没跑完」被显示成「已完成」；
+      //   ② 只有「断点已保存」这一条路径能判出暂停，轮次上限/空转熔断这类
+      //      **同样没跑完但没有断点**的停止形态一律被当成正常完成。
+      // 现在：stopReason 非空 = 引擎主动停下且任务未完；有断点 ⇒ suspended（可结束本轮），
+      // 无断点 ⇒ incomplete（只能「继续」）。
+      const stopReason = String(meta?.stopReason || '');
+      const checkpointSaved = meta?.checkpointSaved === true;
       rs.runSummary = {
-        status: aborted ? 'aborted' : (String(finalText).includes('断点已保存') /* i18n-literal */ ? 'suspended' : 'done'),
+        status: aborted ? 'aborted' : (stopReason ? (checkpointSaved ? 'suspended' : 'incomplete') : 'done'),
+        stopReason,
+        rounds: Number(meta?.rounds) || 0,
+        toolCalls: Number(meta?.toolCalls) || 0,
+        checkpointSaved,
+        judgeTokens: Number(meta?.judgeTokens) || 0,
+        judgeCalls: Number(meta?.judgeCalls) || 0,
+        acTotal: Number(meta?.acTotal) || 0,
+        acSatisfied: Number(meta?.acSatisfied) || 0,
+        // M6：路由判定（空串=未判；只有 'plan' 才在收尾条上解释「为什么这次是计划」）
+        routeMode: String(meta?.routeMode || ''),
+        judgeMissing: Number(meta?.judgeMissing) || 0,
+        judgeError: meta?.judgeError === true,
+        totalCap: Number(meta?.totalCap) || 0,
+        totalSpent: Number(meta?.totalSpent) || 0,
+        roundCap: Number(meta?.roundCap) || 0,
         durationMs: rs.startedAt ? Date.now() - rs.startedAt : 0,
         tokensIn: usage?.prompt_tokens || 0,
         tokensOut: usage?.completion_tokens || 0,
@@ -590,7 +653,10 @@ export default function useAgentRun(d: UseAgentRunDeps) {
       if (activeThreadIdRef.current === threadKey) {
         abortRef.current = null;
         setStreamingText('');
-        setReasoningText('');
+        // 2026-10-30（用户需求）：思考文本**不在收尾时清空**。
+        // 它已经由 ReasoningPanel 收进收尾条的「查看处理过程」折叠区——收起 ≠ 丢弃；
+        // 清空会让「跑完想复盘它当时怎么想的」这件事永远做不到（本轮修的就是这个）。
+        // 重置时机改为：下次发送前（send 前统一清）与切换会话时（按 inFlight 判定）。
         setLoading(false);
       }
       // 2026-10-15 修复：落库去重 + 收尾加固——
@@ -704,10 +770,19 @@ export default function useAgentRun(d: UseAgentRunDeps) {
         // 主进程据此过滤工具子集并取「角色与用户设置更严格的」审批档/沙箱
         rolePreset: sessionExtras?.expert?.runtime || undefined,
         planMode,
+        // M6（设计文档 §2/§2.5）：自动判定 single / plan。开启后主进程在启动前做一次
+        // 独立小调用（输出 5 个字符，8s 看门狗）；判为 plan（含「拿不准」）就把本轮按
+        // 规划模式跑——先出任务清单给用户确认，而不是把拆不开的目标压进一条主线跑到失控。
+        // 手动 planMode 与断点续跑都会跳过路由（respect 用户已表达的方向）。
+        autoRoute: true,
         runId: runSeqLocal,
         conversationId: threadKey, candidateTeamId: sessionExtras?.candidateRoster?.teamId ? String(sessionExtras.candidateRoster.teamId) : undefined, // 双入口：候选编制透传（只传 id；临时编制不传）
         // Phase 3-1：断点摘要注入（仅「继续」且有已保存断点时非空）
         resumeContext,
+        // M3：验收标准。开启提取（宿主显式承担这一次小调用的成本：输入只有用户目标、
+        // 不带工具、有 20s 看门狗）；断点带回的 AC 直接复用，引擎不会重复提取。
+        acceptance: true,
+        acceptanceCriteria: resumeAcceptance,
         onMessage: async (msg: RunMessage) => {
           // T1-5：运行中实时消耗累计（中间轮 usage 逐条累加，供「本轮概览」卡展示）
           if (msg.tokens_input || msg.tokens_output) {
@@ -798,7 +873,7 @@ export default function useAgentRun(d: UseAgentRunDeps) {
     if (stillActive) {
       abortRef.current = null;
       setStreamingText('');
-      setReasoningText('');
+      // 同上：思考文本保留（收尾条的过程折叠区要用），只在下次发送/切会话时重置
       setLoading(false);
     }
     // steer 补发：本轮已完全退出（无并发 run），用 messagesRef 拿到的最新历史重开一轮。

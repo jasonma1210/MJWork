@@ -122,4 +122,8 @@ if (fail) process.exitCode = 1;
     restarts.every((e) => typeof e.n === 'number' && e.n >= 1));
   check('续跑额度用尽后如实收尾，不提「发送继续」（无人值守）',
     /自动换新窗口续跑 4 次/.test(doneText) && !/发送「继续」/.test(doneText), doneText.slice(0, 80));
+  // 2026-10-30 用户实测 bug 的锁：上下文用尽时**不得**说成「累计消耗已达防失控总上限」。
+  // 旧实现 suspend-context 分支不设 contextStuck ⇒ 一律落到总上限文案（用户看到「184145 tokens 已达上限」）。
+  check('上下文用尽时不得谎称「已达防失控总上限」（那是另一条分支的事）',
+    !/防失控总上限/.test(doneText), doneText.slice(0, 80));
 }

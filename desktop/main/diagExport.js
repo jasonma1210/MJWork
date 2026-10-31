@@ -125,6 +125,15 @@ function collectEntries(userData) {
     .slice(0, 10);
   for (const { f } of traceFiles) pushText(`traces/${f}`, fs.readFileSync(path.join(traceDir, f), 'utf8'));
 
+  // M7（§6.4）：事后任务报告（最近 10 份）——「为什么停 / 验收几成 / 花了多少」的结构化结论，
+  // 与 trace 互补：trace 是逐轮流水，报告是一次运行的判决书。
+  const reportDir = path.join(userData, 'reports');
+  const reportFiles = listFiles(reportDir, (n) => n.endsWith('.json'))
+    .map((f) => ({ f, m: fs.statSync(path.join(reportDir, f)).mtimeMs }))
+    .sort((a, b) => b.m - a.m)
+    .slice(0, 10);
+  for (const { f } of reportFiles) pushText(`reports/${f}`, fs.readFileSync(path.join(reportDir, f), 'utf8'));
+
   // 主进程 console 日志：最近 3 个（console tee 会原样记录模型响应体，必须扫描）
   const logsDir = path.join(userData, 'logs');
   const logFiles = listFiles(logsDir, (n) => n.startsWith('main-') && n.endsWith('.log'))
@@ -212,6 +221,19 @@ function registerDiagExportIpc() {
       const contents = previewDiagPackage().entries.map((e) => e.name);
       return { ok: true, file, contents };
     } catch (err) {
+      return { ok: false, error: String(err?.message || err) };
+    }
+  });
+  // M7（§6.4）：运行报告列表（设置页「运行报告」区块的数据源）。
+  // 为什么挂在这里而不是新开一个 ipc 模块：main.js 的行数棘轮已满额（test/max-lines.test.js
+  // 的基线清单），一次 require + 一次 register 就是两行；且两者语义同属「复盘/诊断面」，
+  // 报告也已经进了同一个诊断包。将来若要独立成模块，把这三段一起搬走即可。
+  ipcMain.handle('diag:reports', async (_e, limit) => {
+    try {
+      return { ok: true, reports: require('./runReport').listRunReports(Number(limit) || 5) };
+    } catch (err) {
+      // C-001：这里把异常折成 ok:false —— UI 会显式显示「读不到」而不是空列表，
+      // 不会让人误以为「没跑过任何任务」。
       return { ok: false, error: String(err?.message || err) };
     }
   });

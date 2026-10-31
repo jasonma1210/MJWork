@@ -95,6 +95,33 @@ export const doneDataSchema = z.object({
   mainPersisted: z.boolean().optional(),
   // V08（2026-10-16）：持久 ACK 分层——durable=已刷盘 / pending=落库但未刷盘 / failed=未落库
   persistState: z.enum(['durable', 'pending', 'failed']).optional(),
+  // M2（2026-10-30）：终态真值（引擎 → UI 的「为什么停 / 跑到哪」）。
+  // 三个字段全部 optional：引擎的兜底收尾路径（引擎子进程异常退出等）拿不到这些数，
+  // 声明成必填会把「没有真值」逼成「填 0 假装有」——那正是本轮要消灭的谎报。
+  // stopReason 取值见 agent-core/exhaustedNotice.js 的 STOP_REASONS（空串 = 正常完成）。
+  stopReason: z.string().optional(),
+  rounds: z.number().optional(),
+  toolCalls: z.number().optional(),
+  // 断点是否真落盘：UI 据此决定要不要给「结束本轮」（没有断点就没有可丢弃的东西）。
+  checkpointSaved: z.boolean().optional(),
+  // M4（2026-10-30）：独立 Judge 的账单（与主循环用量分开记——混在一起就查不出审查花了多少）。
+  judgeTokens: z.number().optional(),
+  judgeCalls: z.number().optional(),
+  // M5（2026-10-30）：AC 满足率。acTotal=0 表示「没有验收基线 / 未判定」，UI 一律不渲染
+  //（设计文档 §6.2：单任务的进度口径是 AC 满足率，不是「跑了几轮」）。
+  acTotal: z.number().optional(),
+  acSatisfied: z.number().optional(),
+  // M6（2026-10-30）：双模式路由的判定结果（single/plan/unsure/error；空串 = 未判）。
+  // 只在「自动判定为 plan」时界面才会说明「为什么先给计划」——所以这个值必须能到渲染层，
+  // 漏登记就会被静默 strip，用户只能自己猜。
+  routeMode: z.string().optional(),
+  // 2026-10-31：Judge 结论（缺几项 / 有无事实性错误）——UI 要说清「还差什么」，而不是只给一个 x/y。
+  judgeMissing: z.number().optional(),
+  judgeError: z.boolean().optional(),
+  // 2026-10-31：额度余量（上限 + 已用 + 轮次上限）——用户此前只在撞顶那一刻才知道有闸。
+  totalCap: z.number().optional(),
+  totalSpent: z.number().optional(),
+  roundCap: z.number().optional(),
 });
 
 // P2-8 / V-L1（N7）：V 层（评估接口）判定事件
@@ -172,12 +199,27 @@ export const agentRunPayloadSchema = z
     approvalMode: z.enum(['on-request', 'auto-safe', 'always', 'never']).optional(),
     sandboxPolicy: z.enum(['read-only', 'workspace-write', 'full-access']).optional(),
     planMode: z.boolean().optional(),
+    // M6（2026-10-30）§2：是否开启「自动判定 single / plan」（宿主显式开启）。
+    // 缺省 false ⇒ 引擎行为与引入路由前逐字节一致；渲染层未开启时永远走原来的单任务路径。
+    autoRoute: z.boolean().optional().catch(false),
     tokenBudget: z.number().int().min(0).optional(),
     // 2026-10-30：单任务累计 token 总上限（预算窗口耗尽改为续期后，这是唯一的真实终点）。
     // 显式登记而不靠 passthrough：拼错字段名会让防失控线静默失效（默认 20M），
     // 而这是「跑飞任务烧穿额度」的最后一道闸，不能靠字段名不写错来保证。
     totalTokenCap: z.number().int().min(0).optional(),
     resumeContext: z.string().optional(),
+    // M3（2026-10-30）：验收标准（AC）。
+    //   acceptance         —— 是否在任务开始前做一次独立的 AC 提取调用（宿主显式开启）；
+    //   acceptanceCriteria —— 断点读回的既有 AC（给了就不重新提取）。
+    // 两个都是**可选档位/可选载荷**，非法值一律回落「无 AC」，绝不升级成整轮拒绝
+    //（与 verification 同纪律：写错一个可选字段不该让用户发不出消息）。
+    acceptance: z.boolean().optional().catch(false),
+    acceptanceCriteria: z
+      .object({ must: z.array(z.string()).optional(), must_not: z.array(z.string()).optional() })
+      .passthrough()
+      .nullable()
+      .optional()
+      .catch(null),
     mcpTools: z.array(z.any()).optional(),
     enabledSkills: z.array(z.string()).optional(),
     skills: z.array(z.any()).optional(),

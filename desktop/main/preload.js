@@ -321,6 +321,8 @@ contextBridge.exposeInMainWorld('mjcode', {
   diagReport: (payload) => ipcRenderer.send('diag:report', payload),
   // T2-6：诊断包一键导出（zip 落 userData/diagnostics/，返回路径）
   diagExport: () => ipcRenderer.invoke('diag:export'),
+  // M7（§6.4）：最近 N 次运行的事后报告摘要（设置 → 运行报告）
+  diagReports: (limit = 5) => ipcRenderer.invoke('diag:reports', limit),
   // A5：confirmReview 用于「该任务留有未确认副作用」时的显式确认（重试前置核对）
   tasksRetryTask: (groupId, taskId, confirmReview = false) => ipcRenderer.invoke('tasks:retryTask', { groupId, taskId, confirmReview }),
   tasksDeleteGroup: (groupId) => ipcRenderer.invoke('tasks:deleteGroup', { groupId }),

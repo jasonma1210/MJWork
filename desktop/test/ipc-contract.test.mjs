@@ -27,6 +27,43 @@ const valid = (type, data) => ({ runId: R, type, data });
   check('suspended 事件合法（kind=wallclock，整任务墙钟）',
     validateAgentEvent(valid('suspended', { saved: true, kind: 'wallclock', summary: 's', roundsUsed: 3, rescues: 1, windowSpent: 9, budget: 10 })).ok);
   check('done 事件合法（含 usage/mainPersisted）', validateAgentEvent(valid('done', { finalText: '完成', usage: { prompt_tokens: 1, completion_tokens: 1 }, aborted: false, mainPersisted: true })).ok);
+  // M2（2026-10-30）：done 事件的终态真值字段必须**在契约里登记**。
+  // 为什么这条不是空过：zod 的 object 默认是 strip（未知键被静默丢掉、校验仍 ok），
+  // 所以「没登记」的表现不是报错，而是渲染层拿到的 stopReason 恒为 undefined ——
+  // UI 于是退回「靠文案猜状态」。因此断言必须读**通过校验后的 data**，不能只看 .ok。
+  {
+    const v = validateAgentEvent(valid('done', {
+      finalText: '完成', usage: { prompt_tokens: 1, completion_tokens: 1 }, aborted: false,
+      mainPersisted: true, stopReason: 'total-cap', rounds: 9, toolCalls: 9, checkpointSaved: true,
+    }));
+    check('M2 done 事件合法（含终态真值 stopReason/rounds/toolCalls/checkpointSaved）', v.ok, v.error || '');
+    check('M2 终态真值**通过 IPC 后仍在**（未被 zod strip 掉——漏登记即此条红）',
+      v.ok && v.data?.data?.stopReason === 'total-cap' && v.data?.data?.rounds === 9
+      && v.data?.data?.toolCalls === 9 && v.data?.data?.checkpointSaved === true,
+      JSON.stringify(v.ok ? v.data?.data : v.error));
+    // M5（2026-10-30）：AC 满足率同样跨「引擎 → 主进程 → IPC → 渲染层」四层。
+    // 分层断言（引擎赋值 / 桥接透传 / UI 渲染）全绿也不能证明它到得了渲染层：
+    // 只要契约漏登记，zod 会静默 strip，UI 侧 acTotal 恒为 0 ⇒ 进度块永不显示，
+    // 且现象与「Judge 没判」完全一致，排查时极难分辨。故此处必须读解析后的 data。
+    const v5 = validateAgentEvent(valid('done', {
+      finalText: '完成', usage: { prompt_tokens: 1, completion_tokens: 1 }, aborted: false,
+      mainPersisted: true, stopReason: 'total-cap', acTotal: 4, acSatisfied: 3, judgeTokens: 800, judgeCalls: 2,
+    }));
+    check('M5 AC 满足率 + Judge 记账**通过 IPC 后仍在**（漏登记即此条红）',
+      v5.ok && v5.data?.data?.acTotal === 4 && v5.data?.data?.acSatisfied === 3
+      && v5.data?.data?.judgeTokens === 800 && v5.data?.data?.judgeCalls === 2,
+      JSON.stringify(v5.ok ? v5.data?.data : v5.error));
+    // 2026-10-31：Judge 结论 + 额度余量同样跨四层。分层断言盖不住「契约漏登记」——
+    // zod 静默 strip 之后 UI 拿到的永远是 0/false，而现象与「没判过 / 没设闸」一模一样。
+    const v6 = validateAgentEvent(valid('done', {
+      finalText: '完成', usage: { prompt_tokens: 1, completion_tokens: 1 }, aborted: false,
+      judgeMissing: 2, judgeError: true, totalCap: 20000000, totalSpent: 184145, roundCap: 120,
+    }));
+    check('Judge 结论 + 额度余量**通过 IPC 后仍在**（漏登记即此条红）',
+      v6.ok && v6.data?.data?.judgeMissing === 2 && v6.data?.data?.judgeError === true
+      && v6.data?.data?.totalCap === 20000000 && v6.data?.data?.totalSpent === 184145 && v6.data?.data?.roundCap === 120,
+      JSON.stringify(v6.ok ? v6.data?.data : v6.error));
+  }
   check('error 事件合法（字符串载荷）', validateAgentEvent(valid('error', '炸了')).ok);
   // T1-3：subagent 事件（spawn_subagent / orchestrate_task 生命周期）
   check('subagent spawn 事件合法', validateAgentEvent(valid('subagent', { tool: 'spawn_subagent', phase: 'spawn', objective: '找入口', taskType: 'explore', tokens: 0, round: 0 })).ok);

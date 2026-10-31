@@ -1112,7 +1112,10 @@ agentRunner.initAgentRunner({
     // O-1：引擎通道补 MCP 进度桥（实现外置在 scheduledTools.engineMcpHandlers，此处仅接线；无窗口自动降级）
     ...scheduledToolHandlers(), ...engineMcpHandlers(sender, callMcpTool),
     // runId 作为 streamTag：Agent 运行的流式输出带标签，渲染层按活跃会话过滤（切会话/后台运行不串显）
-    chat: (chatPayload) => chatStreamOnce(chatPayload, sender, signal, runId),
+    // M6（2026-10-30）：带外小调用（AC 提取 / Judge / 路由分类）在 payload 上带 `quiet:true`，
+    // 这里给它换一个渲染层不认识的 tag —— 否则它的输出会经 model:delta 串进对话窗口
+    //（用户会在任务中途看到一段 JSON 或摘要正文）。渲染层对未知 tag 一律丢弃。
+    chat: (chatPayload) => chatStreamOnce(chatPayload, sender, signal, chatPayload?.quiet ? `${runId}-quiet` : runId),
     orchestrateTask: (args) => toolOrchestrateTask(args, { signal, emitSubagent, conversationId: conversationId || '', projectPath: projectPath || '' }),
     // 对话内网络插件搜索/安装（LobeChat 式）：搜索只读；安装恒走 L3 审批卡
     searchPlugins: (args) => searchPluginsTool(args),

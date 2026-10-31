@@ -124,6 +124,24 @@ function runAgentViaMain(options) {
               {
                 mainPersisted: !!evt.data.mainPersisted,
                 persistState: evt.data.persistState,
+                // M2（2026-10-30）：终态真值透传（stopReason / rounds / toolCalls /
+                // checkpointSaved）。此前 UI 靠 finalText 里的中文子串反推状态，
+                // 引擎改一个字就判错；现在让引擎自己说。
+                stopReason: String(evt.data.stopReason || ''),
+                rounds: Number(evt.data.rounds) || 0,
+                toolCalls: Number(evt.data.toolCalls) || 0,
+                checkpointSaved: evt.data.checkpointSaved === true,
+                // M5：AC 满足率（acTotal=0 ⇒ 无基线/未判定，UI 侧不渲染进度）
+                acTotal: Number(evt.data.acTotal) || 0,
+                acSatisfied: Number(evt.data.acSatisfied) || 0,
+                // M6：路由判定结果（空串=未判）。UI 只在 'plan' 时提示「自动判定为复杂目标」。
+                routeMode: String(evt.data.routeMode || ''),
+                // 2026-10-31：Judge 结论 + 额度余量（收尾条据此说「还差什么 / 还剩多少」）
+                judgeMissing: Number(evt.data.judgeMissing) || 0,
+                judgeError: evt.data.judgeError === true,
+                totalCap: Number(evt.data.totalCap) || 0,
+                totalSpent: Number(evt.data.totalSpent) || 0,
+                roundCap: Number(evt.data.roundCap) || 0,
               },
             )).catch((cbErr) => {
               console.error('[agent] done callback failed:', cbErr);

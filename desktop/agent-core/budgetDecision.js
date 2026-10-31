@@ -46,13 +46,19 @@ export const DEFAULT_CONTEXT_WINDOW_FALLBACK = 4096;
 //   · 预算压力 + 上下文够大（≥ 窗口 35%，压缩确实能省下可观重发成本）→ 压缩；
 //   · 预算压力 + 上下文很小 → **只开新预算窗口、不压缩**（小上下文压缩纯亏）；
 //   · 救援用尽 + 预算窗口耗尽 → **续期**（'renew'），不是停任务；
-//   · 救援用尽 + 窗口用尽 + 上下文压不动 → 挂起（'suspend-context'，断点续跑）；
-//   · 累计消耗撞到 TASK_TOTAL_TOKEN_CAP → 挂起（'suspend-tokens'，真终点）。
+//   · 救援用尽 + 上下文仍超窗口 → **交回主循环**（'reclaim-context'）：先试硬截断，
+//     再试「带台账换新窗口续跑」，两次都不行才挂起——本函数**不宣布结束**；
+//   · 累计消耗撞到 TASK_TOTAL_TOKEN_CAP → 挂起（'suspend-tokens'，唯一真终点）。
 //
 // 2026-10-30 关键语义变更：'suspend-tokens' 原本代表「窗口级预算耗尽」，用户必须手发
 // 「继续」才能接着跑。实测长途任务（审查/批量重构）必然多次撞窗口级预算，因为每轮都要
 // 重发上下文——把它当任务终点等于把任务废在半路。现在窗口级预算只是**成本节流阀**：
 // 耗尽就 'renew' 续期，任务终点只留给总上限。
+//
+// 2026-10-30 第二次修正（用户实测原文「累计 184145 tokens 已达防失控总上限」）：
+//   旧返回值 'suspend-context' 让主循环直接 break，**跳过**了压缩/硬截断/换窗口三阶梯，
+//   于是「本可自愈的上下文压力」被当成了任务终点，还被文案说成总上限。现改为
+//   'reclaim-context'：判定层只表达「该升到哪一档救援」，停不停由主循环的阶梯决定。
 export function budgetDecision({
   // ⚠️ 窗口校准**只能在这里的上游做一次**（runAgent 已用 effectiveWindowOf 反推并按 4× 封顶）。
   // 本函数内绝不能再对 ctxWindow 二次反推：已抬高的窗口配同一个 lastPromptTokens 会再算一遍，
@@ -60,20 +66,67 @@ export function budgetDecision({
   // 压力闸从此永久失敏，最终以 400 硬失败代替挂起。
   // lastPromptTokens 仍接收但**不参与判定**，仅为兼容既有调用方与测试签名。
   ctxEst = 0, ctxWindow = DEFAULT_CONTEXT_WINDOW_FALLBACK, lastPromptTokens = null,
-  spent = 0, budget = 0, rescues = 0, rescueMax = 3, totalSpent = 0, totalCap = 0,
+  spent = 0, budget = 0, contextRescues = 0, rescueMax = 3, windowRenews = 0, totalSpent = 0, totalCap = 0,
+  // 旧签名兼容：`rescues` 此前同时被「压缩救援」与「预算续期」消耗，是本文件 2026-10-30 修掉的
+  // 记账缺陷（续期吃掉上下文额度 ⇒ 之后一轮上下文过 70% 立刻硬停）。新调用方请用 contextRescues。
+  rescues,
 } = {}) {
   void lastPromptTokens; // 见上：保留参数只为签名兼容，禁止用于二次反推
+  void windowRenews;     // 只做成本记账：续期次数**不得**反过来限制上下文救援（反之亦然）
+  const ctxUsed = (rescues === undefined || rescues === null)
+    ? Number(contextRescues) || 0
+    : Number(rescues) || 0;
   const win = ctxWindow;
   const ctxHot = win > 0 && ctxEst > win * TOKEN_COMPACTION_TRIGGER;
-  if (ctxHot) return rescues < rescueMax ? 'compact' : 'suspend-context';
+  // 上下文到窗口：救援额度还有就压缩；用尽则交回主循环走「硬截断 → 换新窗口」的阶梯，
+  // **不再由本函数宣布结束**（'reclaim-context' = 便宜招用完了，请用贵的招）。
+  if (ctxHot) return ctxUsed < rescueMax ? 'compact' : 'reclaim-context';
   if (budget > 0 && spent > budget * TOKEN_COMPACTION_TRIGGER) {
-    if (rescues >= rescueMax) {
-      if (spent <= budget) return 'ok';
-      // 窗口级预算耗尽：只有撞到总上限才真停，否则续期。
-      return totalCap > 0 && totalSpent >= totalCap ? 'suspend-tokens' : 'renew';
-    }
+    // 真终点只有累计总上限：它优先于任何续期判断，避免被续期绕开。
+    if (totalCap > 0 && totalSpent >= totalCap) return 'suspend-tokens';
+    // 上下文救援额度已用尽：预算还没越线就不动它；越线则续期（成本节流，不是终点）。
+    if (ctxUsed >= rescueMax) return spent <= budget ? 'ok' : 'renew';
     // 上下文够大才值得压缩（压缩省下的是「每轮重发量」）
     return ctxEst >= win * TOKEN_COMPACT_MIN_RATIO ? 'compact' : 'new-window';
   }
   return 'ok';
+}
+
+// ── 墙钟 / 轮次：到期自动续期，而不是停下来等用户「继续」（2026-10-31）──
+//
+// 为什么改（用户实测反馈）：任务跑到一半「突然停掉、说要手动继续」，最常见的原因不是
+// 撞到 20M，而是**30 分钟墙钟**——它是按「总时长」计的，只要任务本来就要跑 40 分钟，
+// 就必然被它砍断一次。而墙钟的本意只是「别无限跑下去」，不是「到点就交给用户」。
+//
+// 于是把两者都改成「到期 → 自动续期继续跑，超过续期次数才挂起」：
+//   · 墙钟：每续一次把起点前移，任务总时长上限实际变成 (1+N) × runWallClockMs；
+//   · 轮次：每续一次把 roundCap 抬高一个 cap，实际变成 (1+N) × roundCap。
+// 这样「跑得久」不再需要人工介入，而「跑飞」仍有硬兜底（续期有上限）。
+//
+// 注意：这不是取消熔断。次数用尽后仍走原来的「暂停而非失败」路径（落断点 + 收尾引导继续）。
+export const MAX_WALLCLOCK_RENEWS = 2;
+export const MAX_ROUND_RENEWS = 2;
+
+/**
+ * 墙钟闸判定（纯函数，便于单测逐分支钉住）。
+ * @param {object} p
+ * @param {number} p.runWallClockMs 单段墙钟上限（0/负数 = 不设闸）
+ * @param {number} p.elapsedMs 本段已用时长
+ * @param {number} p.renews 已续期次数
+ * @param {number} [p.maxRenews] 续期上限
+ * @returns {'none'|'renew'|'suspend'}
+ */
+export function wallClockDecision({ runWallClockMs = 0, elapsedMs = 0, renews = 0, maxRenews = MAX_WALLCLOCK_RENEWS } = {}) {
+  if (!(runWallClockMs > 0) || elapsedMs <= runWallClockMs) return 'none';
+  return renews < maxRenews ? 'renew' : 'suspend';
+}
+
+/**
+ * 轮次闸判定：到 cap 时先续（抬高 cap），续满才停。
+ * @returns {{ action: 'none'|'renew'|'suspend', nextCap?: number }}
+ */
+export function roundCapDecision({ roundsUsed = 0, roundCap = 0, renews = 0, maxRenews = MAX_ROUND_RENEWS } = {}) {
+  if (!(roundCap > 0) || roundsUsed < roundCap) return { action: 'none' };
+  if (renews < maxRenews) return { action: 'renew', nextCap: roundCap + roundCap };
+  return { action: 'suspend' };
 }

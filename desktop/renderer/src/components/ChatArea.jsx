@@ -697,8 +697,31 @@ export default function ChatArea({
   // 收尾条按钮 → 派发事件过来（RunFooter 不需要知道会话与基线的细节）
   useEffect(() => {
     const onRevert = () => { revertThisRun(); };
+    // 2026-10-30（设计文档 §6.1）：暂停后由收尾条给「继续 / 结束本轮」两个动作。
+    // 继续：走 sendOrDispatch（唯一发送漏斗）发一条「继续」（取当前语言文案，不写死中文）——断点由既有链路自动读取并消费，
+    //       用户不需要手打这四个字，也不会有第二条恢复实现。
+    const onContinue = () => { sendOrDispatchRef.current?.(t('message.resumeRun')); };
+    // 结束本轮：显式丢弃断点。断点判定是「有断点就恢复」，不丢弃的话，用户改主意直接问新问题
+    // 时旧断点会被注入成上下文——这是真实污染路径，所以必须留一个明的丢弃入口。
+    const onDiscard = async () => {
+      try {
+        // 键口径与 useAgentRun 读断点时一致：会话 id，缺省回落 'local'
+        await window.mjcode?.checkpointClear?.(String(thread?.id || 'local'));
+        toast({ message: t('message.checkpointDiscarded') });
+      } catch (err) {
+        // C-001：丢弃失败要让用户知道（否则他以为断点没了，下一轮却被恢复）
+        console.warn('[chat] checkpoint discard failed:', err);
+        toast({ message: t('message.checkpointDiscardFailed') });
+      }
+    };
     window.addEventListener('mjcode:revert-run', onRevert);
-    return () => window.removeEventListener('mjcode:revert-run', onRevert);
+    window.addEventListener('mjcode:continue-run', onContinue);
+    window.addEventListener('mjcode:discard-checkpoint', onDiscard);
+    return () => {
+      window.removeEventListener('mjcode:revert-run', onRevert);
+      window.removeEventListener('mjcode:continue-run', onContinue);
+      window.removeEventListener('mjcode:discard-checkpoint', onDiscard);
+    };
   });
 
   // 欢迎页

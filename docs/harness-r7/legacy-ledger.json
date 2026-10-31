@@ -6,10 +6,10 @@
     "deadBridgeMethods": {
       "source": "desktop/main/preload.js − desktop/renderer/src（口径同 test/bridge-parity.test.mjs）",
       "unit": "method",
-      "total": 272,
-      "referenced": 220,
-      "dead": 52,
-      "ratio": 0.1912,
+      "total": 273,
+      "referenced": 222,
+      "dead": 51,
+      "ratio": 0.1868,
       "groups": [
         {
           "prefix": "market",
@@ -67,11 +67,6 @@
           "disposition": "pending"
         },
         {
-          "prefix": "diag",
-          "count": 1,
-          "disposition": "pending"
-        },
-        {
           "prefix": "ecosystem",
           "count": 1,
           "disposition": "pending"
@@ -117,7 +112,7 @@
       "source": "desktop/renderer/src（排除 components/ui/ 与 styles/，口径同 test/ui-conventions.test.js）",
       "unit": "button",
       "total": 151,
-      "scannedFiles": 170,
+      "scannedFiles": 172,
       "groups": [
         {
           "file": "components/Onboarding.jsx",

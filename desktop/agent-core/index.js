@@ -18,7 +18,13 @@ import { selectToolsForWindow, buildToolCatalogText, toolsOfGroups, groupInfo } 
 // 预算/上下文闸的阈值与判定（纯函数）。2026-10-30 从本文件外置：判据搬家既能改行为
 // （预算窗口耗尽改为续期 'renew'），又不必给自己开 code 行棘轮基线。外部既有调用方
 // 仍然可以从本文件拿到这些符号——下面原样 re-export。
-import { budgetDecision, TOKEN_COMPACTION_TRIGGER, TOKEN_COMPACT_MIN_RATIO, TASK_TOTAL_TOKEN_CAP, DEFAULT_CONTEXT_WINDOW_FALLBACK } from './budgetDecision.js';
+import { budgetDecision, TOKEN_COMPACTION_TRIGGER, TOKEN_COMPACT_MIN_RATIO, TASK_TOTAL_TOKEN_CAP, DEFAULT_CONTEXT_WINDOW_FALLBACK, wallClockDecision, roundCapDecision, MAX_WALLCLOCK_RENEWS, MAX_ROUND_RENEWS } from './budgetDecision.js';
+import { buildExhaustedNotice, buildHandoff, makeSuspendNotifier, buildStoppedEarlyHint } from './exhaustedNotice.js';
+import { noteToolOutcome } from './loopGuard.js';
+import { segmentDecision, segmentHandoffStep, spentOf } from './segmentHandoff.js';
+import { buildCheckPlan, checkAgainstLedger } from './hardCheck.js';
+import { resolveAcceptance } from './acceptance.js';
+import { runJudges, buildReflection, JUDGE_EVERY_DEFAULT, MAX_REFLECTIONS } from './judge.js';
 export { budgetDecision, TOKEN_COMPACTION_TRIGGER, TOKEN_COMPACT_MIN_RATIO, TASK_TOTAL_TOKEN_CAP, DEFAULT_CONTEXT_WINDOW_FALLBACK };
 
 // ── node:fs 惰性获取（仅 sessionDir 落盘时需要）──
@@ -805,6 +811,10 @@ const SUBAGENT_DEFAULT_BUDGET = 50000;
 // T1（2026-10-17）：30s 对推理模型必然超时（mimo 摘要 24k 字符的输入要先想很久），
 // 结果就是「压缩失败 → 回落硬截断 → 细节丢失 → 下一轮更慢」的恶性循环。给到 180s。
 const COMPACT_RESCUE_TIMEOUT_MS = 180000;
+// M3：AC 提取调用的看门狗上限。比压缩救援短得多——它输入只有一个短目标、
+// 输出只要一个 JSON，超过 20s 基本可以断定通道有问题；且它挡在**任务最前面**，
+// 卡住就等于「消息发不出去」，不能给它压缩救援那种长耐心。
+const AC_EXTRACT_TIMEOUT_MS = 20000;
 
 // P2-4：激进裁剪门槛（0.85 → 0.80）与中段轻提示阈值（0.70，与压缩触发同源）
 export const AGGRESSIVE_RATIO = 0.80;
@@ -1037,25 +1047,6 @@ export const READONLY_PARALLEL = new Set([
 // 此前的失败模式：子代理被轮次/预算熔断后，finalText 里带着「发送『继续』让我接着执行」
 // ——那是对用户说的，对子代理毫无意义（用户无法继续一个不存在的会话），
 // 父代理拿到后往往原样重试同一目标，再耗尽一次，白烧两倍 token。
-function stoppedEarlyHint(budgetKind, tokenExhausted, objective) {
-  const target = String(objective || '').slice(0, 80);
-  if (tokenExhausted || budgetKind === 'tokens') {
-    return `子代理因 token 预算耗尽而停止（目标：${target}）。不要用同一目标重试：`
-      + '请把目标拆成更小、更具体的一步（例如只查某个文件/某个符号），或改由你自己直接用只读工具完成。';
-  }
-  if (budgetKind === 'rounds') {
-    return `子代理因执行轮次用尽而停止（目标：${target}）。通常是目标太大或工具反复失败：`
-      + '请缩小目标范围（指明具体文件/目录），或先自己 read_file 确认路径再派发。';
-  }
-  if (budgetKind === 'repeat') {
-    return `子代理因工具连续失败而停止（目标：${target}）。请先自己验证相关路径/命令是否可用，再决定是否重新派发。`;
-  }
-  if (budgetKind === 'aborted') {
-    return `子代理被中止（目标：${target}）。请检查是否因上层停止信号所致，再决定是否重新派发。`;
-  }
-  return `子代理提前停止（目标：${target}）。请先自行验证目标是否可达，再决定下一步。`;
-}
-
 // token 预算闸的自动压缩救援次数上限（每次救援清零窗口重新计数）
 // 真机复盘：单次救援对文件密集型审查任务不够（逐文件读源码单窗口仍打满），
 // 放宽到 3 次（累计消耗上限 ≈ 4 × tokenBudget），仍保留失控烧 token 的硬防线。
@@ -1123,64 +1114,12 @@ export function effectiveWindowOf(declared, lastPromptTokens) {
   return Math.min(Math.max(base, inferred), base * 4);
 }
 
-// 熔断/预算耗尽的收尾文案（纯函数，可单测）。
-//
-// 为什么单独抽出来：这段文案是用户唯一的诊断入口，而它此前把**三种完全不同的原因**
-// 用同一句话概括：
-//   · 累计花费超预算（真的没额度了）
-//   · 上下文已到窗口且压不动（历史里全是必留内容，压缩与硬截断都无处下手）
-//   · 整任务墙钟超时
-// 用户实测：窗口 32768、累计 50097 tokens，却看到「token 预算已用尽（累计 50097）」——
-// 会以为预算是 50k（实际 200k）。真实原因是第二种。
-// 另外定时任务是无人值守的，不能对用户说「发送继续」（没有人能发）。
-export function buildExhaustedNotice({
-  finalText = '', budgetKind = 'rounds', wallClockHit = false, runWallClockMs = 0,
-  tokenRescues = 0, usage = {}, contextStuck = false, unattended = false, autoRestarts = 0,
-} = {}) {
-  const total = Number(usage.prompt_tokens || 0) + Number(usage.completion_tokens || 0);
-  const head = finalText || '任务尚未完成。';
-  if (wallClockHit) {
-    return `${head}\n\n（整任务已运行超过 ${Math.round(runWallClockMs / 60000)} 分钟，触发总时长预算上限而停止；`
-      + '这是防失控上限，需要更长可调大任务时长预算。）'.trim();
-  }
-  if (budgetKind === 'tokens' && contextStuck) {
-    const why = autoRestarts > 0
-      ? `已自动换新窗口续跑 ${autoRestarts} 次仍不够`
-      : '且历史里没有可裁的早期内容——压缩与硬截断都无处下手';
-    // 2026-10-21 真机事故修复：「任务未完全完成」是宿主（workerPool）判定未完成收尾的
-    // 唯一文本标记，本分支此前漏写，导致上下文压不动的任务被**误标为 done**（看板显示完成、
-    // 实际没有任何产出）。三种收尾分支都必须带这个标记，措辞不再由各分支各自决定。
-    const tail = unattended
-      ? `（上下文已到模型窗口（累计 ${total} tokens），${why}，任务未完全完成。继续跑只会空转。`
-        + '请把任务拆小：分批抓取（例如每批 10 条、抓完立刻写进文件），或给这个任务换一个窗口更大的模型。）'
-      : `（上下文已到模型窗口（累计 ${total} tokens），${why}，任务未完全完成。`
-        + '建议拆分任务，或换一个窗口更大的模型；也可以先「继续」让我基于现状收尾。）';
-    return `${head}\n\n${tail}`.trim();
-  }
-  if (budgetKind === 'tokens') {
-    // 2026-10-30：窗口级预算耗尽已改为「续期」（budgetDecision 的 'renew'），这条文案现在只对应
-    // **累计消耗撞到总上限**（TASK_TOTAL_TOKEN_CAP）这一种真实终点，不再说「预算 600k 用完了」。
-    const tail = unattended ? '下次运行请缩小任务范围，或把这个任务拆成几个小任务。' : '发送「继续」我会带着已有成果接着做。';
-    return `${head}\n\n（单任务累计消耗已达防失控总上限（累计 ${total} tokens，期间已自动续期 ${tokenRescues} 次；这是防止跑飞任务烧穿额度的最后一道线，不是上下文放不下），任务未完全完成。${tail}）`.trim();
-  }
-  return `${head}\n\n（单任务执行轮次预算已用尽，任务未完全完成。`
-    + `${unattended ? '下次运行请缩小任务范围或调高轮次上限。' : '发送「继续」让我接着执行。'}）`.trim();
-}
-
-// 自动续跑的交接文本（纯函数）。上下文已经压满，**不能再调模型来写摘要**——
-// 所以交接内容只能来自台账（工具名 + 命令/路径）与轮数，零模型调用。
-export function buildHandoff({ ledger = [], roundsUsed = 0, restartNo = 1, maxRestarts = 2 } = {}) {
-  const lines = (Array.isArray(ledger) ? ledger : []).slice(-20).map((e) => {
-    const name = String(e?.name || '?');
-    const raw = String(e?.command || (Array.isArray(e?.paths) ? e.paths.slice(0, 3).join(', ') : '') || '');
-    const detail = raw.slice(0, 120);
-    return `- ${name}${detail ? `：${detail}` : ''}${e?.ok === false ? '（失败）' : ''}`;
-  });
-  return `【续跑交接】上一段因上下文达到模型窗口而中断（第 ${restartNo}/${maxRestarts} 次自动换新窗口）。\n`
-    + `已执行 ${roundsUsed} 轮，最近的工具动作为：\n${lines.join('\n') || '- （无）'}\n\n`
-    + '请从断点继续，**不要重做已完成的步骤**。若剩余工作量大，请自动分批处理：'
-    + '每批不超过 10 条，每批结果立即写入文件，写完不要再引用该批原文。';
-}
+// 收尾文案与交接文本已外置到 ./exhaustedNotice.js（2026-10-30 第二次外置）：
+//   ① 行数棘轮（test/max-lines.test.js 的 BASELINE_800）不允许在本文件继续加分支；
+//   ② 这次要修的是「上下文到窗口被说成累计总上限」——把「用哪句话」与「谁决定停」彻底分开，
+//      文案分支改由显式 stopReason 决定（旧调用方传 contextStuck 仍可派生，行为不倒退）。
+// 原样 re-export：调用方 `import { buildExhaustedNotice } from '../agent-core/index.js'` 零改动。
+export { buildExhaustedNotice, buildHandoff };
 
 // 需要透传审批档位的工具（主进程审批中心据此判定是否询问）
 const APPROVAL_TOOLS = new Set(['shell', 'write_file', 'edit_file', 'apply_patch', 'git_commit', 'git_add', 'install_plugin', 'pr_review', 'pr_comment',
@@ -1517,7 +1456,7 @@ export async function compactHistory(convo, model, chatFn, opts = {}) {
   try {
     // P1-11：压缩救援调用加看门狗——此前无超时，provider 挂起时整轮运行被拖死
     // （压缩是恢复路径，自身不能成为新的挂起点）。超时走下方 catch 回落截断。
-    const r = await withTimeout(chatFn({
+    const r = await withTimeout(chatFn({ quiet: true,
       providerId: chatModel.provider.id,
       isGlobal: !!chatModel.provider.isGlobal,
       baseUrl: chatModel.provider.base_url,
@@ -2053,7 +1992,7 @@ export async function runDeepResearch({
     baseUrl: ref.provider.base_url,
     messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
     model: ref.model.model_id,
-    reasoningEffort: ref.model.reasoning_effort || '',
+    reasoningEffort: ref.model.reasoning_effort || '', quiet: true,
   });
   const aborted = () => !!signal?.aborted;
 
@@ -2410,13 +2349,13 @@ export const AGENT_HARD_ROUND_CAP = 120;
 // 重复失败熔断阈值：同一「工具名 + 参数」签名连续失败 2 次旁路警示、4 次强制收尾。
 // 4 次的依据：一次失败可能是模型笔误，两次是巧合，三次以上几乎可以判定为
 // 「模型不知道怎么纠正，只会原样重试」——此时再跑就是纯烧 token 与用户等待时间。
-export const REPEAT_FAIL_WARN = 2;
-export const REPEAT_FAIL_STOP = 4;
+// 阈值单一事实源已移到 loopGuard.js（计分逻辑所在处）；此处仅再导出，保留既有引用面。
+export { REPEAT_FAIL_WARN, REPEAT_FAIL_STOP } from './loopGuard.js';
 // 2026-10-21 真机事故补线：模型换参数重试同一工具时，签名熔断永远不触发
 // （用户实测 t2 用 shell 换命令重试 20 轮、烧 257k tokens）。这里再加一道
 // 「同一工具连续失败（不看参数）」的快速熔断：6 次足以判定空转，又不会误伤
 // 「探索时读了几个不存在的路径」这类正常失败。
-export const TOOL_FAIL_STOP = 6;
+export { TOOL_FAIL_STOP } from './loopGuard.js';
 
 // Phase 3-2：文件读取缓存门槛——内容小于该值的文件重复读取直接放行（小文件不值得缓存）
 export const FILE_CACHE_MIN_CHARS = 4000;
@@ -2527,6 +2466,13 @@ export async function runAgent({
   // 无人值守通道（定时任务/Worker）：收尾文案里不能出现「发送继续」——那边没有人能发。
   unattended = false,
   resumeContext = '',
+  // M3（2026-10-30）：验收标准（AC）。
+  //   acceptance          —— 是否在任务开始前做一次独立的 AC 提取调用（默认关：既有调用方
+  //                          的轮次/用量断言全部按「无额外调用」写死，默认开会大面积打破基线；
+  //                          由宿主显式开启并承担成本）。
+  //   acceptanceCriteria  —— 外部给定的 AC（断点复用）。**给了就不提取**：
+  //                          「继续」时必须沿用同一条基线，否则每续一段换一套标准 = 没有标准。
+  acceptance = false, acceptanceCriteria = null,
   // 2026-10-21 P0：上下文策略（DS Bot 式可配置）。宿主按团队/任务下发；缺省用 DEFAULT_COMPACT_POLICY。
   compactPolicy = null,
   // T0-4 看门狗：单轮模型调用（含重试链）与每个工具执行的 wall-clock 上限；
@@ -3092,6 +3038,8 @@ export async function runAgent({
       onBudget?.({
         round: roundsUsed, windowSpent: tokenWindowSpent, budget: tokenBudget,
         rescues: tokenRescues, rescueMax: TOKEN_RESCUE_MAX,
+        // 2026-10-30 拆账：续期次数单列（宿主/仪表盘据此区分「花了钱」与「上下文装不下」）
+        windowRenews,
         promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens,
         // 最近一轮真实 prompt 体积（= 当前上下文占用）。与 promptTokens（累计计费）语义不同：
         // 圆环分子只能用它，用累计值会把「上下文 27%」显示成「168%」。
@@ -3108,6 +3056,11 @@ export async function runAgent({
         running: false, budgetKind: budgetExhausted ? budgetKind : 'normal',
         // P1-1：墙钟闸命中（budgetKind 仍复用 'rounds'，故另给一个显式布尔供 UI 区分文案）
         wallclock: wallClockHit,
+        // M2（2026-10-30）：停止原因与进度读数进终态快照。
+        // 此前收尾条只能拿 finalText 去匹配中文子串反推「是不是暂停」（文本嗅探）——
+        // 引擎改一个字 UI 就判错，且「跑了多久/做了几个动作」根本无从显示。
+        // 现在由引擎直接给真值：stopReason 是唯一口径，rounds/toolCalls 是进度读数。
+        ...terminalTruth(),
       });
     } catch { /* 仪表盘上报绝不影响主流程 */ }
   };
@@ -3229,10 +3182,10 @@ export async function runAgent({
   // 2) token 预算（tokenBudget > 0 时启用）：超限先自动压缩续跑一次，仍超限才收尾；
   // 3) finish_reason=length（输出被截断）：从断点续跑最多 3 次。
   // 续期/截断指令一律拼到当轮 system 消息尾部（renewNotice），不写入 convo——避免污染会话历史。
-  const roundCap = Math.max(1, Math.min(Number(maxTotalRounds) || AGENT_HARD_ROUND_CAP, AGENT_HARD_ROUND_CAP));
+  let roundCap = Math.max(1, Math.min(Number(maxTotalRounds) || AGENT_HARD_ROUND_CAP, AGENT_HARD_ROUND_CAP)); // let：续期时抬高（用户显式设过 maxTotalRounds 则不抬高，见 rcGate 的 maxRenews）
   let roundsUsed = 0;
   let budget = maxRounds;
-  let budgetExtensions = 0;
+  let budgetExtensions = 0; let wallClockRenews = 0; let roundCapRenews = 0; let wallClockAnchorAt = runStartAt; let segmentNo = 0; let segmentBaseSpent = 0; let lastTodos = []; // 段交接状态：段号 / 本段起点已用 / 最近一次 todo_write 清单
   let lengthContinues = 0;
   let budgetExhausted = false;
   let budgetKind = 'rounds'; // 'rounds' | 'tokens' | 'repeat' —— 收尾文案区分触发闸门
@@ -3241,22 +3194,30 @@ export async function runAgent({
   let contextStuck = false;
   // 自动换新窗口续跑次数（用户实测：「获取 100 条新闻」在 32k 窗口上 3 轮就压不动）
   let autoRestarts = 0;
-  let tokenRescues = 0; // token 超限后已执行的自动压缩救援次数（上限 TOKEN_RESCUE_MAX）
+  let tokenRescues = 0; // 上下文救援次数：只由「压缩」消耗（上限 TOKEN_RESCUE_MAX），续期不碰它
+  // 预算窗口续期次数（2026-10-30 拆账）：只做成本记账，**不设上限、也不抵扣上下文救援额度**。
+  // 拆账理由：此前两者共用一个计数器，续期 3 次就把上下文额度吃光 ⇒ 之后一轮上下文过 70% 立刻硬停。
+  let windowRenews = 0;
+  // 停止原因真值（2026-10-30）：文案分支只认它，不再靠 contextStuck 布尔推断——
+  // 布尔推断曾把「上下文到窗口」说成「累计撞总上限」（用户实测 184145 那次）。
+  let stopReason = '';
   let tokenWindowSpent = 0; // token 预算口径：当前窗口累计消耗（压缩救援后清零）
   let contextRescued = false; // 上下文超限（provider 400）压缩救援已尝试过
   let renewNotice = '';
   let suspendNoticed = false; // Phase 3-1：断点是否已通过 onSuspend 成功保存
-  // A-05：onSuspend 的执行**可能异步**（子进程路径要经 RPC 回执才拿得到主进程落盘结果）。
-  // 此前四处调用写成 `!!onSuspend?.(...)`：Promise 恒为真值 ⇒ 断点写失败也会说「已保存」。
-  // 统一改为 await 真实返回值；in-process 路径 await 一个布尔值没有副作用。
-  async function noticeSuspend(info) {
-    try {
-      return !!(await onSuspend?.(info));
-    } catch (e) {
-      console.warn('[agent] 断点保存钩子异常:', e.message);
-      return false;
-    }
-  }
+  // 2026-10-30：外置到 exhaustedNotice.js（行数棘轮只减不增）；实现与注释随该函数一起搬走。
+  // 名字保持 `noticeSuspend`：四处调用点不变，`await noticeSuspend({...})` 的契约也不变。
+  const noticeSuspend = makeSuspendNotifier(onSuspend);
+  // M2（2026-10-30）：终态真值的**唯一取值点**——emitBudgetFinal 与两个 onDone 出口共用它。
+  // 三处各写一份必然漂移（改一个忘两个），而漂移的表现正是「UI 判错状态」这类无声事故。
+  // 2026-10-31：补 Judge 结论（缺几项 / 有无事实性错误）与额度余量（cap + 已用），让 UI 能如实说「还差什么、还剩多少」。
+  const terminalTruth = () => ({ stopReason, rounds: roundsUsed, toolCalls: toolLedger.length, checkpointSaved: suspendNoticed, judgeTokens, judgeCalls, acTotal, acSatisfied, judgeMissing, judgeError, totalCap: totalTokenCap, totalSpent: Number(usage.prompt_tokens) + Number(usage.completion_tokens), roundCap });
+  // M3：断点载荷的**唯一装配点**。四处挂起（墙钟/超时/上下文/总上限）此前各抄一遍同样的
+  // 六个字段，加字段要改四处——漏一处就是「这条路存下来的断点和别的不一样」。
+  // AC 随断点落盘：「继续」时由宿主读回并回传，保证续跑沿用同一条验收基线。
+  const suspendInfo = (kind) => ({ kind, summary: finalText, usage: { ...usage }, roundsUsed, rescues: tokenRescues, windowSpent: tokenWindowSpent, budget: tokenBudget, acceptance: acResult.ac || null });
+  // 四处「挂起并落断点」共用同一段守卫：断点保存失败只告警，绝不让收尾路径自己抛出去（与 C-001 同纪律）。
+  const saveSuspend = async (kind) => { try { suspendNoticed = await noticeSuspend(suspendInfo(kind)); } catch (e) { console.warn('[agent] 断点保存钩子异常:', e.message); } };
   // P1-1：整任务墙钟闸（wall-clock）——命中后走「暂停 + 收尾文案」，不新增 budgetKind 取值
   //（新增取值会外溢到 workerPool 收尾文案与 main.js 的 humanize），只在这里另记一个布尔用于文案。
   let wallClockHit = false;
@@ -3299,7 +3260,7 @@ export async function runAgent({
   // （如「未找到要替换的内容」），模型无从判断原因，只能原样再试一次，
   // 直到 120 轮硬顶耗尽——用户侧表现就是「改完了还卡着转好几分钟」。
   // 因此按「工具名 + 参数」签名统计连续失败：先旁路警示，达到硬阈值即熔断收尾并如实说明。
-  const failStreak = new Map();
+  const failStreak = new Map(); const successStreak = new Map(); const recentSigs = [];
   // 同一工具「连续失败」计数（不看参数）：换命令/换路径重试也会累计，成功后清零。
   const toolFailStreak = new Map();
   let repeatFailTool = '';
@@ -3311,39 +3272,80 @@ export async function runAgent({
   // 是 token 滚动增大的主因）；带 offset/limit 的分段读取与 Stat 失败一律直读不缓存。
   const readFileCache = new Map();
 
+  // ── M3（2026-10-30）：验收标准（AC）──
+  // 设计文档 §5.1：AC 由**独立于执行 Agent** 的一次小调用抽取，输入只有用户目标，
+  // 结果不进会话历史（避免「模型自己给自己划重点」随对话漂移）。
+  // 装配与提取调用都在 agent-core/acceptance.js（守行数棘轮），这里只负责接线与记账。
+  const acGoal = contentToPlainText((messages.find((m) => m?.role === 'user') || {}).content);
+  const acResult = await resolveAcceptance({
+    enabled: acceptance, criteria: acceptanceCriteria, chatFn, model, withTimeout,
+    timeoutMs: AC_EXTRACT_TIMEOUT_MS,
+    goal: acGoal,
+  });
+  // AC 提取的用量照实累加：它也是本次 run 花的钱，不记账等于成本失真。
+  for (const k of ['prompt_tokens', 'completion_tokens']) usage[k] += Number(acResult.usage?.[k]) || 0;
+  // 只记规模不记正文：trace 会随诊断包导出，AC 正文属任务内容，不该进诊断包。
+  trace({ type: 'acceptance', source: acResult.source, must: acResult.ac?.must?.length || 0, must_not: acResult.ac?.must_not?.length || 0 });
+  // M4：独立 Judge 的账单独记（不与主循环用量混在一起——否则「审查花了多少」永远查不出来）。
+  // M5：AC 满足率（acSatisfied / acTotal）。只在 **Judge 真判过** 时才赋值——
+  // 未判定就显示「4/4」等于替模型背书，那正是本轮要消灭的自欺。
+  let judgeTokens = 0, judgeCalls = 0, reflections = 0, acTotal = 0, acSatisfied = 0, judgeMissing = 0, judgeError = false; // judgeMissing/judgeError：最近一次判定的结论
+  // 判定逻辑全在 agent-core/judge.js（输入刻意不含思考过程），这里只接线、记账、留痕。
+  const judgeNow = async (kinds) => {
+    const r = await runJudges({ chatFn, model, withTimeout, goal: acGoal, acceptance: acResult.ac, ledger: toolLedger, output: finalText, kinds });
+    const hc = checkAgainstLedger({ plan: buildCheckPlan(acResult.ac), ledger: toolLedger }); judgeTokens += r.tokens; judgeCalls += r.calls;
+    // 硬校验优先：① 硬失败并入缺失项（Judge 判满足也翻不了台账事实）；② 判定失败≠没有缺口——硬证据仍要显示，否则 acTotal=0 让 UI 整块不渲染。
+    if (hc.failed.length) { r.missing_items = [...new Set([...r.missing_items, ...hc.failed])]; if (!r.judged) { acTotal = hc.failed.length; acSatisfied = 0; judgeMissing = hc.failed.length; } }
+    if (r.judged) { acTotal = (acResult.ac?.must?.length || 0) + (acResult.ac?.must_not?.length || 0); acSatisfied = Math.max(0, acTotal - r.missing_items.length); judgeMissing = r.missing_items.length; judgeError = !!r.has_error; }
+    trace({ type: 'judge', kinds: kinds.join('+'), judged: r.judged, complete: r.complete, missing: r.missing_items.length, has_error: r.has_error });
+    return r;
+  };
+
   while (true) {
     if (budgetExhausted) break; // 熔断可能在上一轮的工具循环内触发
     if (signal?.aborted) { aborted = true; break; }
     // P1-1：整任务墙钟预算——**必须先于子预算判定**（否则每个子调用都不超时但总和无限）。
     // 与轮次/token 闸并列的第四道；命中走「暂停而非失败」：断点落盘 + 收尾引导「继续」。
     // budgetKind 不新增取值（会外溢到 workerPool 收尾文案与 main.js humanize），只另记 wallClockHit。
-    if (runWallClockMs > 0 && Date.now() - runStartAt > runWallClockMs) {
-      budgetExhausted = true; budgetKind = 'rounds'; wallClockHit = true;
-      console.warn(`[agent] 整任务总时长已达上限（${Math.round(runWallClockMs / 60000)} 分钟），保存断点后收尾`);
-      try {
-        suspendNoticed = await noticeSuspend({
-          kind: 'wallclock', summary: finalText, usage: { ...usage },
-          roundsUsed, rescues: tokenRescues, windowSpent: tokenWindowSpent, budget: tokenBudget,
-        });
-      } catch (e) {
-        console.warn('[agent] 断点保存钩子异常:', e.message);
-      }
+    // 2026-10-31：到点**先自动续期**（续期次数有上限），续满才挂起。
+    // 动机：墙钟按「总时长」计，本来就要跑 40 分钟的任务必然被 30 分钟砍断一次，
+    // 然后要用户手打「继续」——那是闸门语义错位，不是任务跑飞。
+    const wcGate = wallClockDecision({ runWallClockMs, elapsedMs: Date.now() - wallClockAnchorAt, renews: wallClockRenews });
+    if (wcGate === 'renew') {
+      wallClockRenews += 1; wallClockAnchorAt = Date.now();
+      renewNotice = `系统提示：任务总时长已自动续期（第 ${wallClockRenews}/${MAX_WALLCLOCK_RENEWS} 次）。请继续完成未完成的部分，避免重复已完成的步骤。`; trace({ type: 'wall_clock_renew', n: wallClockRenews, roundsUsed });
+    } else if (wcGate === 'suspend') {
+      budgetExhausted = true; budgetKind = 'rounds'; wallClockHit = true; stopReason = 'wallclock';
+      await saveSuspend('wallclock');
       // 这里**不发** emitRunEnd：只置状态后 break，由循环外统一出口发那唯一一条
       //（此前在这里先发一条 wallclock:true、break 后统一出口再发一条 → 2 条 run_end，
       //  下游按「最后一条」判断会把超时读成正常结束。2026-10-18 tester 报，已修）
       break;
     }
-    if (roundsUsed >= roundCap) { budgetExhausted = true; budgetKind = 'rounds'; break; }
+    // 2026-10-31：轮次到顶同样先续期（把 cap 抬高一档），续满才停——长任务不该因轮数被打断。
+    // 用户显式设过 maxTotalRounds 时不给续期额度：显式上限属于用户决定，不该被自动抬高。
+    const rcGate = roundCapDecision({ roundsUsed, roundCap, renews: roundCapRenews, maxRenews: Number(maxTotalRounds) ? 0 : MAX_ROUND_RENEWS });
+    if (rcGate.action === 'renew') {
+      roundCapRenews += 1; roundCap = rcGate.nextCap;
+      renewNotice = `系统提示：执行轮次上限已自动抬高（第 ${roundCapRenews}/${MAX_ROUND_RENEWS} 次，新上限 ${roundCap} 轮）。请继续完成未完成的任务。`; trace({ type: 'rounds_renew', n: roundCapRenews, roundCap });
+    } else if (rcGate.action === 'suspend') {
+      budgetExhausted = true; budgetKind = 'rounds'; stopReason = 'rounds';
+      break;
+    }
     if (budget <= 0) {
       if (budgetExtensions < 2) {
         budgetExtensions += 1;
         budget = maxRounds;
         renewNotice = '系统提示：执行轮次预算已续期。请继续完成未完成的任务，避免重复已完成的步骤；全部完成并验证后输出最终总结。';
       } else {
-        budgetExhausted = true; budgetKind = 'rounds';
+        budgetExhausted = true; budgetKind = 'rounds'; stopReason = 'rounds';
         break;
       }
     }
+    // M4：周期性完成度判定（每 N 轮一次，仅在**有 AC** 时——没有基线就无从判定）。
+    // 判「还差什么」并把缺失项写成反思指令旁路注入下一轮（不进会话历史）；
+    // 这里**不改变是否继续**（收尾前的那次才决定是否回溯），避免 Judge 误判就把任务拖死。
+    if (acResult.ac && roundsUsed > 0 && roundsUsed % JUDGE_EVERY_DEFAULT === 0) { const jr = await judgeNow(['completion']); if (jr.missing_items.length) renewNotice = buildReflection(jr.missing_items); }
     budget -= 1;
     roundsUsed += 1;
     onStream?.('');
@@ -3432,14 +3434,7 @@ export async function runAgent({
       // 用户只能重放整个历史。断点走与 token 预算熔断同一 onSuspend 通道（kind=timeout），
       // 「继续」即可接续；budgetKind 不新增取值（会外溢到 workerPool 与收尾文案）。
       if (!signal?.aborted && (err?.name === 'AbortError' || /超时|timeout|TIMEOUT/.test(msg))) {
-        try {
-          suspendNoticed = await noticeSuspend({
-            kind: 'timeout', summary: finalText, usage: { ...usage },
-            roundsUsed, rescues: tokenRescues, windowSpent: tokenWindowSpent, budget: tokenBudget,
-          });
-        } catch (e) {
-          console.warn('[agent] 断点保存钩子异常:', e.message);
-        }
+        await saveSuspend('timeout');
         if (suspendNoticed) {
           console.error(`[agent] 模型调用超时，已保存断点（第 ${roundsUsed} 轮后）`);
           emitRunEnd({ error: msg.slice(0, 300) });
@@ -3488,6 +3483,8 @@ export async function runAgent({
       onBudget?.({
         round: roundsUsed, windowSpent: tokenWindowSpent, budget: tokenBudget,
         rescues: tokenRescues, rescueMax: TOKEN_RESCUE_MAX,
+        // 2026-10-30 拆账：续期次数单列（宿主/仪表盘据此区分「花了钱」与「上下文装不下」）
+        windowRenews,
         promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens,
         // 逐轮真值：宿主据此让上下文圆环在运行中也能显示真实占用（轮询即最新，无需实时通道）
         lastPromptTokens, lastCompletionTokens: usage.lastCompletionTokens ?? null,
@@ -3514,32 +3511,48 @@ export async function runAgent({
       trace({ type: 'window_inferred', declared: declaredWindow, inferred: ctxWindow, lastPromptTokens });
     }
     const ctxEst = Number(lastPromptTokens) || estimateMessagesTokens(convo);
+    // 2026-10-31：撞总上限之前先「交付阶段成果 + 自动续段」——用户要求别硬断开（详见 segmentHandoff.js）。
+    // 位置必须在 budgetDecision **之前**：否则「一轮从 90% 跨过 100%」会被总上限闸先抓走，
+    // 交接永远轮不到（实测：r12 跨到 60/60，闸先停，第 3 次交接没发生）。
+    if (segmentDecision({ totalCap: totalTokenCap, segmentSpent: spentOf(usage) - segmentBaseSpent, segmentsUsed: segmentNo }) === 'handoff') {
+      ({ segmentNo, base: segmentBaseSpent, notice: renewNotice } = await segmentHandoffStep({ segmentNo, usageSpent: spentOf(usage), baseSpent: segmentBaseSpent, totalCap: totalTokenCap, rounds: roundsUsed, toolCalls: toolLedger.length, todos: lastTodos, ac: acResult.ac, missing: judgeMissing, ledger: toolLedger, persistMessage, convo, trace }));
+    }
     let gate = budgetDecision({
       ctxEst, ctxWindow, spent: tokenWindowSpent, budget: tokenBudget,
-      rescues: tokenRescues, rescueMax: TOKEN_RESCUE_MAX,
-      totalSpent: Number(usage.prompt_tokens) + Number(usage.completion_tokens), totalCap: totalTokenCap,
+      contextRescues: tokenRescues, windowRenews, rescueMax: TOKEN_RESCUE_MAX,
+      totalSpent: spentOf(usage) - segmentBaseSpent, totalCap: totalTokenCap, // 2026-10-31：总上限按**段**计（段满先交接续段，见 segmentHandoff.js）；任务级累计另记 trace
     });
     // 抬高后的窗口下 0.7 阈值恰好等于 lastPromptTokens（取整可能差不到 1 token），
     // 这里显式补一次「已确认低估 → 立刻压」的判定；只做一次，避免每轮都压。
     if (gate === 'ok' && windowInferred && windowRescued && !windowCompactDone) gate = 'compact';
-    if (gate === 'compact') {
-      windowCompactDone = true;
-      tokenRescues += 1;
-      console.warn(`[agent] 上下文达模型窗口 ${Math.round((ctxEst / ctxWindow) * 100)}%（${ctxEst}/${ctxWindow} tokens），开始压缩（第 ${tokenRescues}/${TOKEN_RESCUE_MAX} 次）`);
+    if (gate === 'compact' || gate === 'reclaim-context') {
+      // 'reclaim-context'（2026-10-30 第二次修）：上下文救援额度用尽 **≠ 任务终点**。
+      // 同一套阶梯继续救（硬截断 → 带台账换新窗口 ×MAX_AUTO_RESTARTS），都不行才挂起。
+      // 此前它走 suspend 分支直接 break，跳过全部自愈动作，还被文案说成「累计总上限」。
+      const canCompact = gate === 'compact';
+      if (canCompact) {
+        windowCompactDone = true;
+        tokenRescues += 1;
+        console.warn(`[agent] 上下文达模型窗口 ${Math.round((ctxEst / ctxWindow) * 100)}%（${ctxEst}/${ctxWindow} tokens），开始压缩（第 ${tokenRescues}/${TOKEN_RESCUE_MAX} 次）`);
+      } else {
+        console.warn(`[agent] 上下文救援额度已用尽（已压缩 ${tokenRescues} 次）→ 跳过压缩，直接试硬截断 / 换新窗口`);
+      }
       const beforeConvo = convo;
-      // P1-3：重写预算用尽后不再调 LLM 摘要（每次摘要都会让整个前缀缓存失效），直接走下面的硬截断降级
-      commitConvo(rewriteLedger.count >= MAX_REWRITES_PER_RUN
-        ? convo
-        : await compactHistory(convo, model, chatFn, {
-          knownTokens: lastPromptTokens, force: true, window: ctxWindow, chatModel: compactModel, ledger: rewriteLedger,
-          policy: compactPolicy,
-          onCompacted: emitCompactedMemory,
-        }));
-      if (convo !== beforeConvo) {
-        // 压缩真的改写了历史：口径失效，下一轮按新体积重估；窗口从零算
-        lastPromptTokens = null;
-        commitBudget({ windowSpent: 0 });
-        continue;
+      if (canCompact) {
+        // P1-3：重写预算用尽后不再调 LLM 摘要（每次摘要都会让整个前缀缓存失效），直接走下面的硬截断降级
+        commitConvo(rewriteLedger.count >= MAX_REWRITES_PER_RUN
+          ? convo
+          : await compactHistory(convo, model, chatFn, {
+            knownTokens: lastPromptTokens, force: true, window: ctxWindow, chatModel: compactModel, ledger: rewriteLedger,
+            policy: compactPolicy,
+            onCompacted: emitCompactedMemory,
+          }));
+        if (convo !== beforeConvo) {
+          // 压缩真的改写了历史：口径失效，下一轮按新体积重估；窗口从零算
+          lastPromptTokens = null;
+          commitBudget({ windowSpent: 0 });
+          continue;
+        }
       }
       // T2（2026-10-17）：压不动时**绝不能**清零窗口继续跑。
       // 旧实现不看压缩是否发生，照样 `tokenWindowSpent = 0` → 每 5 轮空转一次、
@@ -3576,16 +3589,9 @@ export async function runAgent({
         continue;
       }
       // 降级三：续跑额度也用尽——挂起并如实说明，绝不继续空转烧预算。
-      commitBudget({ exhausted: true }); contextStuck = true;
-      console.warn('[agent] 压缩与硬截断均无收益（历史已无早期内容可裁），挂起而非继续空转');
-      try {
-        suspendNoticed = await noticeSuspend({
-          kind: 'tokens', summary: finalText, usage: { ...usage },
-          roundsUsed, rescues: tokenRescues, windowSpent: tokenWindowSpent, budget: tokenBudget,
-        });
-      } catch (e) {
-        console.warn('[agent] 断点保存钩子异常:', e.message);
-      }
+      commitBudget({ exhausted: true }); contextStuck = true; stopReason = 'context';
+      console.warn('[agent] 压缩/硬截断/换新窗口三档都用尽（历史已无早期内容可裁），挂起而非继续空转');
+      await saveSuspend('tokens');
       break;
     }
     if (gate === 'new-window' || gate === 'renew') {
@@ -3594,27 +3600,20 @@ export async function runAgent({
       // 'renew'（2026-10-30）：预算窗口救援用尽后**继续续期**，与 new-window 语义相同
       // （重置窗口计数、不动上下文），差别只在日志措辞——它代表「已续过 rescueMax 次，这是又一期」。
       // 不 continue：本轮结果照常消费，避免白白丢掉一次模型响应。
-      tokenRescues += 1;
+      // 2026-10-30 修 R3：续期**只增 windowRenews**，不再消耗上下文救援额度 tokenRescues——
+      // 否则续 3 次之后任何一轮上下文过 70% 都会立刻硬停（用户看到 184145 那次就是这么来的）。
+      windowRenews += 1;
       const tot = Number(usage.prompt_tokens) + Number(usage.completion_tokens);
-      if (gate === 'renew') trace({ type: 'budget_renew', n: tokenRescues, roundsUsed, totalSpent: tot });
-      console.warn(gate === 'renew'
-        ? `[agent] 预算窗口用尽（${tokenWindowSpent}/${tokenBudget}，已续 ${tokenRescues - 1} 次）→ 继续续期；累计 ${tot} tokens，总上限 ${totalTokenCap}`
-        : `[agent] 预算窗口用至 ${Math.round((tokenWindowSpent / tokenBudget) * 100)}%（${tokenWindowSpent}/${tokenBudget}），但上下文仅 ${ctxEst} tokens（< 窗口 ${ctxWindow} 的 ${TOKEN_COMPACT_MIN_RATIO * 100}%）——只开新窗口、不压缩（第 ${tokenRescues}/${TOKEN_RESCUE_MAX} 次）`);
+      if (gate === 'renew') trace({ type: 'budget_renew', n: windowRenews, roundsUsed, totalSpent: tot });
+      console.warn(`[agent] 预算窗口续期（第 ${windowRenews} 次，gate=${gate}）：本段 ${tokenWindowSpent}/${tokenBudget}，累计 ${tot}，总上限 ${totalTokenCap}，上下文 ${ctxEst}`);
       tokenWindowSpent = 0;
-    } else if (gate === 'suspend-context' || gate === 'suspend-tokens') {
-      // 两个来源：① 上下文已到窗口且压不动（continue 必然被端点拒）；
-      // ② 2026-10-30 起，'suspend-tokens' 只剩「累计消耗撞到 TASK_TOTAL_TOKEN_CAP」一种情况
-      // （窗口级预算耗尽已改为 'renew' 续期，不再停任务）。
-      // 两者都走「暂停而非失败」——挂起钩子落断点，收尾文案引导「继续」走断点恢复。
+    } else if (gate === 'suspend-tokens') {
+      // 唯一来源（2026-10-30 起）：累计消耗撞到 TASK_TOTAL_TOKEN_CAP。
+      // 上下文压力不再走这里——它由 'reclaim-context' 交给上面的三阶梯自愈。
+      // 走「暂停而非失败」：挂起钩子落断点，收尾文案引导「继续」走断点恢复。
+      stopReason = 'total-cap';
       commitBudget({ exhausted: true });
-      try {
-        suspendNoticed = await noticeSuspend({
-          kind: 'tokens', summary: finalText, usage: { ...usage },
-          roundsUsed, rescues: tokenRescues, windowSpent: tokenWindowSpent, budget: tokenBudget,
-        });
-      } catch (e) {
-        console.warn('[agent] 断点保存钩子异常:', e.message);
-      }
+      await saveSuspend('tokens');
       break;
     }
 
@@ -3639,11 +3638,21 @@ export async function runAgent({
       if (!trimmedFinal) {
         finalText = '（模型连续多轮未返回任何文本内容，任务未完全完成。请发送「继续」让我重新总结，或换个说法重试。）';
       }
+      // M4：收尾前再判一次（完成度 + 正确性）。判出缺失且回溯额度未用尽 → 注入反思指令**再跑一轮**
+      //（设计文档 §5.4 的反思回溯）；额度用尽则不再纠结，但把「还差什么」如实写进产出——
+      // 绝不因为「模型说做完了」就把未完成的部分抹掉。
+      // 仅在**有 AC** 时才判：没有验收基线就无从判「完成」，跑了也只是白花一次调用
+      //（实测教训：不加这个门，每个无 AC 的 run 都会多出 2 次模型调用）。
+      const jr = acResult.ac ? await judgeNow(['completion', 'correctness']) : null;
+      if (jr?.missing_items.length && reflections < MAX_REFLECTIONS) { reflections += 1; renewNotice = buildReflection(jr.missing_items); continue; }
+      if (jr?.missing_items.length) finalText += `\n\n（独立审查判定以下验收项尚未确认完成：${jr.missing_items.join('、')}）`;
+      if (jr?.has_error && jr.error_detail) finalText += `\n\n（独立审查发现产出与事实可能有出入：${jr.error_detail}）`;
       // 纯文本收尾视为本轮对话完成。「只说不做」由系统提示第 8 条（持续执行纪律）约束，
       // 不做无条件续跑：否则闲聊/正常总结每条都会多一轮请求，延迟与 token 翻倍。
       console.warn(`[agent] 运行结束（正常收尾）：轮数=${roundsUsed}，累计 ${usage.prompt_tokens + usage.completion_tokens} tokens（窗口 ${tokenWindowSpent}）`);
       emitRunEnd();
-      onDone?.(finalText, usage, aborted);
+      // 正常收尾也要带终态真值：stopReason 为空串 ⇒ UI 判「已完成」，rounds/toolCalls 照常显示。
+      onDone?.(finalText, usage, aborted, terminalTruth());
       return finalText;
     }
 
@@ -3856,7 +3865,7 @@ export async function runAgent({
               rounds_used: subFinal.round,
               result: subResult || '（子代理未产出结论）',
               ...(stoppedEarly ? {
-                hint: stoppedEarlyHint(stopKind, stopKind === 'tokens', args.objective),
+                hint: buildStoppedEarlyHint(stopKind, stopKind === 'tokens', args.objective),
               } : {}),
             };
             // T1-3：终态事件——正常收尾为 done，提前停止（预算/轮次/熔断/中止）或无结论为 failed
@@ -3925,7 +3934,7 @@ export async function runAgent({
             const todos = valid.slice(0, 20);
             const doneCount = todos.filter((t) => t.status === 'completed').length;
             // 回传给渲染层：主进程经 agent:run 的流式通道把清单推给 UI 展示
-            onTodos?.({ todos, doneCount, total: todos.length });
+            lastTodos = todos; onTodos?.({ todos, doneCount, total: todos.length });
             localResult = {
               ok: true,
               total: todos.length,
@@ -4093,35 +4102,10 @@ export async function runAgent({
         pushLedger(tc, toolArgs, toolResult, Date.now() - toolStartAt);
         // 重复失败熔断：只统计「ok === false / 带 error」的结构化失败。
         // shell 那种 exitCode !== 0 不算（grep 没命中也是正常的控制流），避免误伤。
-        const failKey = toolSignature(tc.function.name, toolArgs);
-        if (isToolFailure(toolResult)) {
-          const n = (failStreak.get(failKey) || 0) + 1;
-          failStreak.set(failKey, n);
-          const m = (toolFailStreak.get(tc.function.name) || 0) + 1;
-          toolFailStreak.set(tc.function.name, m);
-          if (n >= REPEAT_FAIL_STOP) {
-            repeatFailTool = tc.function.name;
-            repeatFailCount = n;
-            repeatFailMode = 'signature';
-            budgetExhausted = true;
-            budgetKind = 'repeat';
-          } else if (m >= TOOL_FAIL_STOP) {
-            // 换参数重试同一工具同样算空转：签名不同也拦（t2 事故的 20 轮就是这样来的）。
-            repeatFailTool = tc.function.name;
-            repeatFailCount = m;
-            repeatFailMode = 'tool';
-            budgetExhausted = true;
-            budgetKind = 'repeat';
-          } else if (n >= REPEAT_FAIL_WARN) {
-            // 旁路注入（写 renewNotice 而非 convo）：不污染会话历史，用户重进线程看不到这条系统话
-            renewNotice = `系统提示：工具 ${tc.function.name} 用完全相同的参数已连续失败 ${n} 次。`
-              + '禁止再用同样的参数重试。请先换方式确认真实状态（例如用 read_file 读取文件当前内容），'
-              + '或改用别的工具达成同一目标；如果该目标其实已经达成，直接输出最终总结结束任务。';
-          }
-        } else {
-          failStreak.delete(failKey); // 同签名一旦成功即清零，正常重试不受影响
-          toolFailStreak.delete(tc.function.name); // 该工具一旦成功，「连续失败」重新计数
-        }
+        // 2026-10-31：计分逻辑外置到 agent-core/loopGuard.js（腾行数 + 可单测），行为不变。
+        const rf = noteToolOutcome({ name: tc.function.name, args: toolArgs, result: toolResult, failStreak, toolFailStreak, successStreak, recentSigs, signatureOf: toolSignature, isFailure: isToolFailure });
+        if (rf.verdict === 'stop') { repeatFailTool = rf.tool; repeatFailCount = rf.count; repeatFailMode = rf.mode; budgetExhausted = true; budgetKind = 'repeat'; stopReason = 'repeat'; }
+        else if (rf.notice) renewNotice = rf.notice;
         onToolCall?.({ name: tc.function.name, args: toolArgs, result: toolResult });
         // P1-B：截断带标记；对象结果逐字段裁剪保持 JSON 完整，不在中间下刀
         // Phase 3-3：超长输出先摘要化（PASS 折叠 + 头尾保留 + 原文落盘），再走截断兜底
@@ -4167,8 +4151,10 @@ export async function runAgent({
         + '继续跑只会空转。请根据上述失败原因调整，或换个说法让我重新尝试。）'.trim();
     } else {
       finalText = buildExhaustedNotice({
-        finalText, budgetKind, wallClockHit, runWallClockMs, tokenRescues, usage,
+        finalText, budgetKind, stopReason, wallClockHit, runWallClockMs, tokenRescues, windowRenews, usage,
         contextStuck, unattended, autoRestarts,
+        // 总上限与累计值一起往下传：文案里两个数字都必须出现，用户才能自证「到底是预算还是上下文」。
+        totalCap: totalTokenCap, totalSpent: Number(usage.prompt_tokens) + Number(usage.completion_tokens),
       });
       // Phase 3-1：断点保存成功 → 明示恢复语义（继续 = 断点摘要接续，不重读全部文件）
       if (suspendNoticed && (budgetKind === 'tokens' || wallClockHit) && !unattended) {
@@ -4181,6 +4167,8 @@ export async function runAgent({
   // 此前这里手发一次、循环内正常收尾又不发，导致正常完成的 run 永远停在 running:true。
   // T0-5：运行收尾 trace（熔断/中止等 break 路径；正常收尾已在循环内发过）
   emitRunEnd();
-  onDone?.(finalText, usage, aborted);
+  // M2（2026-10-30）：第 4 参 = 终态真值。渲染层据此判「暂停/未完成」与显示进度，
+  // 不再靠 finalText 里的中文子串嗅探（引擎改一个字 UI 就判错的老问题）。
+  onDone?.(finalText, usage, aborted, terminalTruth());
   return finalText;
 }

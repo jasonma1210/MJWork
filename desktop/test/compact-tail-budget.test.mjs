@@ -122,7 +122,7 @@ await checkAsync('不足两轮时原样返回（调用方据此判定「无收�
 
 check('源码：压缩无收益时不得清零预算窗口（必须校验引用变化）', () => {
   const src = fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8');
-  const start = src.indexOf("if (gate === 'compact')");
+  const start = src.indexOf("if (gate === 'compact' || gate === 'reclaim-context')");
   assert(start > 0, '未找到 compact 分支');
   const block = src.slice(start, start + 2600);
   const guardIdx = block.indexOf('if (convo !== beforeConvo)');
@@ -138,7 +138,7 @@ check('源码：压缩无收益时不得清零预算窗口（必须校验引用�
 // 残留在窗口文本」的回归是盲的（假绿）。这里剥离注释后断言该校验真正作为生效代码存在、且仍在清零之前。
 check('A10 守卫：compact 分支去注释后仍先校验「压缩真的发生」才清零窗口', () => {
   const src = fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8');
-  const start = src.indexOf("if (gate === 'compact')");
+  const start = src.indexOf("if (gate === 'compact' || gate === 'reclaim-context')");
   assert(start > 0, '未找到 compact 分支');
   const block = src.slice(start, start + 2600);
   const blockActive = stripJsComments(block);

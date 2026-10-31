@@ -5,6 +5,7 @@ process.env.MJCODE_TOOL_AVAILABILITY = '0';
 // 覆盖：中间消息持久化 / cwd 注入 / usage 归属 / abort / 上下文压缩 /
 //       AGENTS.md 注入 / 子代理 / 预算 / session.jsonl 落盘 / CLI 冒烟
 import { runAgent, BASE_TOOLS, BUILTIN_SKILL_IDS, looksLargeTask, parsePlanResponse, chatWithRetry, isRetryableChatError, compactHistory, alignCutToRoundBoundary, truncateToolResult, AGENT_HARD_ROUND_CAP, resolveCompactPolicy, DEFAULT_COMPACT_POLICY, trimHistoryForRun } from '../agent-core/index.js';
+import { noteToolOutcome } from '../agent-core/loopGuard.js';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -728,8 +729,12 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
     });
     check('预算压力下不压缩小上下文（无摘要请求）',
       chatCalls.every((c) => (c.messages || []).length > 1), `chat 轮数=${chatCalls.length}`);
-    check('预算窗口重置即触发救援计数（rescues ≥1）',
-      Math.max(...tokenBudgets.map((s) => s.rescues || 0)) >= 1, `rescues=${tokenBudgets.map((s) => s.rescues).join(',')}`);
+    // 2026-10-30 拆账：续期只增 windowRenews，不再消耗上下文救援额度（rescues 恒 0）。
+    // 判据改成「续期真的发生了」——用 windowRenews 而不是 rescues，才锁得住这件事。
+    check('预算窗口用尽即触发续期计数（windowRenews ≥1，且不吃上下文救援额度）',
+      Math.max(...tokenBudgets.map((s) => s.windowRenews || 0)) >= 1
+      && Math.max(...tokenBudgets.map((s) => s.rescues || 0)) === 0,
+      `windowRenews=${tokenBudgets.map((s) => s.windowRenews).join(',')} rescues=${tokenBudgets.map((s) => s.rescues).join(',')}`);
     check('救援后续跑直至正常收尾（不再单次救援即熔断）',
       tokenDone === '（默认回复）' && !String(tokenDone).includes('token 预算已用尽'), String(tokenDone).slice(-50));
 
@@ -752,6 +757,74 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
     check('总轮次硬顶拦截（3 轮后收）',
       chatCalls.length === 3 && String(capDone).includes('轮次预算已用尽'), `chat 轮数=${chatCalls.length}`);
     check('AGENT_HARD_ROUND_CAP 导出且为 120', AGENT_HARD_ROUND_CAP === 120);
+  }
+
+  // ── loopGuard（2026-10-31 外置）：空转计分逐分支钉住 ──
+  // 这段逻辑此前只能经 runAgent 间接覆盖；外置后直接测，避免「改了阈值/改了清零规则」
+  // 只靠跑一个长 run 才发现。
+  {
+    const sig = (name, args) => `${name}:${JSON.stringify(args)}`;
+    const failRes = { error: 'boom' };
+    const okRes = { stdout: 'ok', exitCode: 0 };
+    const mk = () => ({ failStreak: new Map(), toolFailStreak: new Map(), successStreak: new Map(), recentSigs: [] });
+    const call = (st, res, args = { command: 'ls' }) => noteToolOutcome({
+      name: 'shell', args, result: res, ...st, signatureOf: sig, isFailure: (r) => !!(r && r.error),
+    });
+
+    let st = mk();
+    check('loopGuard 首次失败只记数、不给处置', call(st, failRes).verdict === 'ok' && st.failStreak.get(sig('shell', { command: 'ls' })) === 1);
+    check('loopGuard 同签名连续 2 次 → 只警示不熔断', (() => {
+      const r = call(st, failRes);
+      return r.verdict === 'warn' && !!r.notice && st.failStreak.get(sig('shell', { command: 'ls' })) === 2;
+    })());
+    check('loopGuard 同签名连续 4 次 → 停（signature）', (() => {
+      call(st, failRes);
+      const r = call(st, failRes);
+      return r.verdict === 'stop' && r.mode === 'signature' && r.count === 4;
+    })());
+    check('loopGuard 任一成功即清零（正常试错不被累积成空转）', (() => {
+      call(st, okRes);
+      return st.failStreak.size === 0 && st.toolFailStreak.size === 0;
+    })());
+    // 换参数重试同一工具：签名不同 ⇒ 签名熔断永不触发，只能靠「同工具连续失败」兜住
+    st = mk();
+    let last = null;
+    for (let i = 0; i < 6; i += 1) last = call(st, failRes, { command: `ls-${i}` });
+    // ── 成功型空转（2026-10-31）：动作成功但毫无进展，失败计分看不见这一类 ──
+    st = mk();
+    const okRes2 = { stdout: 'ok', exitCode: 0 };
+    call(st, okRes2); call(st, okRes2);
+    check('成功型：同一签名连续成功 2 次还不该警示（正常「读→改→再读」不应被误判）',
+      call(st, okRes2).verdict === 'ok', `n=${st.successStreak.size}`);
+    check('成功型：同一签名连续成功 4 次 → 先警示不熔断', (() => {
+      const r = call(st, okRes2);
+      return r.verdict === 'warn' && !!r.notice && st.successStreak.get(sig('shell', { command: 'ls' })) === 4;
+    })());
+    // 只警示不熔断：成功型证据弱（批处理/轮询里「同一命令成功多次」很常见），
+    // 熔断会误杀真任务——实测多个既有套件在加熔断后立刻红。
+    check('成功型：连续成功 6 次仍然只是警示一次、不熔断也不重复刷屏', (() => {
+      call(st, okRes2);
+      const r = call(st, okRes2);
+      return r.verdict === 'ok' && st.successStreak.get(sig('shell', { command: 'ls' })) === 6;
+    })());
+    check('成功型：交替 A→B→A→B 也算空转（即使每个签名只出现 2 次）', (() => {
+      const st2 = mk();
+      const res = { stdout: 'ok', exitCode: 0 };
+      call(st2, res, { command: 'a' });
+      call(st2, res, { command: 'b' });
+      call(st2, res, { command: 'a' });
+      const r = call(st2, res, { command: 'b' });
+      return r.verdict === 'warn' && !!r.notice;
+    })());
+    check('成功型：签名不同就不算空转（读→改→读 的签名各不相同）', (() => {
+      const st3 = mk();
+      call(st3, okRes2, { command: 'read' });
+      call(st3, okRes2, { command: 'write' });
+      return call(st3, okRes2, { command: 'read' }).verdict === 'ok';
+    })());
+    check('loopGuard 换参数连续失败 6 次 → 停（tool，t2 事故那条线）',
+      last && last.verdict === 'stop' && last.mode === 'tool' && last.count === 6,
+      JSON.stringify(last));
   }
 
   console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

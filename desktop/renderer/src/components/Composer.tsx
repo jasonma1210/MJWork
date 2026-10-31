@@ -69,6 +69,9 @@ export default function Composer({
   const [slashIdx, setSlashIdx] = useState(0);
   const [dragOver, setDragOver] = useState(false);   // 指针悬停在输入框上
   const [winDrag, setWinDrag] = useState(false);     // 文件拖进应用窗口（任意位置）
+  // 计划卡片：正在就地编辑第几条（null = 无），以及该条的编辑草稿
+  const [planEditIdx, setPlanEditIdx] = useState<number | null>(null);
+  const [planDraft, setPlanDraft] = useState({ title: '', prompt: '' });
   const taRef = useRef<HTMLTextAreaElement>(null);
   const expert = extras?.expert || null;
   const voiceActive = voice?.state === 'recording' || voice?.state === 'transcribing';
@@ -189,6 +192,42 @@ export default function Composer({
       if (n === 0) setInput((prev) => `${prev}${prev ? '\n' : ''}${t('composer.pastePathFailed')}`);
     }
   }
+
+  // ── 计划卡片可编辑（设计文档 §3.1(1) / §3.3：用户可修改、删除、调优先级）──
+  // 此前卡片只能「运行此步 / 不拆分 / 关闭」，等于把拆分结果当成既成事实——而拆分本身
+  // 是模型的一次猜测，猜错了用户只能关掉重发。
+  // 取舍：不做「拖拽排序」（引入拖拽库 + 无障碍成本），用上移/下移两个按钮覆盖同一需求；
+  // 「调优先级」在本仓就是执行顺序（分步执行是串行的），所以排序即优先级，不另造 priority 字段。
+  const updatePlanTasks = (tasks: Array<{ title?: string; prompt: string }>) => {
+    if (!plan) return;
+    onPlanChange?.({ ...plan, tasks });
+  };
+  const movePlanTask = (from: number, to: number) => {
+    if (!plan || to < 0 || to >= plan.tasks.length) return;
+    const next = plan.tasks.slice();
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    updatePlanTasks(next);
+    setPlanEditIdx(null); // 顺序变了，行号对不上原编辑目标，直接退出编辑态
+  };
+  const removePlanTask = (idx: number) => {
+    if (!plan || plan.tasks.length <= 1) return; // 删到 0 条就没有「计划」可言了
+    updatePlanTasks(plan.tasks.filter((_, i) => i !== idx));
+    setPlanEditIdx(null);
+  };
+  const startPlanEdit = (idx: number) => {
+    const task = plan?.tasks?.[idx];
+    if (!task) return;
+    setPlanDraft({ title: task.title || '', prompt: task.prompt || '' });
+    setPlanEditIdx(idx);
+  };
+  const commitPlanEdit = () => {
+    if (!plan || planEditIdx === null) return;
+    const prompt = planDraft.prompt.trim();
+    if (!prompt) return; // 空指令不是「可用步骤」：保持编辑态，用户能看见为什么没生效
+    updatePlanTasks(plan.tasks.map((t, i) => (i === planEditIdx ? { title: planDraft.title.trim() || t.title || '', prompt } : t)));
+    setPlanEditIdx(null);
+  };
 
   return (
     <div className="max-w-3xl w-full mx-auto">
@@ -370,25 +409,64 @@ export default function Composer({
           {plan.reason && <p className="text-xs text-text2 mb-2">{plan.reason}</p>}
           <div className="space-y-2">
             {plan.tasks.map((task, i) => (
-              <div key={i} className="flex items-center gap-2 bg-surface border border-border rounded-xl px-3 py-2">
-                <span className="text-xs text-text2 shrink-0 tabular-nums">{i + 1}/{plan.tasks.length}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm truncate">{task.title}</div>
-                  <div className="text-xs text-text2 truncate" title={task.prompt}>{task.prompt}</div>
-                </div>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={() => {
-                    const ps = { title: task.title, index: i, total: plan.tasks.length, tasks: plan.tasks };
-                    onPlanChange?.(null);
-                    onPlanReportChange?.(null);
-                    // onSend 即 ChatArea 的 send(text, forcedThread, opts)：
-                    //   不传 forcedThread 即回落到当前 thread（send 内部 forcedThread || thread）
-                    onSend?.(task.prompt, undefined, { skipDecompose: true, planStep: ps });
-                  }}
-                >{t('composer.runStep')}</Button>
+              <div key={i} className="flex items-start gap-2 bg-surface border border-border rounded-xl px-3 py-2">
+                <span className="text-xs text-text2 shrink-0 tabular-nums mt-1">{i + 1}/{plan.tasks.length}</span>
+                {planEditIdx === i ? (
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <input
+                      value={planDraft.title}
+                      onChange={(e) => setPlanDraft((d) => ({ ...d, title: e.target.value }))}
+                      placeholder={t('composer.planTitlePlaceholder')}
+                      aria-label={t('composer.planTitlePlaceholder')}
+                      className="w-full bg-input border border-border rounded-lg px-2 py-1 text-sm outline-none focus:border-accent"
+                    />
+                    <textarea
+                      value={planDraft.prompt}
+                      onChange={(e) => setPlanDraft((d) => ({ ...d, prompt: e.target.value }))}
+                      placeholder={t('composer.planPromptPlaceholder')}
+                      aria-label={t('composer.planPromptPlaceholder')}
+                      rows={3}
+                      className="w-full bg-input border border-border rounded-lg px-2 py-1 text-xs resize-y outline-none focus:border-accent"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm truncate">{task.title}</div>
+                    <div className="text-xs text-text2 truncate" title={task.prompt}>{task.prompt}</div>
+                  </div>
+                )}
+                {planEditIdx === i ? (
+                  <>
+                    <Button variant="accent-ghost" size="sm" className="shrink-0" onClick={commitPlanEdit}>{t('composer.planSave')}</Button>
+                    <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setPlanEditIdx(null)}>{t('composer.planCancel')}</Button>
+                  </>
+                ) : (
+                  <>
+                    <Button variant="ghost" size="xs" className="shrink-0" aria-label={t('composer.planEdit')} title={t('composer.planEdit')}
+                      onClick={() => startPlanEdit(i)}><IconEdit size={12} /></Button>
+                    <Button variant="ghost" size="xs" className="shrink-0" aria-label={t('composer.planMoveUp')} title={t('composer.planMoveUp')}
+                      disabled={i === 0} onClick={() => movePlanTask(i, i - 1)}><IconArrowUp size={12} /></Button>
+                    <Button variant="ghost" size="xs" className="shrink-0" aria-label={t('composer.planMoveDown')} title={t('composer.planMoveDown')}
+                      disabled={i === plan.tasks.length - 1} onClick={() => movePlanTask(i, i + 1)}>
+                      <IconArrowUp size={12} className="rotate-180" />
+                    </Button>
+                    <Button variant="ghost" size="xs" className="shrink-0" aria-label={t('composer.planRemove')} title={t('composer.planRemove')}
+                      disabled={plan.tasks.length <= 1} onClick={() => removePlanTask(i)}><IconTrash size={12} /></Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => {
+                        const ps = { title: task.title, index: i, total: plan.tasks.length, tasks: plan.tasks };
+                        onPlanChange?.(null);
+                        onPlanReportChange?.(null);
+                        // onSend 即 ChatArea 的 send(text, forcedThread, opts)：
+                        //   不传 forcedThread 即回落到当前 thread（send 内部 forcedThread || thread）
+                        onSend?.(task.prompt, undefined, { skipDecompose: true, planStep: ps });
+                      }}
+                    >{t('composer.runStep')}</Button>
+                  </>
+                )}
               </div>
             ))}
           </div>

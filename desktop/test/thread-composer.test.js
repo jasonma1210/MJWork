@@ -198,4 +198,46 @@ check('侧栏待审批徽标可点击直达审批卡', () => {
   assert.match(card, /setFlash\(true\)/, '直达时应高亮闪现');
 });
 
+// ── 计划卡片可编辑（设计文档 §3.1(1) / §3.3：用户可修改、删除、调优先级）──
+// 事故形状：卡片此前只有「运行此步 / 不拆分直接跑 / 关闭」。拆分是模型的一次猜测，
+// 猜错了用户只能整张卡关掉重发——等于把模型的猜测当成既成事实。
+const composer = read('components/Composer.tsx');
+check('计划卡片四个编辑动作齐备（编辑 / 上移 / 下移 / 删除）', () => {
+  for (const k of ['planEdit', 'planMoveUp', 'planMoveDown', 'planRemove']) {
+    assert.ok(new RegExp(`t\\('composer\\.${k}'\\)`).test(composer), `缺少动作：${k}`);
+  }
+  assert.match(composer, /onClick=\{commitPlanEdit\}/, '保存按钮需提交编辑');
+  assert.match(composer, /setPlanEditIdx\(null\)/, '取消/提交需退出编辑态');
+});
+check('上移/下移/删除都有边界守卫（首行不禁用会越界，删到 0 条计划就空了）', () => {
+  assert.match(composer, /disabled=\{i === 0\}/, '上移需在首行禁用');
+  assert.match(composer, /disabled=\{i === plan\.tasks\.length - 1\}/, '下移需在末行禁用');
+  assert.match(composer, /if \(!plan \|\| plan\.tasks\.length <= 1\) return;/, '删除需保留至少 1 条');
+});
+check('空指令不可提交（否则会发出一条只有标题的空消息）', () => {
+  assert.match(composer, /const prompt = planDraft\.prompt\.trim\(\);/, '需 trim 后再判空');
+  assert.match(composer, /if \(!prompt\) return;/, '空 prompt 必须拦住');
+});
+check('改动即时写回 plan（排序/删除/编辑都走同一处装配）', () => {
+  assert.match(composer, /const updatePlanTasks = \(tasks: Array<\{ title\?: string; prompt: string \}>\) => \{/, '需有统一写回函数');
+  assert.match(composer, /onPlanChange\?\.\(\{ \.\.\.plan, tasks \}\)/, '写回需带上 reason 等既有字段');
+});
+check('计划编辑文案双語齐备（8 个键）', () => {
+  const zh = JSON.parse(fs.readFileSync(path.join(SRC, 'i18n/locales/zh-CN/composer.json'), 'utf8'));
+  const en = JSON.parse(fs.readFileSync(path.join(SRC, 'i18n/locales/en-US/composer.json'), 'utf8'));
+  for (const k of ['planEdit', 'planMoveUp', 'planMoveDown', 'planRemove', 'planSave', 'planCancel', 'planTitlePlaceholder', 'planPromptPlaceholder']) {
+    assert.ok(zh[k], `zh-CN 缺 ${k}`);
+    assert.ok(en[k], `en-US 缺 ${k}`);
+  }
+});
+check('计划卡片不新增裸 button（继续用 Button 原语，守 rawButton 棘轮）', () => {
+  const planBlock = composer.slice(composer.indexOf('{plan && ('), composer.indexOf('{planReport && ('));
+  assert.ok(planBlock.length > 500, '片段截取失败会让本断言空过');
+  // 卡片里**既有**两个裸 <button>：①右上角关闭（IconX）②底部「不拆分直接跑」文字链。
+  // 文字链按 ui-conventions 的口径本来就可豁免（无背景/边框/圆角），关闭按钮是历史遗留。
+  // 这条只禁止**新增**：本次四个图标动作全部用 Button 原语，所以计数必须停在 2。
+  const rawButtons = (planBlock.match(/<button/g) || []).length;
+  assert.ok(rawButtons <= 2, `计划卡片新增了裸 <button>（当前 ${rawButtons} 个，既有 2 个＝关闭 + 不拆分文字链）`);
+});
+
 console.log(`\nPASS：${pass}/${total} 项通过`);

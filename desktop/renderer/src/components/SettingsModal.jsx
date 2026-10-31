@@ -7,6 +7,8 @@ import { confirm, toast } from './feedback';
 import InlineAlert from './InlineAlert';
 import RecordReplayPanel from './RecordReplayPanel';
 import UpdateSection from './UpdateSection';
+// M7（§6.4）：事后任务报告区块（最近 N 次的停止原因 / 验收 / 资源）
+import RunReportsSection from './RunReportsSection';
 import MemorySection from './MemorySection';
 // P1-5：用户自定义生命周期 hooks 设置分区（preToolUse / postToolUse）
 import HooksSection from './HooksSection';
@@ -419,6 +421,8 @@ export default function SettingsModal({
               })}
             </Section>
             <UpdateSection />
+            {/* M7（§6.4）：运行报告——「为什么停 / 验收几成 / 花了多少」的复盘入口 */}
+            <RunReportsSection />
           </>
         )}
 

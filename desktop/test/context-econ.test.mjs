@@ -328,8 +328,16 @@ function buildLongConvo(rounds = 30) {
     budgetDecision({ ctxEst: 60000, ctxWindow: 128000, spent: 143923, budget: 200000, rescues: 0 }) === 'compact');
   check('上下文真的接近窗口上限才压缩',
     budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, rescues: 0 }) === 'compact');
-  check('压缩救援用尽且上下文仍过大 → 暂停（不再无限压缩）',
-    budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, rescues: 3 }) === 'suspend-context');
+  check('压缩救援用尽且上下文仍过大 → 交回主循环走硬截断/换窗口（不再由判据函数宣布结束）',
+    budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, rescues: 3 }) === 'reclaim-context',
+    '旧返回值 suspend-context 会跳过三阶梯直接 break —— 用户实测「184145 tokens 已达总上限」就是这么来的');
+  // 2026-10-30 第二次修（用户实测原文「累计 184145 tokens，期间已自动续期 3 次」）：
+  // 续期次数与上下文救援次数必须分账。共用计数器时，续期 3 次就把上下文额度吃光，
+  // 之后**任何一轮**上下文过 70% 都会立刻硬停——这就是「本可自愈却打断任务」的根因。
+  check('续期 3 次不得消耗上下文救援额度：上下文刚过热仍应压缩，而不是停',
+    budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, contextRescues: 0, windowRenews: 3 }) === 'compact');
+  check('上下文救援额度用尽与续期次数无关：contextRescues=3 才交回阶梯',
+    budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, contextRescues: 3, windowRenews: 0 }) === 'reclaim-context');
   // 2026-10-30 语义变更：窗口级预算耗尽不再挂起（'suspend-tokens'），改为续期（'renew'）。
   // 理由：长途任务必然多次撞窗口级预算（每轮重发上下文），把它当终点等于把任务废在半路；
   // 真正的终点只剩「累计消耗撞到 TASK_TOTAL_TOKEN_CAP」。两条分支都要锁，缺一条就会
