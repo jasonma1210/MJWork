@@ -369,5 +369,25 @@ check('㉚ 空缺失项 → 空指令（不注入一条没有内容的「系统�
     `acTotal=${last?.acTotal} acSatisfied=${last?.acSatisfied} judgeMissing=${last?.judgeMissing}`);
 }
 
+// ── I. 「卡住」观测（2026-10-31，设计文档 §6.1(2)）──
+// 连续两次判定的缺失项**完全相同** ⇒ 反思没让模型补齐，属于「卡住」而非「还需努力」。
+// 当前只留痕（trace），不改判定、不强行停止——先让它可被看见，再谈处置（与「成功型空转只警示」同纪律）。
+{
+  const { traces } = await runOnce({
+    acceptance: true,
+    acReply: '{"must":["跑通 npm test"],"must_not":[]}',
+    acJudge: '{"complete":false,"missing_items":["跑通 npm test"]}',
+    script: Array.from({ length: 6 }, (_, i) => ({
+      content: `第 ${i + 1} 步`,
+      tool_calls: [{ id: `k${i}`, type: 'function', function: { name: 'git_status', arguments: '{}' } }],
+      usage: { prompt_tokens: 20, completion_tokens: 5 },
+    })),
+  });
+  // 周期性判定（每 4 轮）与收尾前判定返回同一缺失项 ⇒ 至少一次 judge_stuck 留痕
+  check('卡住观测：连续两次相同缺失项会在 trace 里留 judge_stuck（可复盘，不改判定）',
+    traces.some((e) => e.type === 'judge_stuck' && e.n === 1),
+    traces.filter((e) => e.type === 'judge_stuck').length + ' 条');
+}
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);

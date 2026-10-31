@@ -3289,11 +3289,11 @@ export async function runAgent({
   // M4：独立 Judge 的账单独记（不与主循环用量混在一起——否则「审查花了多少」永远查不出来）。
   // M5：AC 满足率（acSatisfied / acTotal）。只在 **Judge 真判过** 时才赋值——
   // 未判定就显示「4/4」等于替模型背书，那正是本轮要消灭的自欺。
-  let judgeTokens = 0, judgeCalls = 0, reflections = 0, acTotal = 0, acSatisfied = 0, judgeMissing = 0, judgeError = false; // judgeMissing/judgeError：最近一次判定的结论
+  let judgeTokens = 0, judgeCalls = 0, reflections = 0, acTotal = 0, acSatisfied = 0, judgeMissing = 0, judgeError = false, lastMissingKey = ''; // lastMissingKey：上一次判定的缺失项指纹（用于识别「卡住」）
   // 判定逻辑全在 agent-core/judge.js（输入刻意不含思考过程），这里只接线、记账、留痕。
   const judgeNow = async (kinds) => {
     const r = await runJudges({ chatFn, model, withTimeout, goal: acGoal, acceptance: acResult.ac, ledger: toolLedger, output: finalText, kinds });
-    const hc = checkAgainstLedger({ plan: buildCheckPlan(acResult.ac), ledger: toolLedger }); judgeTokens += r.tokens; judgeCalls += r.calls;
+    const hc = checkAgainstLedger({ plan: buildCheckPlan(acResult.ac), ledger: toolLedger }); judgeTokens += r.tokens; judgeCalls += r.calls; const mk = (r.missing_items || []).join('|'); if (mk && mk === lastMissingKey) trace({ type: 'judge_stuck', rounds: roundsUsed, n: r.missing_items.length }); lastMissingKey = mk; // 卡住观测：连续两次完全相同 ⇒ 反思没让模型补齐（只留痕，不擅自改判）
     // 硬校验优先：① 硬失败并入缺失项（Judge 判满足也翻不了台账事实）；② 判定失败≠没有缺口——硬证据仍要显示，否则 acTotal=0 让 UI 整块不渲染。
     if (hc.failed.length) { r.missing_items = [...new Set([...r.missing_items, ...hc.failed])]; if (!r.judged) { acTotal = hc.failed.length; acSatisfied = 0; judgeMissing = hc.failed.length; } }
     if (r.judged) { acTotal = (acResult.ac?.must?.length || 0) + (acResult.ac?.must_not?.length || 0); acSatisfied = Math.max(0, acTotal - r.missing_items.length); judgeMissing = r.missing_items.length; judgeError = !!r.has_error; }
