@@ -41,7 +41,7 @@ function check(name, fn) {
 const app = read('App.jsx');
 const chat = read('components/ChatArea.jsx');
 const sidebar = read('components/Sidebar.jsx');
-const store = fs.readFileSync(path.join(__dirname, '../main/localStore.js'), 'utf8');
+const store = fs.readFileSync(path.join(__dirname, '../main/store/localStore.js'), 'utf8');
 const api = read('lib/api.js');
 const mainSrc = fs.readFileSync(path.join(__dirname, '../main/main.js'), 'utf8');
 

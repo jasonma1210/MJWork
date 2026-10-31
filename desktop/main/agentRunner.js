@@ -8,6 +8,9 @@
 
 // 依赖经 init 注入（避免与 main.js 循环 require）：loadAgentCore: () => Promise<agentCore> —— ESM 动态 import（main.js 已有）；
 //   createToolHandlers: ({ sender, signal }) => obj  —— 每次运行的工具处理器（含流式 chat）
+// P3-6（2026-10-31）：入口裁剪丢弃的原文需要落盘（引擎零 fs 依赖，由宿主代写）。
+const fs = require('fs');
+const path = require('path');
 const runTrace = require('./runTrace');
 // M7（2026-10-30）§6.4：事后任务报告（userData/reports/<runId>.json，写失败只告警）。
 const runReport = require('./runReport');
@@ -662,13 +665,33 @@ function startAgentRun(payload, sender) {
         onSubagentEvent: (evt) => emit('subagent', evt),
         // P0-B：任务清单 → 渲染层实时展示（让长任务进度对用户可见）
         onTodos: (info) => emit('todos', info),
+        // P3-6（2026-10-31）：入口裁剪丢弃的原文落 `<cwd>/.mj/collapsed/`，占位提示里回传绝对路径，
+        // 模型可 read_file 回看被裁掉的历史（此前只留一条「已省略 N 条」的提示，原文不可再读）。
+        // 只写当前项目工作区；cwd 缺失 / 写入失败一律返回 null —— 裁剪本身照常进行，不因归档失败中断。
+        onCollapse: (dropped) => {
+          try {
+            const base = payload?.cwd;
+            if (!base || !Array.isArray(dropped) || dropped.length === 0) return null;
+            const dir = path.join(base, '.mj', 'collapsed');
+            fs.mkdirSync(dir, { recursive: true });
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const thread = String(payload.conversationId || 'local').replace(/[^\w.-]/g, '_');
+            const file = path.join(dir, `${thread}-${stamp}.jsonl`);
+            const body = dropped.map((m) => JSON.stringify({ role: m?.role, content: m?.content })).join('\n') + '\n';
+            fs.writeFileSync(file, body, 'utf8');
+            return file;
+          } catch (err) {
+            console.warn(`[agentRun] 裁剪原文归档失败（本轮照常运行）：${err && err.message}`);
+            return null;
+          }
+        },
         // Phase 3-1：token 预算熔断 → 保存断点（threadKey = conversationId）+ 通知渲染层
         // kind 必须落盘：恢复文案要按「预算触顶 / 模型超时」分流，不透传会让超时被说成预算触顶
         // （用户会去调大 token 预算，改错方向）。默认 'tokens' 保持既有行为不变。
         onSuspend: (info) => {
           let saved = false;
           try {
-            const cp = require('./checkpointStore');
+            const cp = require('./store/checkpointStore');
             saved = cp.saveCheckpoint(String(payload.conversationId || 'local'), {
               kind: info?.kind || 'tokens',
               summary: String(info?.summary || '').slice(-4000),
@@ -785,7 +808,7 @@ function startAgentRun(payload, sender) {
       // 断点 kind 区分预算熔断：渲染层注入的 resumeContext 文案按中断原因分支（见 useAgentRun.ts）
       if (err && err.engineExited) {
         try {
-          const cp = require('./checkpointStore');
+          const cp = require('./store/checkpointStore');
           cp.saveCheckpoint(String(payload.conversationId || 'local'), {
             kind: 'engine-exit',
             summary: '',

@@ -1,4 +1,5 @@
 // Agent 引擎测试：中间消息持久化 / cwd 注入 / usage 归属 / abort / 上下文压缩
+import fs from 'node:fs';
 import { runAgent } from '../renderer/src/lib/agent.js';
 
 let pass = 0;
@@ -412,6 +413,16 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
     String(emptyFallbackDone?.t || '').includes('任务未完全完成') && String(emptyFallbackDone?.t || '').trim().length > 0,
     String(emptyFallbackDone?.t || '').slice(0, 50));
 
-  console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
+  // 2026-10-31 真机反馈：模型臆测工具名（调 `read` 而清单里是 `read_file`），旧文案只说
+// 「改用当前可用的只读工具」却没说是哪几个 ⇒ 下一轮继续臆测、整轮白烧。
+// 判据：拒绝文案必须把本次真实可用工具名一并给出。
+{
+  const src = fs.readFileSync(new URL('../agent-core/index.js', import.meta.url), 'utf8');
+  check('白名单外工具被拒时，错误文案列出本次可用工具名（防模型继续臆测）',
+    /不在本运行的有效工具清单中[\s\S]{0,200}?availableToolNames|不在本运行的有效工具清单中[\s\S]{0,200}?advertisedToolNames/.test(src),
+    '文案已带清单');
+}
+
+console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => { console.error('FAIL:', e); process.exit(1); });

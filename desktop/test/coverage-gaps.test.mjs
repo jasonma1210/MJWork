@@ -35,7 +35,7 @@ function skip(name, why) {
 
 // ── 1. dbStatus：初始化失败的可见性（X4 的修复件，修完一直没测试） ──
 {
-  const dbStatus = M('main/dbStatus.js');
+  const dbStatus = M('main/store/dbStatus.js');
 
   check('dbStatus：初始态 ok=true 且无 warning', () => {
     dbStatus.markReady();

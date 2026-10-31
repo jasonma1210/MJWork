@@ -185,7 +185,7 @@ const tStub = (k) => k; // 未接 i18n 时 t() 返回 key 本身
 
 // ── ⑧ 主进程端点：caps 真落库、且无 caps 时不写 caps 键（读回来验证，不只看内存）──
 {
-  const { LocalStore } = require(path.join(DESKTOP, 'main/localStore.js'));
+  const { LocalStore } = require(path.join(DESKTOP, 'main/store/localStore.js'));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-caps-'));
   try {
     const s1 = new LocalStore(dir);

@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { LocalStore } = require('../main/localStore');
+const { LocalStore } = require('../main/store/localStore');
 
 let pass = 0;
 let fail = 0;

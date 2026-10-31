@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { LocalStore } = require('../main/localStore');
+const { LocalStore } = require('../main/store/localStore');
 const {
   fileKeyFor, toBaseUrl, parseModelsFile, templateContent, ensureModelsFile, syncFileModels,
   serializeProviders, migrateLocalProviders, removeModelFromRaw, removeProviderFromRaw, addModelToRaw,

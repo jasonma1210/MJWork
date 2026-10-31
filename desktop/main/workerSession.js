@@ -9,7 +9,7 @@
 //
 // 依赖注入：{ getCheckpoint?, saveCheckpoint? } —— 单测注入假存储以断言键位；生产缺省回落
 // checkpointStore 单例（主进程启动时已 initCheckpointStore(userData)）。
-const checkpointStore = require('./checkpointStore');
+const checkpointStore = require('./store/checkpointStore');
 
 const MEMBER_SESSION_PREFIX = 'agent:';
 

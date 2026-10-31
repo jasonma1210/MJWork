@@ -182,7 +182,7 @@ const featureFlags = loadFeatureFlags(process.env);
 const degrade = require('./degrade');
 
 // ── 本地优先数据层（离线模式）──
-const { LocalStore } = require('./localStore');
+const { LocalStore } = require('./store/localStore');
 // P1-1：无人值守路径的审批/沙箱档来源（用户设置），与交互 run 的 payload 档严格分开
 const approvalSettings = require('./approvalSettings');
 const { CredentialCrypto } = require('./credentialCrypto');
@@ -267,7 +267,7 @@ const { ResourceQuotaCenter } = require('./resourceQuotaCenter');
 const quota = new ResourceQuotaCenter({ providerLimit: 8, fgReserve: 2 });
 ipcMain.handle('quota:snapshot', () => quota.snapshot());
 // Phase 3-1：Agent 任务断点持久化（预算熔断 = 暂停；「继续」时渲染层取回断点摘要注入）
-const checkpointStore = require('./checkpointStore');
+const checkpointStore = require('./store/checkpointStore');
 checkpointStore.initCheckpointStore(app.getPath('userData'));
 // T0-5：本地结构化运行 trace（userData/traces/<runId>.jsonl，不上报；供排障与诊断包）
 const runTrace = require('./runTrace');
@@ -1293,7 +1293,7 @@ async function runScheduledAgentTask({ prompt, model: schedModel, signal, taskId
 //  与定时任务通道同源：loadAgentCore / scheduledAgentChat / scheduledToolHandlers 复用。
 // ═══════════════════════════════════════════
 const { openDbAsync } = require('./db');
-const dbStatus = require('./dbStatus');
+const dbStatus = require('./store/dbStatus');
 const { TaskStore } = require('./taskStore');
 // M5 / T5-1：MJ 军团团队层——团队编制（与任务编排共用同一 SQLite 底座）
 const { TeamStore } = require('./teamStore');

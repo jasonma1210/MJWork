@@ -9,7 +9,7 @@ const { ProjectStore } = require('../main/projectStore');
 const { ArtifactStore } = require('../main/artifactStore');
 const { QuotaLedger } = require('../main/quotaLedger');
 const { TeamStore } = require('../main/teamStore');
-const { LocalStore } = require('../main/localStore');
+const { LocalStore } = require('../main/store/localStore');
 const { initProjectSpace, normalizeSpec, InitError } = require('../main/projectSpaceInit');
 
 let pass = 0;

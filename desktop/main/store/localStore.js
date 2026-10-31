@@ -2,7 +2,7 @@
 // 离线模式下线程/消息/私有凭证/偏好/记忆全部本地可用，仅模型调用需要网络
 const fs = require('fs');
 const path = require('path');
-const { writeFileDurable } = require('./data/durableWrite');
+const { writeFileDurable } = require('../data/durableWrite');
 
 // P1-M：本地数据韧性——此前 local-data.json 一损坏就静默重置为空库，
 // 用户的全部线程/消息/凭证无声消失（且无任何提示）。三级防线：

@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const { openSqliteJsDb } = require('./sqljsDb');
-const dbStatus = require('../dbStatus');
+const dbStatus = require('../store/dbStatus');
 
 // ── 幂等加列（X4）──
 // 背景：老库可能「列已存在、user_version 却没推进」（早期无事务包装的版本、手工还原/拷库）。

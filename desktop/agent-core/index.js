@@ -1536,12 +1536,15 @@ ${transcript}` }],
 // （write_file/apply_patch 全文）按全价每轮重传——同一段上下文被反复刷卡。
 // 这里在 run 开始前按「轮」裁掉中段：只留前导 system + 用户原始需求 + 最近若干轮，
 // 被丢弃的中段用一条 system 消息占位（明确告知模型去重新读取，而不是凭记忆假设）。
-function TRIM_NOTICE(dropped, tokens) {
+// P3-6（2026-10-31）：裁剪后原文可回溯。`archivePath` 由宿主注入的回调写入（本模块零 fs 依赖，
+// 保持可被渲染层打包）；没注入时行为与之前逐字节一致——只是少一行提示。
+function TRIM_NOTICE(dropped, tokens, archivePath) {
   return `[历史已裁剪] 已省略 ${dropped} 条早期消息（约 ${tokens} tokens）。`
-    + '需要细节时用 read_file / grep 重新读取，不要凭记忆假设。';
+    + '需要细节时用 read_file / grep 重新读取，不要凭记忆假设。'
+    + (archivePath ? `\n被省略的原文已存档：${archivePath}（可直接 read_file 读取，无需猜测）。` : '');
 }
 
-export function trimHistoryForRun(convo, { contextWindow, targetRatio, keepRecent, policy } = {}) {
+export function trimHistoryForRun(convo, { contextWindow, targetRatio, keepRecent, policy, archive } = {}) {
   const p = resolveCompactPolicy(policy);
   const ratio = Number(targetRatio) > 0 ? Number(targetRatio) : p.trimTargetRatio;
   const minRounds = Number(keepRecent) > 0 ? Number(keepRecent) : p.keepRecentRounds;
@@ -1600,11 +1603,21 @@ ${s.slice(-400)}` };
   if (cut <= 0) return unchanged;
 
   const droppedMsgs = body.slice(0, cut);
+  // P3-6：被丢弃的原文交给宿主存档（回调由宿主注入，本模块不碰 fs）。归档失败不阻断裁剪，
+  // 只是少一行可读路径；异常必须留痕，否则「原文没存上」会静默变成「模型以为存了」。
+  let archivePath = null;
+  if (typeof archive === 'function') {
+    try {
+      archivePath = archive(droppedMsgs) || null;
+    } catch (err) {
+      console.warn(`[agent] 裁剪原文归档失败（本轮照常裁剪）：${err && err.message}`);
+    }
+  }
   const trimmedConvo = [
     ...systems,
     // 占位同样放在前导 system 块内、首条 user 之前（与 compactHistory 的摘要同位）：
     // messages 中部出现 system，DeepSeek 系端点会忽略甚至报错。
-    { role: 'system', content: TRIM_NOTICE(droppedMsgs.length, estimateMessagesTokens(droppedMsgs)) },
+    { role: 'system', content: TRIM_NOTICE(droppedMsgs.length, estimateMessagesTokens(droppedMsgs), archivePath) },
     ...(firstUser ? [firstUser] : []),
     ...body.slice(cut),
   ];
@@ -2453,6 +2466,9 @@ export const ENGINE_BUILTIN_TOOL_NAMES = ['todo_write', 'spawn_subagent', 'deep_
 
 export async function runAgent({
   messages, model, onStream, onToolCall, onDone, onMessage, onSuspend, onBudget, onTodos,
+  // P3-6：入口裁剪丢弃的原文交宿主持久化——回调返回可读路径，拼进裁剪占位提示。
+  // 宿主不传（单测 / 无 cwd）时行为不变，保持零 fs 依赖。
+  onCollapse,
   // T1-3：子代理事件透出——spawn_subagent 生命周期（spawn/progress/done/failed + tokens + 结论摘要）
   onSubagentEvent,
   mcpTools = [], enabledSkills = [], skills = [], maxRounds = 40, signal, cwd, agentsMd,
@@ -3163,7 +3179,7 @@ export async function runAgent({
   // 现在与压缩闸同阈值（0.7）：小于 70% 谁都不许动历史。
   const trimBeforeTokens = estimateMessagesTokens(convo);
   const trimRes = trimBeforeTokens > declaredWindow * TRIM_TRIGGER_RATIO
-    ? trimHistoryForRun(convo, { contextWindow: declaredWindow, policy: compactPolicy })
+    ? trimHistoryForRun(convo, { contextWindow: declaredWindow, policy: compactPolicy, archive: onCollapse })
     : { convo, trimmed: false, dropped: 0, beforeTokens: trimBeforeTokens, afterTokens: trimBeforeTokens };
   if (trimRes.trimmed) {
     convo = trimRes.convo;
@@ -3561,7 +3577,7 @@ export async function runAgent({
       // 旧实现不看压缩是否发生，照样 `tokenWindowSpent = 0` → 每 5 轮空转一次、
       // 一分钱不省，直到把预算烧穿（线上 21 轮 1.6M tokens 就是这么来的）。
       // 降级一：硬截断（丢早期轮，保留最近 3 轮工作现场）。
-      const trimmedRun = trimHistoryForRun(convo, { contextWindow: ctxWindow, targetRatio: 0.45, keepRecent: 3, policy: compactPolicy });
+      const trimmedRun = trimHistoryForRun(convo, { contextWindow: ctxWindow, targetRatio: 0.45, keepRecent: 3, policy: compactPolicy, archive: onCollapse });
       if (trimmedRun.trimmed) {
         console.warn(`[agent] 压缩无收益，改走硬截断：${trimmedRun.beforeTokens} → ${trimmedRun.afterTokens} tokens（丢弃 ${trimmedRun.dropped} 条早期消息）`);
         convo = trimmedRun.convo;
@@ -3724,7 +3740,7 @@ export async function runAgent({
         toolResult = {
           ok: false,
           notInAllowlist: true,
-          error: `工具 ${tc.function.name} 不在本运行的有效工具清单中（可能已被规划模式、角色模板或工具集过滤），已按 fail-closed 拒绝执行。请改用当前可用的只读工具完成任务。`,
+          error: `工具 ${tc.function.name} 不在本运行的有效工具清单中（可能已被规划模式、角色模板或工具集过滤），已按 fail-closed 拒绝执行。本次可用工具：${[...advertisedToolNames].join(', ') || '（空）'}。请从这份清单里选一个继续，不要臆测工具名。`,
         };
         console.warn(`[agent] 白名单外工具调用被拒绝: ${tc.function.name}`);
       }

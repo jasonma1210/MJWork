@@ -92,5 +92,35 @@ const history = Array.from({ length: 27 }, (_, i) => ({
     `trim=${trimEvents.length}`);
 }
 
+// P3-6（2026-10-31）：裁剪原文可回溯——宿主注入的 archive 回调必须收到「被丢弃的那批消息」，
+// 且它返回的路径要出现在占位提示里（模型据此可 read_file 回看，而不是只被告知「省略了 N 条」）。
+// 不注入时提示必须保持原样：默认行为不变是这条改动能上线的前提。
+{
+  const history2 = Array.from({ length: 27 }, (_, i) => ({
+    role: i % 2 === 0 ? 'assistant' : 'user',
+    content: `第 ${i} 段：${'y'.repeat(1480)}`,
+  }));
+  const convo = [{ role: 'system', content: 'SYS' }, ...history2];
+  let captured = null;
+  const withArchive = trimHistoryForRun(convo, {
+    contextWindow: WINDOW,
+    archive: (dropped) => { captured = dropped; return '.mj/collapsed/demo.jsonl'; },
+  });
+  const findNotice = (r) => r.convo.find((m) => m.role === 'system' && String(m.content).includes('[历史已裁剪]'));
+  const notice = findNotice(withArchive);
+  check('archive 回调收到被丢弃的消息（条数与 dropped 一致）',
+    Array.isArray(captured) && captured.length > 0 && captured.length === withArchive.dropped,
+    `captured=${captured ? captured.length : 'null'} dropped=${withArchive.dropped}`);
+  check('占位提示里出现归档路径（模型可 read_file 回看）',
+    !!notice && String(notice.content).includes('.mj/collapsed/demo.jsonl'),
+    notice ? String(notice.content).slice(0, 90) : 'notice 缺失');
+
+  const plain = trimHistoryForRun(convo, { contextWindow: WINDOW });
+  const plainNotice = findNotice(plain);
+  check('未注入 archive 时提示不含「已存档」（默认行为不变）',
+    !!plainNotice && !String(plainNotice.content).includes('已存档'),
+    plainNotice ? String(plainNotice.content).slice(0, 90) : 'notice 缺失');
+}
+
 console.log(`\ntrim-trigger: ${pass}/${pass + fail} 通过`);
 process.exit(fail === 0 ? 0 : 1);

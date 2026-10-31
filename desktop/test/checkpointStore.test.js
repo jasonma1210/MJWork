@@ -2,7 +2,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const cp = require('../main/checkpointStore');
+const cp = require('../main/store/checkpointStore');
 
 let pass = 0;
 let fail = 0;
@@ -76,8 +76,8 @@ check('原子写：文件权限 0600',
   `mode=${(fs.statSync(path.join(dir, 'agent-checkpoints.json')).mode & 0o777).toString(8)}`);
 
 // ── 文件持久化跨实例生效（模拟应用重启）──
-delete require.cache[require.resolve('../main/checkpointStore')];
-const cp2 = require('../main/checkpointStore');
+delete require.cache[require.resolve('../main/store/checkpointStore')];
+const cp2 = require('../main/store/checkpointStore');
 cp2.initCheckpointStore(dir);
 check('重新初始化（模拟重启）后断点仍可读回', cp2.getCheckpoint('thread-y')?.summary === 'after-corruption');
 
@@ -114,8 +114,8 @@ check('渲染层恢复分支按 kind 分流（engine-exit / timeout / 预算）'
 // 诊断页据此显示「断点存储损坏」——纯假告警。
 {
   const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-cp-fresh-'));
-  delete require.cache[require.resolve('../main/checkpointStore')];
-  const cpFresh = require('../main/checkpointStore');
+  delete require.cache[require.resolve('../main/store/checkpointStore')];
+  const cpFresh = require('../main/store/checkpointStore');
   cpFresh.initCheckpointStore(freshDir);
   const ok = cpFresh.saveCheckpoint('first', { summary: '首次断点' });
   check('P0-8 首次运行 save 成功', ok === true);
@@ -137,8 +137,8 @@ check('渲染层恢复分支按 kind 分流（engine-exit / timeout / 预算）'
 // 新实现（按 savedAt 升序）淘汰 k49。两者结论不同，才能区分实现。
 {
   const lruDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-cp-lru-'));
-  delete require.cache[require.resolve('../main/checkpointStore')];
-  const cpLru = require('../main/checkpointStore');
+  delete require.cache[require.resolve('../main/store/checkpointStore')];
+  const cpLru = require('../main/store/checkpointStore');
   cpLru.initCheckpointStore(lruDir);
   const seed = {};
   for (let i = 0; i < cpLru.MAX_ENTRIES; i++) {
@@ -161,7 +161,7 @@ check('渲染层恢复分支按 kind 分流（engine-exit / timeout / 预算）'
 // （正是审查报告担心的形态）。当前 writeFileDurableWithMode 全同步
 // （openSync/fsyncSync/renameSync/chmodSync），故**不存在**该竞态 —— 本断言防止它被无意打破。
 {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'main', 'checkpointStore.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main', 'store', 'checkpointStore.js'), 'utf8');
   const start = src.indexOf('function saveCheckpoint(');
   const body = src.slice(start, src.indexOf('\n}\n', start) + 2);
   check('P0-8 契约：saveCheckpoint 内无 await（保持同步，避免交错窗口）',

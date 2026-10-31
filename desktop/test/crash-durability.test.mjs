@@ -70,14 +70,14 @@ try {
   // 1. localStore 的 synchronous durable write：创建线程返回后立刻杀死进程。
   const localDir = path.join(tmp, 'local-store');
   const localChild = await launchAndKill('localStore', `
-    const { LocalStore } = require('./main/localStore');
+    const { LocalStore } = require('./main/store/localStore');
     const store = new LocalStore(process.argv[1]);
     store.createThread({ title: 'kill-9-durable-thread', cwd: '/tmp/crash-test' });
     console.log('DURABLE_READY');
     setInterval(() => {}, 1000);
   `, [localDir]);
   check('localStore child really received SIGKILL', () => assertKilled(localChild, 'localStore'));
-  const { LocalStore } = require('../main/localStore');
+  const { LocalStore } = require('../main/store/localStore');
   const localRecovered = new LocalStore(localDir);
   check('SIGKILL 后 localStore 已确认写入的数据可恢复', () => {
     assert.ok(localRecovered.data.threads.some((thread) => thread.title === 'kill-9-durable-thread'));

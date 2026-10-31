@@ -61,7 +61,7 @@ function runUnconfinedTests() {
 
 // ═══════════ V08：corrupt-blocked + 持久 ACK ═══════════
 function runLocalStoreTests() {
-  const { LocalStore } = require('../main/localStore');
+  const { LocalStore } = require('../main/store/localStore');
 
   // 场景 A：损坏且无备份 → corrupt-blocked
   const dirA = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-r0-corrupt-'));
