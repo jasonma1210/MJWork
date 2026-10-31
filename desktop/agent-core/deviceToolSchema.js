@@ -15,19 +15,17 @@ export const DEVICE_TOOL_SCHEMAS = [
     description: '探测本机接了什么 USB 设备与串口（只读）。'
       + '返回 devices（VID/PID 解析出的芯片型号与所需驱动）、ports（可用串口）、'
       + 'flashable（可烧写候选）、toolchain.esptool（工具链是否就绪）与 notes（探测失败/降级原因）。'
-      + '另返回 bridges：逐个设备的串口就绪结论（verdict 五档 ready / need-driver / '
-      + 'driver-loaded-no-port / not-serial / unknown），portDetails 给出每条串口的 hwid 身份'
-      + '（real=false 表示确认不是 USB 串口，如蓝牙虚拟口；real=null 表示查不到）。'
-      + '回答「为什么烧不进去」时**先看 bridges[].verdict**：need-driver 是装驱动，'
-      + 'driver-loaded-no-port 不是装驱动（设备当前模式没有串口），not-serial（DFU/UF2/调试探针）'
-      + '本来就没有串口。'
+      + '另返回 bridges（verdict 五档 ready / need-driver / driver-loaded-no-port / not-serial / unknown）'
+      + '与 portDetails（每条串口的 hwid 身份；real=false=确认非 USB 串口如蓝牙虚拟口，real=null=查不到）。'
+      + '回答「为什么烧不进去」**先看 bridges[].verdict**：need-driver 是装驱动；driver-loaded-no-port 不是'
+      + '（设备当前模式没串口）；not-serial（DFU/UF2/调试探针）本来就没串口。'
       + '还返回 channels：每个设备该走哪条刷写通道（esptool-serial / dfu-util / uf2-copy / '
-      + 'openocd-swd / stm32flash-serial / avrdude-serial / fastboot）与三件事——'
-      + 'confidence（certain=芯片身份确定 / probe-required=桥芯片背后可能是任意 MCU，先跑 chip_id 握手）、'
-      + 'implemented（本版本是否已接线该通道的执行器）、runnable（现在能否立即执行）。'
-      + '**只有 runnable=true 的通道才能承诺「可以烧」**；implemented=false 表示只识别得出通道、还不能执行。'
+      + 'openocd-swd / stm32flash-serial / avrdude-serial / fastboot）与三件事：'
+      + 'confidence（certain=芯片身份确定 / probe-required=桥芯片背后可能是任意 MCU，'
+      + '须先用 device_flash action=chip_id 握手问清，**不要**让用户自己去命令行跑）、'
+      + 'implemented（本版本是否已接线执行器）、runnable（现在能否立即执行）。'
+      + '**只有 runnable=true 才能承诺「可以烧」**；implemented=false = 只识别得出通道、还不能执行。'
       + 'primaryChannel 是首选目标（优先能跑、其次身份确定）。'
-      + '用于「板子插上了吗 / 是哪个口 / 该用什么工具 / 为什么烧不进去」这类问题；'
       + '不刷机、不装驱动、不碰 sudo（刷写与装驱动属不可逆动作，另由用户确认）。',
     parameters: { type: 'object', properties: {} },
   }},
@@ -38,24 +36,24 @@ export const DEVICE_TOOL_SCHEMAS = [
 export const DEVICE_FLASH_SCHEMAS = [
   { type: 'function', function: {
     name: 'device_flash',
-    description: '把固件烧到开发板。**通道按固件格式自动选**：.bin 走 esptool 串口，.uf2 走 UF2（拷到 bootloader 盘，无需串口），'
-      + '.hex/.img 会被拒绝（格式与通道不匹配，见返回的 error 里的转换/替代指引）。五档 action，**烧写必须按序**、不可跳档：'
-      + 'list_targets（只读：列可烧磁盘与串口）→ plan（装配命令、给出审批卡与 plan_digest，**不执行**）'
-      + '→ flash（**必须**回传 plan_digest，每次都会弹人工审批卡）'
-      + '→ verify（回读校验，用同一个 plan_digest；不写设备，把设备内容与本地文件逐字节比对）。'
-      + 'backup（整片备份到 out 文件）与上面三档独立，建议在 flash 之前做，否则覆盖后就没有回滚素材了。'
-      + 'plan_digest 缺失或不匹配会被拒绝——它锁的是「人确认的参数」与「实际执行的参数」一致。'
-      + '只烧固件文件（.bin/.uf2），不做磁盘镜像烧写、不格式化任何存储介质。'
-      + 'UF2 通道：plan 阶段自动找 bootloader 盘（判据是盘根有 INFO_UF2.TXT，不是卷名），'
-      + '有多个时必须用 volume 显式指定；flash 成功后设备会重启并卸载该卷，卷消失才算完成。',
+    description: '把固件烧到开发板。**通道按固件格式自动选**：.bin→esptool 串口，.uf2→UF2（拷到 bootloader 盘，无需串口）；'
+      + '.hex/.img 直接拒绝并给转换指引。**烧写必须按序、不可跳档**：list_targets（只读列举）'
+      + '→ chip_id（只读：跟芯片同步一次问出它到底是哪颗）→ plan（装配命令+审批卡+plan_digest，不执行）'
+      + '→ flash（必须回传 plan_digest，每次弹人工审批）→ verify（回读逐字节比对，用同一 digest，不写设备）。'
+      + 'digest 缺失或不匹配即拒绝：它锁「人确认的参数」与「实际执行的参数」一致。'
+      + 'backup（整片备份到 out）独立，**应在 flash 之前**做，否则覆盖后没有回滚素材。'
+      + 'chip_id 用于 device_probe 报 probe-required 时——工具自己用 esptool --chip auto 问出 '
+      + 'chip/chipKey/flashSizeBytes，别让用户去命令行手敲；它不写任何字节，只把 MCU 复位进下载模式。'
+      + '只烧 .bin/.uf2，不做磁盘镜像、不格式化介质。UF2：plan 自动找 bootloader 盘'
+      + '（判据是盘根 INFO_UF2.TXT 而非卷名），多个必须用 volume 指定；设备重启卸载该卷才算完成。',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['list_targets', 'plan', 'flash', 'verify', 'backup'],
-          description: 'list_targets=只读列举；plan=装配命令并给出摘要（不执行）；flash=写入（需 plan_digest）；'
-            + 'verify=回读校验（需同一个 plan_digest，不写）；backup=整片备份到 out 文件（需 out）。',
+          enum: ['list_targets', 'chip_id', 'plan', 'flash', 'verify', 'backup'],
+          description: 'list_targets=只读列举；chip_id=跟芯片握手确认身份（只读，需 port）；plan=装配命令并给出摘要（不执行）；'
+            + 'flash=写入（需 plan_digest）；verify=回读校验（需同一个 plan_digest，不写）；backup=整片备份到 out 文件（需 out）。',
         },
         port: {
           type: 'string',

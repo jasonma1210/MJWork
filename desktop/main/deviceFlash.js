@@ -287,6 +287,94 @@ function parseFlashIdInfo(stdout) {
   return { chip: String(chip).trim(), flashSizeBytes };
 }
 
+// ── chip_id 握手：把「桥芯片后面可能是任意 MCU」变成「这块到底是哪颗」──────────
+// device_probe 只能说到「这个桥串口背后可能是 ESP32 / STM32 / AVR」。要跨过这一步，
+// 唯一的办法是真的跟芯片对一次话（esptool 的 ROM 同步），而不是继续看 VID 猜。
+//
+// 判据全部来自**真机实测**（2026-10-31，ESP32-S3 经 /dev/cu.usbmodem1301）：
+//   成功：Detecting chip type... ESP32-S3
+//         Chip type:          ESP32-S3 (QFN56) (revision v0.2)
+//         MAC:                d0:cf:13:06:dc:74
+//         Detected flash size: 16MB
+//   端口层失败：ERROR: A fatal error occurred: Could not open /dev/cu.x, the port is busy or doesn't exist.
+//
+// **这一节最重要的一条诚实**：握手失败**不能**推出「不是 ESP」。
+// 桥芯片后面挂 STM32 会得到 no-response；一块没有自动复位电路的 ESP 板同样会得到
+// no-response（它只是没被拉进下载模式）。两种情况在输出上不可区分，所以失败一律给
+// unknown，绝不给 not-esp —— 把「没查到」写成「查到了没有」，就是 C-001 那类同形错误。
+const HANDSHAKE_VERDICTS = {
+  esp: 'esp',
+  needBoot: 'esp-need-bootloader',
+  port: 'port-error',
+  noResponse: 'no-response',
+  unknown: 'unknown',
+};
+
+/**
+ * 芯片名 → CHIP_ARGS 的键（esp32s3 这种）。
+ * 为什么要映射而不是直接透传 "ESP32-S3"：后续 flash 的参数（波特率/复位时序）是按 CHIP_ARGS
+ * 的键取的，键对不上就退回默认值 —— 那正是「用错波特率烧到一半」的来源。
+ * 归一化后**最长前缀匹配**：ESP32-D0WD-V3 要命中 esp32 而不是被 esp32s3 之类的短键吃掉，
+ * 而 ESP32-S3 必须命中 esp32s3 而不是更短的 esp32。
+ */
+function chipKeyOf(chipName, keys = Object.keys(CHIP_ARGS)) {
+  const norm = String(chipName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!norm) return '';
+  const sorted = [...keys].sort((a, b) => b.length - a.length);
+  return sorted.find((k) => norm.startsWith(k)) || '';
+}
+
+/**
+ * 把一次 `esptool --chip auto ... flash-id` 的输出翻译成身份结论。
+ * 用 `--chip auto` 而不是写死型号，是这一步的全部意义：**由芯片自己报身份**。
+ * @param {string} stdout 合并后的 stdout+stderr（esptool 把两种都往 stderr 打）
+ * @param {{exitCode?:number, chipKeys?:string[]}} [opts]
+ * @returns {{verdict:string, esp:boolean, chip:string, chipKey:string, mac:string,
+ *            flashSizeBytes:number, detected:string}}
+ */
+function parseHandshake(stdout, { exitCode = 0, chipKeys = Object.keys(CHIP_ARGS) } = {}) {
+  const text = String(stdout || '');
+  const out = {
+    verdict: HANDSHAKE_VERDICTS.unknown, esp: false, chip: '', chipKey: '', mac: '', flashSizeBytes: 0, detected: '',
+    exitCode,
+  };
+  // ① 成功：esptool 只有真的同步上才会打 "Detecting chip type..."（--chip auto 专用）
+  const det = /Detecting chip type\.\.\.\s*([A-Za-z0-9\-_]+)/i.exec(text);
+  const info = parseFlashIdInfo(text);
+  const chips = info.chip || (det ? det[1] : '');
+  if (chips) {
+    out.verdict = HANDSHAKE_VERDICTS.esp;
+    out.esp = true;
+    out.chip = chips;
+    out.detected = det ? det[1] : chips;
+    out.chipKey = chipKeyOf(chips, chipKeys);
+    out.flashSizeBytes = info.flashSizeBytes;
+    out.mac = (/MAC:\s*([0-9a-fA-F:]{11,17})/.exec(text) || [])[1] || '';
+    return out;
+  }
+  // ② 是 ESP，但没进下载模式：esptool 认出了 boot mode 才会这么报 ⇒ 身份仍然是确定的
+  if (/Wrong boot mode detected|needs to be in download mode/i.test(text)) {
+    out.verdict = HANDSHAKE_VERDICTS.needBoot;
+    out.esp = true;
+    out.chip = (/(?:Failed to connect to|Chip is)\s*([A-Za-z0-9\-_]+)/i.exec(text) || [])[1] || '';
+    out.chipKey = chipKeyOf(out.chip, chipKeys);
+    return out;
+  }
+  // ③ 端口层失败：与「这块芯片是什么」无关，尤其不能当成「不是 ESP」。
+  //    顺序放在 no-response 之前：占用/权限失败的信息里也常带 "failed to connect"，
+  //    先判 no-response 会把「口被别的程序占了」误报成「芯片没响应」。
+  if (/Could not open|the port is busy|Permission denied|Resource busy|Errno 13|Errno 16/i.test(text)) {
+    out.verdict = HANDSHAKE_VERDICTS.port;
+    return out;
+  }
+  // ④ 没响应：可能是非 ESP，也可能是 ESP 但没进下载模式 ⇒ 只能给 unknown
+  if (/No serial data received|Timed out waiting for packet header|Failed to connect/i.test(text)) {
+    out.verdict = HANDSHAKE_VERDICTS.noResponse;
+    return out;
+  }
+  return out;
+}
+
 /**
  * 生成审批卡（强制三要素：影响面 / 失败后果 / 回滚方式）。
  * 缺任一项直接抛错——不允许出现「没有回滚说明的不可逆操作卡」。
@@ -319,4 +407,5 @@ module.exports = {
   CHIP_ARGS, MIN_CANDIDATE_BYTES, partitionCandidates, buildFlashPlan, buildBackupPlan, approvalCard, planDigest,
   parseOffset, parseSize, parseVidPid, normalizeSegments, checkSegmentsFit, parseFlashIdInfo,
   IMAGE_FORMATS, resolveImageFormat, esptoolFormatCheck,
+  HANDSHAKE_VERDICTS, chipKeyOf, parseHandshake,
 };

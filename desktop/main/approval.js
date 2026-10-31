@@ -437,7 +437,15 @@ function toolLevel(tool, args = {}) {
   //           这是**信息披露**而非普通读文件，点击确认的必要性与烧写相同；
   //   理由三：一支三岔分支比「flash=L1 / verify=L2 / backup=L2」少一半漂移面，而后者一旦漂移
   //           的表现是「某档静默过闸」，这类 bug 没人会写测试。
-  if (tool === 'device_flash') return (args.action === 'list_targets' || args.action === 'plan') ? null : 'L1';
+  // 2026-10-31 新增 chip_id 档：**同样 L1**，直接沿用上面理由一（它也会把芯片复位进
+  //   bootloader 才能读到 ROM 里的身份）——同一件事（碰硬件、要复位），两套分级必然漂移。
+  //   额外一条：chip_id 的结论会决定后面用哪个通道烧、按哪个芯片族装配参数，误判的代价
+  //   由紧随其后的 flash 承担；让它免费自动跑，等于把「烧错协议」的前置判断变成静默动作。
+  //   代价是每次握手弹一张卡——握手本来就是一次**主动去问硬件**的动作，不是扫描，频率极低。
+  if (tool === 'device_flash') {
+    if (args.action === 'list_targets' || args.action === 'plan') return null;
+    return 'L1';
+  }
   if (tool.startsWith('mcp__')) return 'L3';
   // 兜底只兜「未登记的原生/插件工具」（mcp__ 已在上面返回 L3）。第八轮 D-801 由 'L2' 改为 'L3'：
   // 未登记 ≠ 自动批准 —— 'L2' 在 auto-safe 档直接放行（漏登记即静默过闸），'L3' 需审批且可被
@@ -515,6 +523,9 @@ function approvalTarget(tool, args = {}) {
   if (tool === 'device_flash') {
     const port = String(args.port || '');
     const act = String(args.action || '');
+    // chip_id 没有固件、也不写设备，用户唯一能核对的是「对哪个口动手」。
+    // 不写这一支会落到下面的默认拼接，卡面变成「/dev/cu.x ← 」——目标看似空的。
+    if (act === 'chip_id') return `探测 ${port}`.trim();
     if (act === 'backup') return `${port} → ${String(args.out || '')}`.trim();
     const fw = String(args.firmware || '');
     // UF2 通道没有串口，唯一能让人核对的是「哪个卷 ← 哪个文件」。

@@ -196,7 +196,10 @@ function resolveOne(bridge, executors) {
       ? 'Espressif 官方 VID（303a）：芯片身份确定，可直接走 esptool'
       : `桥芯片 ${bridge.vid}:${bridge.pid} 后面可能是任意 MCU：需先 chip_id 握手确认`,
     todo: probeRequired
-      ? ['先跑 chip_id/flash_id 确认是 ESP 芯片（桥芯片背后可能是 STM32/AVR/其它）']
+      // 不写「你自己去跑 chip_id」：L4b 之后工具能自己问（device_flash action=chip_id），
+      // 让用户去敲命令行等于把可自动完成的一步推给人，而且他抄回来的结论还不一定对得上口。
+      ? [`调 device_flash action=chip_id port=${base.ports[0]} 让工具自己问芯片身份`
+        + '（桥芯片背后可能是 STM32/AVR/其它，光看 VID 判不出来）']
       : [],
   };
   if (probeRequired) {
@@ -256,7 +259,7 @@ function resolveChannels({ bridges = [], executors = null } = {}) {
   const probe = targets.filter((t) => t.confidence === 'probe-required');
   if (probe.length) {
     notes.push(`${probe.length} 个设备需先握手确认芯片身份：桥芯片（CH34x/CP210x/FTDI）背后可能是任意 MCU，`
-      + `直接按 ESP 烧会把超时误当成「板子坏了」`);
+      + '直接按 ESP 烧会把超时误当成「板子坏了」。用 device_flash action=chip_id 让工具自己问，别让用户去命令行手敲');
   }
   const noImpl = targets.filter((t) => t.channel && !t.implemented);
   if (noImpl.length) {

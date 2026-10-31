@@ -13,6 +13,7 @@ const { matchBoard, parseUsbTree, classifyPorts, summarizeProbe } = require('../
 const {
   partitionCandidates, buildFlashPlan, buildBackupPlan, approvalCard, planDigest, checkSegmentsFit,
   parseFlashIdInfo, parseVidPid, parseSize, resolveImageFormat, esptoolFormatCheck,
+  parseHandshake, chipKeyOf, HANDSHAKE_VERDICTS,
 } = require('../main/deviceFlash.js');
 const { parseDiskutilListText } = require('../main/diskList.js');
 const { deviceProbeHandler, parseLinuxUsb, parseWinUsb, resolveEsptoolFromPath, PROBES } = require('../main/tools/deviceProbeTool.js');
@@ -1251,6 +1252,142 @@ const hostExec = async (cmd) => {
   check('审批目标：.bin 仍走原来的「串口 ← 文件」（别为了 UF2 把串口分支改坏）',
     approval.approvalTarget('device_flash', { action: 'flash', port: '/dev/cu.a', firmware: '/tmp/f.bin' })
       === '/dev/cu.a ← /tmp/f.bin');
+}
+
+// ── L4b：chip_id 握手（2026-10-31）────────────────────────────────────────────
+// 目标：把 probe-required 从「提示用户去命令行查」变成「工具自己问清」。
+// 下面四段输出里，①③ 是**真机实测原文**（本机 ESP32-S3 / 不存在的口），②④ 是按 esptool
+// 已知失败形态构造的——本机没有 STM32 板，造不出来就只能标注来源，不能假装实测过。
+{
+  const approval = require('../main/approval.js');
+  const HS_OK = [
+    'esptool v5.6.0',
+    'Serial port /dev/cu.usbmodem1301:',
+    'Connecting...',
+    'Detecting chip type... ESP32-S3',
+    'Connected to ESP32-S3 on /dev/cu.usbmodem1301:',
+    'Chip type:          ESP32-S3 (QFN56) (revision v0.2)',
+    'Features:           Wi-Fi, BT 5 (LE), Dual Core + LP Core, 240MHz, Embedded PSRAM 8MB (AP_3v3)',
+    'Crystal frequency:  40MHz',
+    'USB mode:           USB-Serial/JTAG',
+    'MAC:                d0:cf:13:06:dc:74',
+    'Uploading stub flasher...',
+    'Running stub flasher...',
+    'Stub flasher running.',
+    'Flash Memory Information:',
+    '=========================',
+    'Manufacturer: 46',
+    'Device: 4018',
+    'Detected flash size: 16MB',
+    'Flash type set in eFuse: quad (4 data lines)',
+    'Hard resetting via RTS pin...',
+  ].join('\n');
+
+  // 真机实测（2026-10-31，/dev/cu.doesnotexist0）
+  const HS_PORT = [
+    'esptool v5.6.0',
+    'Serial port /dev/cu.wchusbserial110:',
+    '',
+    'ERROR: A fatal error occurred: Could not open /dev/cu.wchusbserial110, the port is busy or doesn\'t exist.',
+    '([Errno 2] could not open port /dev/cu.wchusbserial110: [Errno 2] No such file or directory)',
+    '',
+    'Hint: Check if the port is correct and ESP connected',
+  ].join('\n');
+
+  // 构造：ESP 板没有自动复位电路时 esptool 的报法（文档 §5.2 / esptool 源码 boot mode 判定）
+  const HS_NOBOOT = 'A fatal error occurred: Failed to connect to ESP32-S3: Wrong boot mode detected (0x3)! '
+    + 'The chip needs to be in download mode.';
+  // 构造：完全没响应（非 ESP 或 ESP 停在 app 模式，两者输出同形 —— 这正是不能下结论的原因）
+  const HS_NODATA = 'A fatal error occurred: Failed to connect to ESP32: No serial data received.';
+
+  // ① 解析：成功形态
+  const hsOk = parseHandshake(HS_OK);
+  check('握手解析：真机输出 → 判定为 ESP，并取出芯片名 / chipKey / MAC / flash 容量',
+    hsOk.verdict === HANDSHAKE_VERDICTS.esp && hsOk.esp === true
+    && hsOk.chip === 'ESP32-S3 (QFN56)' && hsOk.chipKey === 'esp32s3'
+    && hsOk.mac === 'd0:cf:13:06:dc:74' && hsOk.flashSizeBytes === 16 * 1024 ** 2,
+    `${hsOk.chip}/${hsOk.chipKey}/${hsOk.mac}/${hsOk.flashSizeBytes}`);
+  check('握手解析：`Detecting chip type...` 这一行单独也能定身份（Chip type 行格式变了不至于全丢）',
+    parseHandshake(HS_OK.split('\n').filter((l) => !l.startsWith('Chip type:')).join('\n')).esp === true);
+
+  // ② 解析：三种失败必须分开，且**都不能**给出「不是 ESP」这种结论
+  const hsPort = parseHandshake(HS_PORT);
+  check('握手解析：打不开串口 → port-error，且 esp=false（端口问题与芯片身份无关）',
+    hsPort.verdict === HANDSHAKE_VERDICTS.port && hsPort.esp === false, hsPort.verdict);
+  const hsBoot = parseHandshake(HS_NOBOOT);
+  check('握手解析：Wrong boot mode → 仍判定为 ESP（esptool 认出了 boot mode 才这么报），identity 确定',
+    hsBoot.verdict === HANDSHAKE_VERDICTS.needBoot && hsBoot.esp === true && hsBoot.chipKey === 'esp32s3', hsBoot.chip);
+  const hsData = parseHandshake(HS_NODATA);
+  check('握手解析：没响应 → no-response，**不能**判成「不是 ESP」（STM32 与没进下载模式的 ESP 输出同形）',
+    hsData.verdict === HANDSHAKE_VERDICTS.noResponse && hsData.esp === false && hsData.chip === '');
+  check('握手解析：动词顺序 —— 端口占用信息里也带 failed to connect，必须先判 port-error',
+    parseHandshake(`Failed to connect: Could not open /dev/cu.x, the port is busy`).verdict === HANDSHAKE_VERDICTS.port);
+  check('握手解析：空输出 → unknown（不是「没设备」也不是「没响应」，就是没结论）',
+    parseHandshake('').verdict === HANDSHAKE_VERDICTS.unknown);
+
+  // ③ chipKey 映射：键对不上会静默退回默认波特率，那正是「烧到一半」的来源
+  check('chipKey：ESP32-D0WD-V3 命中 esp32，ESP32-S3 命中 esp32s3（最长前缀，短键不许抢）',
+    chipKeyOf('ESP32-D0WD-V3') === 'esp32' && chipKeyOf('ESP32-S3') === 'esp32s3'
+    && chipKeyOf('esp32c6') === 'esp32c6');
+  check('chipKey：CHIP_ARGS 没登记的型号给空串（不猜一个近似的去用错波特率）',
+    chipKeyOf('ESP8266EX') === '' && chipKeyOf('') === '');
+
+  // ④ 执行器接线：注入 run，绝不真连板子
+  const hsArgs = [];
+  const hsRun = (text, code = 0) => async (argv) => { hsArgs.push(argv); return { code, stdout: text, stderr: '' }; };
+  const hsDeps = (text, code = 0) => ({ exec: hostExec, platform: 'darwin', run: hsRun(text, code) });
+  const P = '/dev/cu.usbmodem1301';
+
+  const okRes = await deviceFlashHandler({ action: 'chip_id', port: P }, hsDeps(HS_OK));
+  check('握手接线：成功时 ok=true、通道锁定 esptool-serial、chipKey 可直接喂给 plan',
+    okRes.ok === true && okRes.channel === 'esptool-serial' && okRes.confidence === 'certain'
+    && okRes.chipKey === 'esp32s3' && String(okRes.next).includes('action=plan'), `${okRes.ok}/${okRes.channel}`);
+  check('握手接线：argv 用 `--chip auto`（由芯片自己报身份），不写死型号 —— 写死就只能得到「连不上」',
+    hsArgs.length > 0 && hsArgs[0].includes('--chip') && hsArgs[0][hsArgs[0].indexOf('--chip') + 1] === 'auto',
+    JSON.stringify(hsArgs[0] || []));
+  check('握手接线：argv 里**不含任何写/读 flash 的子命令**（这一步只问身份，不碰 flash 内容）',
+    !hsArgs.some((a) => a.some((x) => /write[-_]flash|read[-_]flash|erase[-_]flash/.test(String(x)))),
+    JSON.stringify(hsArgs[0] || []));
+
+  const bootRes = await deviceFlashHandler({ action: 'chip_id', port: P }, hsDeps(HS_NOBOOT, 2));
+  check('握手接线：没进下载模式 → ok=false 但 confidence 仍是 certain（身份已确定，只是读不到容量）',
+    bootRes.ok === false && bootRes.confidence === 'certain' && bootRes.channel === 'esptool-serial'
+    && String(bootRes.error).includes('下载模式'), bootRes.error?.slice(0, 40));
+
+  const portRes2 = await deviceFlashHandler({ action: 'chip_id', port: P }, hsDeps(HS_PORT, 2));
+  check('握手接线：端口打不开 → 明说「与芯片身份无关」，不许让用户去换板子/重刷',
+    portRes2.ok === false && String(portRes2.error).includes('这与芯片身份无关'));
+
+  const dataRes = await deviceFlashHandler({ action: 'chip_id', port: P }, hsDeps(HS_NODATA, 2));
+  check('握手接线：没响应 → 明说「不能据此判定它不是 ESP」，并指到同口的 stm32flash/avrdude',
+    dataRes.ok === false && String(dataRes.error).includes('不能据此判定它不是 ESP')
+    && String(dataRes.error).includes('stm32flash'), dataRes.error?.slice(0, 50));
+
+  check('握手接线：缺 port 直接拒（不猜一个口去对话）',
+    String((await deviceFlashHandler({ action: 'chip_id' }, hsDeps(HS_OK))).error || '').includes('缺少 port'));
+  // 白名单：与 flash 共用同一道闸。蓝牙虚拟口在系统里真实存在，但绝不是板子。
+  const btRes = await deviceFlashHandler({ action: 'chip_id', port: '/dev/cu.QCYMeloBudsN70' }, hsDeps(HS_OK));
+  check('握手接线：非可刷机串口被同一道硬闸拦住（蓝牙耳机口不能被当成板子去对话）',
+    btRes.ok === false && String(btRes.error).includes('探测') && String(btRes.error).includes('可刷'), btRes.error?.slice(0, 50));
+
+  // ⑤ 审批：与 verify/backup 同档（都会把芯片复位进 bootloader，同形的事不能两套分级）
+  check('审批：chip_id 与 verify/backup 同为 L1（碰硬件、要复位，不因「只读」降档）',
+    approval.toolLevel('device_flash', { action: 'chip_id' }) === 'L1'
+    && approval.toolLevel('device_flash', { action: 'verify' }) === 'L1'
+    && approval.toolLevel('device_flash', { action: 'backup' }) === 'L1');
+  check('审批目标：chip_id 的卡面是「探测 <口>」（不写这一支会渲染成「/dev/x ← 」这种空目标）',
+    approval.approvalTarget('device_flash', { action: 'chip_id', port: '/dev/cu.x' }) === '探测 /dev/cu.x');
+
+  // ⑥ 决策层的 todo 必须指向真实可调的动作，而不是让用户手敲命令
+  const bridged = resolveChannels({
+    bridges: [{
+      verdict: 'ready', kind: 'serial', vid: '1a86', pid: '7523', name: 'CH340', ports: ['/dev/cu.wchusbserial110'],
+    }],
+    executors: { ok: true, have: { esptool: true } },
+  });
+  check('L3 → L4b 闭环：需握手时 todo 直接给出 `device_flash action=chip_id port=…`（含具体口）',
+    bridged.primary.todo.some((t) => t.includes('action=chip_id') && t.includes('/dev/cu.wchusbserial110')),
+    JSON.stringify(bridged.primary.todo));
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

@@ -1,7 +1,9 @@
 // device_flash 的工具实现（2026-10-31）：把 deviceFlash 的决策层接到真实的 esptool 上。
 //
-// 五档 action —— 递进而非并列，是保护策略的核心：
+// 六档 action —— 递进而非并列，是保护策略的核心：
 //   · list_targets：只读。列可烧磁盘（排除系统盘/内置盘/虚拟盘）与串口。不弹审批卡。
+//   · chip_id     ：只读。用 esptool `--chip auto` 跟芯片同步一次，查出它到底是哪颗
+//                   （桥芯片后面可能是 ESP32/STM32/AVR，光看 VID 永远不知道）。不弹审批卡。
 //   · plan        ：纯计算。装配 argv、生成审批卡、算出 plan_digest。**不执行**。不弹卡。
 //   · flash       ：写设备。必须回传 plan 阶段拿到的 plan_digest。**每次弹卡，L1 不可豁免**。
 //   · verify      ：回读校验（esptool verify_flash）。与 flash 共用同一条前置门与同一个 digest，
@@ -28,7 +30,7 @@ const { execFile } = require('child_process');
 const {
   CHIP_ARGS, partitionCandidates, buildFlashPlan, buildBackupPlan, approvalCard, planDigest,
   checkSegmentsFit, parseFlashIdInfo, normalizeSegments, parseSize, parseVidPid,
-  resolveImageFormat, esptoolFormatCheck,
+  resolveImageFormat, esptoolFormatCheck, parseHandshake, HANDSHAKE_VERDICTS,
 } = require('../deviceFlash');
 const { parseUsbTree, classifyPorts } = require('../deviceProbe');
 const { listDisks } = require('../diskList');
@@ -37,6 +39,9 @@ const { uf2ChannelHandler, readVolumes } = require('./deviceUf2Tool');
 const { isUf2Volume } = require('../deviceUf2');
 
 const FLASH_TIMEOUT_MS = 300000; // esptool 烧 4MB 固件在 921600 波特率下约 40s；留足余量
+// 握手要比烧写短得多：它只做一次 ROM 同步，正常 3–8s，失败时 esptool 自己在 10s 内超时。
+// 若沿用 300s，一块不存在的板子会让模型静默卡五分钟——用户只会以为工具挂了。
+const HANDSHAKE_TIMEOUT_MS = 30000;
 const FLASH_MAX_BUFFER = 4 * 1024 * 1024; // esptool 输出很长，4MB 足够
 const TAIL_CHARS = 4000;
 
@@ -283,9 +288,9 @@ function makeBackupCard({ port, out, chip, sizeBytes }) {
 }
 
 /** 默认执行器：argv 化 + 超时 + 输出上限。 */
-function defaultRun(argv) {
+function defaultRun(argv, timeoutMs = FLASH_TIMEOUT_MS) {
   return new Promise((resolve) => {
-    execFile(argv[0], argv.slice(1), { timeout: FLASH_TIMEOUT_MS, maxBuffer: FLASH_MAX_BUFFER, windowsHide: true },
+    execFile(argv[0], argv.slice(1), { timeout: timeoutMs, maxBuffer: FLASH_MAX_BUFFER, windowsHide: true },
       (err, stdout, stderr) => resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout: String(stdout || ''), stderr: String(stderr || ''), signal: err && err.signal }));
   });
 }
@@ -365,6 +370,83 @@ async function deviceFlashHandler(args = {}, deps = {}) {
       // excludedPorts 不是「噪音」而是证据：审批与排查都要能看出「系统里有口，但不是板子」
       excludedPorts: portRes.all.filter((p) => !portRes.flashable.includes(p)),
       notes,
+    };
+  }
+
+  // ── chip_id：跟芯片对一次话，把「桥芯片后面是什么」查清（L4b，2026-10-31）─────
+  // device_probe 的 probe-required 结论只能说到「可能是任意 MCU」。跨过这一步唯一的办法
+  // 是真的跟芯片同步一次（esptool 的 ROM 握手），而不是继续看 VID 猜。
+  // 只读：读芯片型号 / MAC / flash 容量，**不写任何字节**。唯一的副作用是把 MCU 复位进
+  // 下载模式（这也是 esptool 唯一能读到 ROM 的方式），因此不进审批面——与 device_probe 同档。
+  if (action === 'chip_id') {
+    if (!port) return { ok: false, action, error: '缺少 port：握手必须指定一个串口（取自 device_probe 的 ports）' };
+    const portRes = await readPorts({ exec, platform });
+    // 与 flash/verify 共用同一道硬闸，只换文案。判据分化是这类闸最典型的失效方式：
+    // 一处改了另一处没改，而测试只覆盖其中一处时全绿。
+    const gate = portGate(port, portRes, '探测');
+    if (gate) return { ...gate, action };
+    const tool = await resolveTool({ exec, platform });
+    if (!tool) return { ok: false, action, error: NO_TOOL_ERROR };
+    const subs = await resolveSubcommands(tool, { exec, platform });
+    // `--chip auto` 是这一步的全部意义：由芯片自己报身份，而不是我们猜一个型号去对话。
+    // 写死型号时 esp32 会去连 ESP32-S3 也报错退出，得到的结论是「连不上」而不是「它是 S3」。
+    // 波特率固定 115200：握手阶段只有一个目标「对上话」，高速率是同步成功之后才谈的事。
+    const argv = [
+      tool, '--chip', 'auto', '--port', port,
+      '--baud', '115200', '--before', sepFor(subs.style)('default_reset'), subs.id,
+    ];
+    const run = deps.run || defaultRun;
+    const r = await run(argv, HANDSHAKE_TIMEOUT_MS);
+    const hs = parseHandshake(`${r.stdout || ''}\n${r.stderr || ''}`, { exitCode: r.code });
+    const res = {
+      ok: hs.verdict === HANDSHAKE_VERDICTS.esp,
+      action, port, argv,
+      verdict: hs.verdict,
+      // confidence 只描述「身份是否确定」，不描述「能不能烧」——后者是 runnable/installed 的事。
+      // esp-need-bootloader 也算 certain：esptool 认出了 boot mode，说明它确实是 ESP。
+      confidence: hs.esp ? 'certain' : 'unknown',
+      channel: hs.esp ? 'esptool-serial' : null,
+      chip: hs.chip, chipKey: hs.chipKey, mac: hs.mac, flashSizeBytes: hs.flashSizeBytes,
+      exitCode: r.code, stderr: tail(r.stderr),
+    };
+    const keyHint = hs.chipKey
+      ? `chip=${hs.chipKey}`
+      : '该型号未登记在 CHIP_ARGS：烧写会退回默认参数（波特率/复位时序），请先确认是否本版本支持';
+    if (hs.verdict === HANDSHAKE_VERDICTS.esp) {
+      return {
+        ...res,
+        next: `身份已确认：${hs.chip}${hs.flashSizeBytes ? `，flash ${(hs.flashSizeBytes / 1024 ** 2).toFixed(0)}MB` : ''}。`
+          + `下一步 action=plan，port=${port}，${keyHint}。`,
+        warnings: hs.chipKey ? [] : [keyHint],
+      };
+    }
+    if (hs.verdict === HANDSHAKE_VERDICTS.needBoot) {
+      return {
+        ...res,
+        error: `是 ESP 芯片（esptool 认出了 boot mode），但它没在下载模式，因此读不到 flash 容量。`
+          + '请让板子进下载模式（按住 BOOT 再点 RST 或重新上电；有些板子没有自动复位电路，必须手动），然后重跑本动作。这次没有写入任何字节。',
+      };
+    }
+    if (hs.verdict === HANDSHAKE_VERDICTS.port) {
+      return {
+        ...res,
+        error: `串口 ${port} 打不开（被占用 / 无权限 / 已拔掉）：先 \`lsof ${port}\` 看谁占着，或换一根数据线。`
+          + '**这与芯片身份无关**，不能据此认为它不是 ESP。',
+      };
+    }
+    if (hs.verdict === HANDSHAKE_VERDICTS.noResponse) {
+      return {
+        ...res,
+        error: '芯片没有响应。可能它根本不是 ESP（桥芯片后面常是 STM32 / AVR / 打印机芯片），'
+          + '也可能是 ESP 但没进下载模式、自动复位电路没接、或供电不足。'
+          + '**不能据此判定它不是 ESP**——若你确认这是 ESP 板，请手动进下载模式后重试；'
+          + '若不是，改走同口的 stm32flash / avrdude 通道（见 device_probe 的 alternatives）。',
+      };
+    }
+    return {
+      ...res,
+      error: '握手没能得出结论（esptool 输出里没有可识别的芯片身份行）：原始输出见 stderr。'
+        + '常见原因是 esptool 版本行为变化，或板子进入了非预期的启动模式。',
     };
   }
 
@@ -505,7 +587,7 @@ async function deviceFlashHandler(args = {}, deps = {}) {
   }
 
   if (action !== 'flash' && action !== 'verify') {
-    return { ok: false, action, error: `未知 action：${action}（只支持 list_targets / plan / flash / verify / backup）` };
+    return { ok: false, action, error: `未知 action：${action}（只支持 list_targets / chip_id / plan / flash / verify / backup）` };
   }
 
   // ── flash / verify：共用同一条前置门，差别只在最后那条子命令 ──────────────────
