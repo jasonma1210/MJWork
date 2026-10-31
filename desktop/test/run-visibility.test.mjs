@@ -307,5 +307,37 @@ check('M5 主进程把 AC 满足率 + Judge 记账随 done 事件下发',
 check('M5 message.acProgress 双语齐备', !!zhMessage.acProgress && !!enMessage.acProgress,
   `zh=${zhMessage.acProgress || '-'} / en=${enMessage.acProgress || '-'}`);
 
+// ── M6（2026-10-31）：停止原因的「枚举 ↔ 界面映射 ↔ 双语」三面一致 ──
+// 事故形状：agent-core 的 STOP_REASONS 新增一个值，而 MessageStream 的 STOP_LABEL 没有对应键
+// ⇒ `stopLabel` 求值为空串，收尾条上「为什么停」那一格是空的。用户看到的不是「没停机」而是
+// 「一片空白」，在长任务里这比报错更难诊断——而这正是收尾条存在的唯一理由。
+// 反向也守：STOP_LABEL 多出枚举里没有的键 = 枚举删了值没清映射（死映射会掩盖下一次改名）。
+// 第三面：映射指向的 i18n 键必须中英都在，否则切到英文/某语言漏译时渲染出空或 key 名。
+// 本套件是 ESM（.mjs），agent-core 也是 ESM（`export const`）⇒ 用动态 import 取真值，
+// 不要用 require（.mjs 里没有它）。取的是**运行时真值**而不是从源码正则里抠出来的字符串，
+// 这样「枚举改了名字」这种改动会真实反映到这里。
+const { STOP_REASONS } = await import('../agent-core/exhaustedNotice.js');
+const stopBlock = (() => {
+  const i = streamSrc.indexOf('const STOP_LABEL: Record<string, string> = {');
+  if (i < 0) return '';
+  const j = streamSrc.indexOf('\n  };', i);
+  return j < 0 ? '' : streamSrc.slice(i, j);
+})();
+// 键有两种写法：裸标识符 `context:` 与带引号 `'total-cap':`
+const stopMap = [...stopBlock.matchAll(/(?:'([^']+)'|([A-Za-z_$][\w$]*)):\s*tr\('message\.([A-Za-z0-9_]+)'\)/g)]
+  .map((m) => ({ reason: m[1] || m[2], i18n: m[3] }));
+check('M6 自检：真的解析出了 STOP_LABEL 映射（防正则失效后恒真）',
+  stopMap.length >= 3 && stopMap.every((x) => x.reason && x.i18n),
+  `${stopMap.length} 条: ${stopMap.map((x) => x.reason).join(',')}`);
+const noLabel = STOP_REASONS.filter((r) => !stopMap.some((x) => x.reason === r));
+check('M6 每个 STOP_REASON 都有界面文案（缺一个都不会报错，只会静默空一格）',
+  noLabel.length === 0, `缺: ${noLabel.join(', ')}`);
+const deadLabel = stopMap.filter((x) => !STOP_REASONS.includes(x.reason)).map((x) => x.reason);
+check('M6 反向：STOP_LABEL 不得有枚举里不存在的键（死映射）',
+  deadLabel.length === 0, `多余: ${deadLabel.join(', ')}`);
+const noI18n = stopMap.filter((x) => !zhMessage[x.i18n] || !enMessage[x.i18n]).map((x) => x.i18n);
+check('M6 三面闭合：映射指向的文案中英齐备',
+  noI18n.length === 0, `缺: ${noI18n.join(', ')}`);
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);
