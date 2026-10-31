@@ -181,53 +181,5 @@ await check('⑥ 账本查询内核与 IPC 口径一致（asOf 快照 + 汇总=�
   assert.equal(page.asOf, ledgerQuery.currentAsOf(db));
 });
 
-// ── 设备域（2026-10-31）：两条只读通道的装配与降级 ──
-// 这一域和上面的账本域不同：它不持存储、不需要 getter，数据全部来自现场枚举。
-// 但它有两个**只靠读代码看不出来**的失败形态，必须断言：
-//   ① 「挂上了」与「挂在哪里」是两件事 —— 通道必须在 registerDomainIpc 的装配链上注册，
-//      否则 main.js 里没有任何人再调 initDeviceIpc，面板永远拿到空；
-//   ② 探测抛错必须变成 `{ ok:false, error }`，不能让 IPC 抛 —— 渲染层 catch 到的只是
-//      Electron 包装后的字符串，而面板会停在「加载中」或直接白屏。
-// 断言只用注入的假实现，**不真跑** system_profiler / diskutil（机器相关且慢，
-// 断言只能退化成「形状像不像」，那种断言对上面两种失败形态一条都抓不住）。
-await check('⑦ 设备域通道已在 registerDomainIpc 装配链上注册（不是只在 main.js 里另开一处）', () => {
-  for (const ch of ['device:probe', 'device:targets']) {
-    assert.ok(handlers.has(ch), `通道未注册：${ch}`);
-  }
-});
-
-await check('⑧ 探测与目标枚举都透传给注入的实现，且失败降级为 { ok:false } 而不是抛', async () => {
-  const { initDeviceIpc } = require('../main/ipc/device.js');
-  let probeCalls = 0;
-  let targetCalls = 0;
-  // 假实现刻意返回「形状与真实一致」的最小对象：断言读的是透传关系，不是造出来的数据
-  initDeviceIpc({
-    probe: async () => { probeCalls += 1; return { ok: true, platform: 'test', devices: [], channels: [], notes: ['fake'] }; },
-    listTargets: async () => { targetCalls += 1; return { ok: true, ports: [], uf2Volumes: ['/Volumes/FAKE'], notes: [] }; },
-  });
-  const p = await handlers.get('device:probe')({});
-  const t = await handlers.get('device:targets')({});
-  assert.equal(probeCalls, 1, 'device:probe 没有调用注入的探测实现（通道被旁路）');
-  assert.equal(targetCalls, 1, 'device:targets 没有调用注入的枚举实现');
-  assert.equal(p.ok, true);
-  assert.deepEqual(p.notes, ['fake']);
-  assert.deepEqual(t.uf2Volumes, ['/Volumes/FAKE']);
-
-  // 反向样本：实现抛错时必须是「解决为 ok:false」，而不是让 invoke 拒绝。
-  // 若这里改成 rejects，面板侧的 try/catch 会走 catch 分支，错误信息只剩 Electron 包装串。
-  initDeviceIpc({ probe: async () => { throw new Error('boom-probe'); } });
-  const failed = await handlers.get('device:probe')({});
-  assert.equal(failed.ok, false, '抛错后未降级为 ok:false');
-  assert.match(String(failed.error), /boom-probe/, '降级结果没带出原始原因（事后无法定位）');
-
-  // 反向样本：返回非对象（null / 字符串）也算失败 —— 渲染层拿到裸值会在解构时崩
-  initDeviceIpc({ probe: async () => null });
-  const bad = await handlers.get('device:probe')({});
-  assert.equal(bad.ok, false, '非对象返回值未按失败处理');
-
-  // 恢复默认实现，避免测试尾巴把「默认实现」这件事留成假象
-  initDeviceIpc();
-});
-
 console.log(`\ndomain-ipc-wiring: ${pass}/${pass + fail} 通过`);
 if (fail > 0) process.exitCode = 1;

@@ -21,9 +21,6 @@ const { deviceProbeHandler, parseLinuxUsb, parseWinUsb, resolveEsptoolFromPath, 
 const {
   parseAdbDevices, parseAdbDeviceLine, pickAdbDevice, parseGetprop, summarizeAndroid, describeAndroid, isSafeSerial,
 } = require('../main/deviceAdb.js');
-// 渲染层的设备面板判定（.ts）。跨层 import 是刻意的：android 的四态是**一条契约的两端**
-// ——主进程产出它、面板消费它，两端放同一个套件里才能锁「产出与呈现一致」。
-const { androidView } = require('../renderer/src/lib/androidView.ts');
 const { deviceFlashHandler, inspectSegments, resetSubcommandCacheForTest } = require('../main/tools/deviceFlashTool.js');
 const {
   parseHwid, splitPyserialOutput, parsePyserialDetailed, parseLoadedDrivers, assessBridges,
@@ -2345,13 +2342,6 @@ const hostExec = async (cmd) => {
   check('端到端：用户态一律 canFlash=false，且提示要用户自己进 bootloader（不代执行 reboot）',
     pDev.android.canFlash === false && pDev.android.next.includes('bootloader')
     && pDev.notes.some((n) => n.includes('bootloader')));
-  // 契约两端一致性：主进程真实产出的 android 段喂给面板判定，必须被判成「有设备」且能读出型号。
-  // 这条防的是「后端改了字段名、面板静默什么都不显示」——两端各自有测试也发现不了这种漂移。
-  const avFromProbe = androidView(pDev.android);
-  check('契约两端：主进程产出的 android 段喂给面板判定 ⇒ 有设备且读出厂商型号',
-    avFromProbe.kind === 'device' && avFromProbe.name === 'OPPO OPD2409'
-    && avFromProbe.meta.includes('Android 15'), `${avFromProbe.kind}/${avFromProbe.name}/${avFromProbe.meta}`);
-
   called.length = 0;
   const pUn = await deviceProbeHandler(mk('List of devices attached\nAAA\tunauthorized\n'));
   check('端到端：未授权时不跑 getprop（跑了也是白跑，还会把 exit=1 误报成「读不到型号」），且下一步指向授权',
@@ -2384,55 +2374,6 @@ const hostExec = async (cmd) => {
   const pWin = await deviceProbeHandler({ platform: 'win32', exec: async () => ({ stdout: '' }), runArgv: async () => ({ code: 0, stdout: '' }) });
   check('win32 未接线 adb 探测 ⇒ android=null 且 note 说明「无法判断」（不是「没有设备」）',
     pWin.android === null && pWin.notes.some((n) => n.includes('暂未接线 adb 探测')));
-}
-
-// ── L2c：设备面板的 android 段判定（渲染层 lib/androidView.ts）────────────────
-// 为什么守这一小段：它的全部内容是**四态**，而四态压平是最容易发生、也最难靠肉眼发现的回归
-// （面板会「看起来正常」—— 只是什么都不显示，或者把「查不到」说成「没有设备」）。
-// 渲染层没有渲染测试，所以判据抽成纯函数后用真输入断言，而不是静态扫描源码里的分支字符串。
-{
-  check('面板四态：字段缺失（undefined）⇒ 不渲染（旧后端 / probe 整体失败时已有失败卡，别再叠一条）',
-    androidView(undefined).kind === 'hidden');
-  check('面板四态：null ⇒ 「查不到」（后端明确说不知道，必须说出来，不能当成没有设备）',
-    androidView(null).kind === 'unavailable');
-  check('面板四态：空 devices ⇒ 「查了、确实没有」⇒ 不渲染（每个非安卓用户都看到一行「没有设备」是噪音）',
-    androidView({ devices: [], canFlash: false }).kind === 'none');
-  check('面板四态：缺 devices 字段也按「没有」处理，不抛（IPC 内容不可信）',
-    androidView({}).kind === 'none' && androidView('garbage').kind === 'hidden' && androidView([1, 2]).kind === 'hidden');
-  check('面板四态：null 与 undefined 不能合并（前者要说话、后者不说话）',
-    androidView(null).kind !== androidView(undefined).kind);
-
-  const full = androidView({
-    devices: [{ serial: 'c35e1792', state: 'device', label: 'Android 用户态（USB 调试已授权）' }],
-    picked: 'c35e1792', canFlash: false, state: 'device',
-    label: 'Android 用户态（USB 调试已授权）', next: '须用户自己进 bootloader',
-    summary: { manufacturer: 'OPPO', model: 'OPD2409', androidVersion: '15', abi: 'arm64-v8a', slot: '_b' },
-    error: '',
-  });
-  check('有设备：标题用「厂商 型号」，副标题带系统/ABI/槽位（这几项决定该选哪份固件）',
-    full.kind === 'device' && full.name === 'OPPO OPD2409'
-    && full.meta.includes('Android 15') && full.meta.includes('arm64-v8a') && full.meta.includes('slot _b'));
-  check('有设备：状态行必须有内容（它回答「现在为什么不能刷」，空着等于没说）',
-    full.stateLabel.length > 0 && full.hint.length > 0);
-  // 后端文案的第一读者是模型，里面带 `**用户自己**` / `` `adb reboot ...` `` 这类 markdown 标记；
-  // 面板是纯文本渲染。不剥的话用户看到的是字面星号与反引号（跑数据层预览时才发现）。
-  const md = androidView({
-    devices: [{ serial: 'A', state: 'device' }], label: '**用户态**',
-    next: '让**用户自己**执行 `adb reboot bootloader`，本工具不代执行', error: '见 `docs/x.md`',
-  });
-  check('面板显示：markdown 强调/反引号被剥掉（否则用户看到字面的星号与反引号）',
-    !md.hint.includes('**') && !md.hint.includes('`') && !md.stateLabel.includes('**')
-    && !md.error.includes('`') && md.hint.includes('用户自己'), md.hint.slice(0, 40));
-  const noSum = androidView({ devices: [{ serial: 'AAA', state: 'unauthorized' }], error: '唯一在线的设备处于 unauthorized' });
-  check('摘要缺席（未授权时读不到型号）⇒ 标题退回序列号、副标题为空，不显示 undefined/空串拼接痕迹',
-    noSum.name === 'AAA' && noSum.meta === '' && !full.meta.includes('undefined'));
-  check('语气色：有 error ⇒ warn（要人先处理）', noSum.tone === 'text-warn' && noSum.error.includes('unauthorized'));
-  check('语气色：bootloader ⇒ success（已在烧写模式，这是唯一「能推进」的状态）',
-    androidView({ devices: [{ serial: 'AAA', state: 'bootloader' }], label: 'fastboot 模式' }).tone === 'text-success');
-  check('语气色：普通用户态 ⇒ text2（纯说明）；**不看 canFlash**（它恒为 false，拿它配色会让所有卡片永远警告色）',
-    full.tone === 'text-text2');
-  check('多台设备：more = n-1，不是把其余设备静默丢掉',
-    androidView({ devices: [{ serial: 'A', state: 'device' }, { serial: 'B', state: 'device' }] }).more === 1);
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

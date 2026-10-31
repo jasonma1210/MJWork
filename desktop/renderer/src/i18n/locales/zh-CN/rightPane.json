@@ -17,7 +17,6 @@
   "panelChanges": "代码变更",
   "panelBrowser": "浏览器",
   "panelSideChat": "侧边对话",
-  "panelDevice": "设备",
   "unsupportedTag": "待支持",
   "unsupportedGeneric": "该面板尚未支持",
   "unsupportedBrowser": "内置浏览器尚未实现：需要在主进程新增网页渲染视图能力",

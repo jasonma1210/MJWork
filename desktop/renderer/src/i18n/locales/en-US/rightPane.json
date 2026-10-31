@@ -17,7 +17,6 @@
   "panelChanges": "Code changes",
   "panelBrowser": "Browser",
   "panelSideChat": "Side chat",
-  "panelDevice": "Devices",
   "unsupportedTag": "Soon",
   "unsupportedGeneric": "This panel is not supported yet",
   "unsupportedBrowser": "Built-in browser is not implemented yet: it needs a web-render view in the main process",

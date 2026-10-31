@@ -446,11 +446,6 @@ contextBridge.exposeInMainWorld('mjcode', {
   // 「查看引用」按快照回读（不返回正文，只回引用元数据）；清理只删「又老又没被引用过」的快照
   knowledgePlanCitations: (payload) => ipcRenderer.invoke('knowledge:plan-citations', payload || {}),
   knowledgePrunePlans: (payload) => ipcRenderer.invoke('knowledge:prune-plans', payload || {}),
-  // 设备域（2026-10-31）：右栏设备面板的两条只读数据源。
-  // 不提供任何写入方法（flash/erase/backup 一律不在桥面上）：烧写必须经 device_flash 的
-  // plan → plan_digest → 审批卡链路，面板加一条写方法就等于开一条绕过 digest 的旁路。
-  deviceProbe: () => ipcRenderer.invoke('device:probe'),
-  deviceTargets: () => ipcRenderer.invoke('device:targets'),
   artifactsIndex: (payload) => ipcRenderer.invoke('artifacts:index', payload || {}),
   artifactsSection: (payload) => ipcRenderer.invoke('artifacts:section', payload || {}),
   artifactsVersions: (payload) => ipcRenderer.invoke('artifacts:versions', payload || {}),

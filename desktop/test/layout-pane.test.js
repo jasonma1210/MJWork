@@ -202,61 +202,6 @@ check('布局状态持久化（刷新后保持）', () => {
   assert.match(app, /} = usePaneLayout\(\{ projectPath:/, 'App 未接线 usePaneLayout（持久化的 hook 成了孤儿）');
 });
 
-// 2026-10-31：设备面板（硬件五层模型的**人读**入口）。
-// 三条契约，缺任何一条这个面板就等于没上线：
-//   ① App 真的把它挂在右栏（与其余面板同一种装配形态）；
-//   ② 右栏 tab 与保活渲染都认这个 id（否则用户根本切不到它）；
-//   ③ 探测**必须首次激活才跑**：右栏面板全是常驻挂载（见 RightPane 的保活注释），
-//      effect 若不判 active，每次启动都会替「从不打开设备面板」的用户跑一遍
-//      system_profiler / kmutil / pyserial 枚举 —— 那是纯白付的主进程开销。
-// 第 ③ 条是对**形式**的断言（闸门位置），因为可观察行为在 Node 冒烟里跑不到 effect；
-// 已做变异验证：删掉闸门行 → 红；把 refresh() 提到闸门之前 → 红。
-check('设备面板接线：App 装配 + tab 可达 + 探测懒加载', () => {
-  assert.match(app, /devicePanel=\{<DevicePanel/, 'App 未把设备面板交给右栏');
-  const right = read('components/RightPane.jsx');
-  // 两个清单一**分开**断言，不能只搜整个文件里的 `id: 'device'`：
-  // 变异实测（摘掉 PANEL_TABS 里那一项、保留「+」菜单里那一项）时，全文搜索照样绿——
-  // 而 PANEL_TABS 正是 SUPPORTED_IDS 的来源，缺了它菜单项会变灰、active 回落到第一个 tab，
-  // 面板彻底不可达。断言必须落在各自清单内，才分得清「tab 可达」与「菜单里有个名字」。
-  const slice = (startMark, endMark) => {
-    const a = right.indexOf(startMark);
-    const b = right.indexOf(endMark, a);
-    assert.ok(a >= 0 && b > a, `未能界定 ${startMark} 的范围（断言会空过）`);
-    return right.slice(a, b);
-  };
-  assert.match(slice('export const PANEL_TABS = [', '];'), /id: 'device'/, '右栏 tab 未登记 device');
-  assert.match(slice('export const ADDABLE_PANELS = [', '];'), /id: 'device'/, '「+」菜单未登记 device');
-  assert.match(right, /active\.id === 'device'/, 'device 面板未接入保活渲染（切过去会是空白）');
-  const panel = read('components/DevicePanel.tsx');
-  assert.match(panel, /if \(!active \|\| loaded\) return;/, '探测缺少 active 闸门（挂载即探测）');
-  // 光有闸门行不够：闸门必须真的挡在探测调用前。若把 refresh() 提到闸门上方，正则仍绿而行为已回退。
-  const eff = panel.slice(panel.indexOf('useEffect('), panel.indexOf('const devices ='));
-  const guardIdx = eff.indexOf('if (!active || loaded) return;');
-  const callIdx = eff.indexOf('void refresh();');
-  assert.ok(guardIdx >= 0, '截取到的 effect 片段里找不到闸门（片段边界可能已漂移）');
-  assert.ok(callIdx > guardIdx, 'active 闸门没挡在探测调用之前');
-});
-
-// 2026-10-31：设备面板的 Android 段。「空态」判据必须把 android 算进去。
-// 反转的实际后果：手机在用户态时 VID/PID 可能不在板卡表里（USB 枚举认不出），
-// devices / channels / uf2Volumes 三者皆空 ⇒ 面板显示「未发现设备」，而同一份 probe 结果
-// 里明明写着「检测到 Android 设备 OPD2409」。这是自相矛盾，且比不显示更坏。
-// 这条是对**形式**的断言（判据里有没有那一项）：empty 是组件内的布尔表达式，
-// 没有渲染测试能跑到它；已做变异验证 —— 摘掉 av.kind 那一项 ⇒ 红。
-check('设备面板空态：Android 设备也算「有东西」，不能只按 USB/通道/UF2 三空判空', () => {
-  const panel = read('components/DevicePanel.tsx');
-  const line = panel.slice(panel.indexOf('const empty ='), panel.indexOf('const failed ='));
-  assert.ok(line.includes('const empty ='), '未能界定 empty 判据（断言会空过）');
-  assert.match(line, /av\.kind !== 'device'/, 'empty 判据没把 Android 设备算进去（识别到手机却显示「未发现设备」）');
-  // 顺带锁住 android 段的数据来源：必须是 lib/androidView 的判定结果，而不是组件里另写一套三态。
-  assert.match(panel, /import \{ androidView \} from '\.\.\/lib\/androidView'/,
-    '设备面板没用 lib/androidView 的判定（两套三态迟早漂移）');
-  // 两个渲染分支的存在性。这是**字符代理**，只能证明「代码里挂着这两个分支」，证明不了渲染效果；
-  // 但少了它，「整段 android 区块被删掉」不会有任何测试变红（纯函数测试全绿、面板静悄悄少一块）。
-  assert.match(panel, /av\.kind === 'device' &&/, 'android 有设备时的卡片分支不在（面板不会显示手机信息）');
-  assert.match(panel, /av\.kind === 'unavailable' &&/, 'android 查不到时的提示分支不在（adb 没装时面板一声不吭）');
-});
-
 check('源码内无残留裸色（bg-black/、red-400、green-400、yellow-）', () => {
   const files = fs.readdirSync(path.join(SRC, 'components'))
     .filter((f) => f.endsWith('.jsx') && !f.includes('deprecated'))
