@@ -263,7 +263,8 @@ function buildFbPlan({
     return {
       ok: false, warnings,
       error: `fastboot 通道只接受 .img（分区镜像）：${firmware} 不是。`
-        + 'OTA 的 .zip 要走 recovery 的 adb sideload；DFU 用 .bin/.dfu；esptool 用 .bin',
+        + 'OTA 的 .zip 是容器（内含多份镜像 + 元数据），本版本未接线 adb sideload，需在 recovery 里手动刷；'
+        + 'DFU 用 .bin/.dfu；esptool 用 .bin',
     };
   }
 

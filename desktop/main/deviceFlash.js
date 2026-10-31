@@ -83,6 +83,10 @@ const IMAGE_FORMATS = [
   // 2026-10-31 随 L4 DFU 通道登记：此前 .dfu 落在「未登记扩展名」里只告警，等于放行写坏。
   { ext: 'dfu', channel: 'dfu-util', note: 'DfuSe 容器（带元素表）：只能由 dfu-util 写，esptool 写进去的是容器头部字节' },
   { ext: 'hex', channel: null, note: 'Intel HEX 是文本：esptool 只收裸二进制，先用 objcopy -I ihex -O binary in.hex out.bin 转换' },
+  // .zip 是 OTA 升级包（内含 boot.img / system.img 等多份镜像 + 元数据）。登记它的目的不是
+  // 「支持」，而是把判定从「不认识」（known=false → 只告警、**放行**）升级成「确定不对」：
+  // 未登记时 esptool 通道会照写，把容器字节铺到 0x0，板子起不来。
+  { ext: 'zip', channel: null, note: 'OTA 升级包（zip 容器）：不能当裸二进制烧；本版本未接线 adb sideload，需在 recovery 里手动刷' },
   // .img 缺省仍归磁盘通道：同一个 .img 既可能是要拷到 SD 卡的整盘镜像，也可能是 Android 分区镜像，
   // 字节级分不出目标。Android 那条路由**必须**显式 channel=fastboot（2026-10-31 接的 fastboot 通道），
   // 猜错方向完全不同——把整盘镜像 flash 到一个分区，或把 boot.img 直接写卡。
@@ -113,6 +117,91 @@ function esptoolFormatCheck(file) {
   if (fmt.channel === 'esptool-serial') return { ok: true };
   if (fmt.known) return { ok: false, error: `格式与通道不匹配：${fmt.why}（${file}）` };
   return { ok: true, warning: fmt.why };
+}
+
+// ── ESP 镜像头与芯片一致性（2026-10-31）───────────────────────────────────────
+//
+// 为什么需要这一层：`.bin` 是裸二进制，扩展名不携带「这是给哪颗芯片编的」。把 ESP32-S3 的固件
+// 按 esp32 的参数烧到 ESP32 上，esptool 会照写不误（它只按你给的 chip 选协议与波特率），
+// 结果是板子不启动——而命令返回成功。这是本项目反复遇到的同一类错误：
+// **不是报错，而是「看起来成功了」**。
+//
+// 判据来源必须是权威而不是记忆。本文件按本机 esptool 5.6.0 的源码抄写
+// （/opt/anaconda3/lib/python3.12/site-packages/esptool）：
+//   · `bin_image.py` 的 `load_common_header`：公共头 `struct.unpack("<BBBBI")` 共 8 字节
+//     = magic(0xE9) / segment_count / flash_mode / flash_size_freq / entrypoint；
+//   · 同文件的扩展头 `EXTENDED_HEADER_STRUCT_FMT = "B" * 16`，第 5 个字节（下标 4）是 chip_id
+//     ⇒ 文件偏移 8 + 4 = **0x0C**，单字节；
+//   · `ESP_CHIP_IDS` 的每个值逐个抄自 `targets/esp32*.py` 的 `IMAGE_CHIP_ID`。
+// 抄错这张表的后果是**误拦合法烧写**，比不做校验更糟；所以表里只放能从源码核对的芯片，
+// 认不出的 id 一律只告警（它仍可能是合法的新芯片）。
+const ESP_IMAGE_MAGIC = 0xe9;
+const ESP_IMAGE_MIN_HEADER = 24; // 8 公共头 + 16 扩展头
+const ESP_CHIP_IDS = {
+  // targets/esp32.py IMAGE_CHIP_ID = 0（其余同样逐个对应，注释只为标明出处形态）
+  esp32: 0, esp32s2: 2, esp32s3: 9, esp32c3: 5, esp32c6: 13,
+  esp32c2: 12, esp32c5: 23, esp32c61: 20, esp32h2: 16, esp32h4: 28,
+  esp32p4: 18, esp32e22: 31, esp32s31: 32, esp32h21: 25,
+};
+const ESP_CHIP_BY_ID = new Map(Object.entries(ESP_CHIP_IDS).map(([k, v]) => [v, k]));
+
+/**
+ * 解析 ESP 固件镜像头。**纯函数**，只吃前 24 字节。
+ * `ok:false` 不是错误——绝大多数非 ESP 产物（partition-table 的 0xAA50、文件系统镜像、
+ * 普通裸二进制）本来就不是这种镜像，调用方据此**静默跳过**校验，不该报警。
+ * @returns {{ok:true, chipId:number, chipName:string, segments:number, entry:number}|{ok:false, reason:string, detail?:string}}
+ */
+function parseEspImageHeader(buf) {
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || []);
+  if (b.length < ESP_IMAGE_MIN_HEADER) return { ok: false, reason: 'too-short', detail: `只有 ${b.length} 字节` };
+  if (b[0] !== ESP_IMAGE_MAGIC) return { ok: false, reason: 'not-esp-image', detail: `magic=0x${b[0].toString(16)}` };
+  const segments = b[1];
+  // 段数 0 或 >16：格式对不上（也可能是 ESP8266 v1 老格式），不据此判断芯片
+  if (!segments || segments > 16) return { ok: false, reason: 'bad-segment-count', detail: `segments=${segments}` };
+  const chipId = b[12];
+  return {
+    ok: true, chipId, segments,
+    chipName: ESP_CHIP_BY_ID.get(chipId) || '',
+    entry: b.readUInt32LE(4),
+  };
+}
+
+/**
+ * 镜像头里的芯片 vs 本次声明的 chip。
+ *
+ * 三种结论分开，是因为「下一步」完全不同：
+ *   · mismatch（**双方都明确**且不同）→ 拒绝。这是真会写坏设备的场景；
+ *   · unknown（镜像里的 id 不在已知表）→ 只告警。新芯片刚上市时表必然落后，
+ *     拿「我不认识」去拦合法烧写是本末倒置；
+ *   · 未显式声明 chip 而与镜像不符 → 只告警并给出应传的值。缺省 esp32 是历史行为，
+ *     不能因为用户没写 chip 就把一个可能正确的烧写拒掉（他也许正想按 esp32 参数烧 ESP32）。
+ * @returns {{status:'match'|'mismatch'|'unknown-chip'|'skip', error?:string, warning?:string}}
+ */
+function checkImageChip({ header, chip, chipExplicit = false } = {}) {
+  if (!header || !header.ok) return { status: 'skip' };
+  const declared = String(chip || '').toLowerCase();
+  const actual = header.chipName;
+  if (!actual) {
+    return {
+      status: 'unknown-chip',
+      warning: `镜像头里的芯片 ID=${header.chipId}（0x${header.chipId.toString(16)}）不在已知表内：`
+        + `无法确认它是否为 ${declared}，继续按 ${declared} 参数烧写。若板子不启动，先核对这份固件是给哪颗芯片编的。`,
+    };
+  }
+  if (!declared || actual === declared) return { status: 'match' };
+  if (!chipExplicit) {
+    return {
+      status: 'mismatch',
+      warning: `镜像头声明这颗固件是给 **${actual}** 编的，但本次没有显式指定 chip（将按缺省 ${declared} 装配参数）：`
+        + `建议显式传 chip=${actual}，否则烧上去很可能不启动。`,
+    };
+  }
+  return {
+    status: 'mismatch',
+    error: `镜像与芯片不匹配：镜像头声明 **${actual}**（ID=${header.chipId}），本次指定 chip=${declared}。`
+      + 'esptool 只按你给的 chip 选协议与波特率，不会核对镜像——照此烧写的结果是「命令成功、板子不启动」，'
+      + '而且 flash 已被覆盖。请确认固件对应的芯片后重试（或改传正确的 chip）。',
+  };
 }
 
 /**
@@ -413,5 +502,6 @@ module.exports = {
   CHIP_ARGS, MIN_CANDIDATE_BYTES, partitionCandidates, buildFlashPlan, buildBackupPlan, approvalCard, planDigest,
   parseOffset, parseSize, parseVidPid, normalizeSegments, checkSegmentsFit, parseFlashIdInfo,
   IMAGE_FORMATS, resolveImageFormat, esptoolFormatCheck,
+  ESP_IMAGE_MAGIC, ESP_IMAGE_MIN_HEADER, ESP_CHIP_IDS, parseEspImageHeader, checkImageChip,
   HANDSHAKE_VERDICTS, chipKeyOf, parseHandshake,
 };

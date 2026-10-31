@@ -14,10 +14,11 @@ const {
   partitionCandidates, buildFlashPlan, buildBackupPlan, approvalCard, planDigest, checkSegmentsFit,
   parseFlashIdInfo, parseVidPid, parseSize, resolveImageFormat, esptoolFormatCheck,
   parseHandshake, chipKeyOf, HANDSHAKE_VERDICTS,
+  ESP_CHIP_IDS, parseEspImageHeader, checkImageChip,
 } = require('../main/deviceFlash.js');
 const { parseDiskutilListText } = require('../main/diskList.js');
 const { deviceProbeHandler, parseLinuxUsb, parseWinUsb, resolveEsptoolFromPath, PROBES } = require('../main/tools/deviceProbeTool.js');
-const { deviceFlashHandler, inspectSegments } = require('../main/tools/deviceFlashTool.js');
+const { deviceFlashHandler, inspectSegments, resetSubcommandCacheForTest } = require('../main/tools/deviceFlashTool.js');
 const {
   parseHwid, splitPyserialOutput, parsePyserialDetailed, parseLoadedDrivers, assessBridges,
   NO_DRIVER_SENTINEL, DRIVER_PROBE_FAILED,
@@ -2117,6 +2118,127 @@ const hostExec = async (cmd) => {
   check('fastboot 识别：L2 verdict 是 not-serial，且建议文案点明是 Android（别按「缺驱动」去装驱动）',
     fbAdvice.bridges[0].verdict === 'not-serial' && fbAdvice.bridges[0].advice.includes('Android'),
     fbAdvice.bridges[0].advice);
+}
+
+// ── L4e：ESP 镜像头与芯片一致性（2026-10-31）─────────────────────────────────
+// 目标：把「ESP32-S3 的固件按 esp32 参数烧进去 → 命令成功、板子不启动」挡在写之前。
+// 判据来源是本机 esptool 5.6.0 的源码（bin_image.py 的 "<BBBBI" 公共头 + "B"*16 扩展头，
+// targets/esp32*.py 的 IMAGE_CHIP_ID），不是凭记忆 —— 抄错表会误拦合法烧写，比不校验更糟。
+{
+  const espHead = (chipId, { magic = 0xe9, segments = 4 } = {}) => {
+    const b = Buffer.alloc(24);
+    b[0] = magic;
+    b[1] = segments;
+    b.writeUInt32LE(0x403c8908, 4); // entrypoint（ESP32-S3 IRAM 的典型值，头部第 4..7 字节）
+    b[12] = chipId; // chip_id 在扩展头第 5 字节 ⇒ 文件偏移 8+4
+    return b;
+  };
+
+  // ① 头部解析：偏移与魔数
+  const s3 = parseEspImageHeader(espHead(9));
+  check('ESP 镜像头：chip_id 在偏移 0x0C，认得 ESP32-S3（9）并回出改名与段数',
+    s3.ok === true && s3.chipId === 9 && s3.chipName === 'esp32s3' && s3.segments === 4
+    && s3.entry === 0x403c8908, `${s3.chipName}/${s3.chipId}`);
+  check('ESP 镜像头：四颗常见芯片的 ID 与本机 esptool 源码一致（esp32=0 / s2=2 / s3=9 / c3=5 / c6=13）',
+    ESP_CHIP_IDS.esp32 === 0 && ESP_CHIP_IDS.esp32s2 === 2 && ESP_CHIP_IDS.esp32s3 === 9
+    && ESP_CHIP_IDS.esp32c3 === 5 && ESP_CHIP_IDS.esp32c6 === 13);
+  check('ESP 镜像头：partition-table（magic 0xAA50）判成「不是 ESP 镜像」而不是错误（否则每段都报警）',
+    parseEspImageHeader(Buffer.from([0xaa, 0x50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])).reason === 'not-esp-image');
+  check('ESP 镜像头：太短与段数越界各自单列一档（不据此判芯片）',
+    parseEspImageHeader(Buffer.alloc(8)).reason === 'too-short'
+    && parseEspImageHeader(espHead(9, { segments: 0 })).reason === 'bad-segment-count'
+    && parseEspImageHeader(espHead(9, { segments: 17 })).reason === 'bad-segment-count');
+
+  // ② 三档结论：match / mismatch / unknown-chip
+  const hdrS3 = parseEspImageHeader(espHead(9));
+  check('ESP 芯片校验：镜像与声明一致时通过（esp32s3 对 esp32s3）',
+    checkImageChip({ header: hdrS3, chip: 'esp32s3', chipExplicit: true }).status === 'match');
+  const explicitBad = checkImageChip({ header: hdrS3, chip: 'esp32', chipExplicit: true });
+  check('ESP 芯片校验：**显式**声明的芯片与镜像头冲突时拒绝，并说清「esptool 不核对镜像」',
+    explicitBad.status === 'mismatch' && String(explicitBad.error).includes('不匹配')
+    && String(explicitBad.error).includes('esp32s3') && String(explicitBad.error).includes('不启动'));
+  const implicitBad = checkImageChip({ header: hdrS3, chip: 'esp32', chipExplicit: false });
+  check('ESP 芯片校验：未显式声明时不拒绝、只提示应传的 chip（缺省 esp32 不能当声明用）',
+    implicitBad.status === 'mismatch' && !implicitBad.error && String(implicitBad.warning).includes('chip=esp32s3'));
+  const unknownId = checkImageChip({ header: parseEspImageHeader(espHead(200)), chip: 'esp32', chipExplicit: true });
+  check('ESP 芯片校验：认不出的芯片 ID 只告警不拦（新芯片上市时表必然落后，拦它会误拒合法烧写）',
+    unknownId.status === 'unknown-chip' && !unknownId.error && String(unknownId.warning).includes('200'));
+
+  // ③ 端到端：plan 就拒（人确认前看到冲突），flash 再查一次（摘要不含文件内容）
+  const espExec = async (cmd) => {
+    if (cmd.includes('command -v esptool')) return { stdout: '/usr/local/bin/esptool\n' };
+    return { stdout: '' };
+  };
+  const espDeps = (headBuf) => ({
+    platform: 'darwin', exec: espExec,
+    stat: () => ({ isFile: () => true, size: 1024 * 1024 }),
+    readHead: () => headBuf,
+    run: async () => ({ code: 0, stdout: 'Chip is ESP32-S3\nDetected flash size: 8MB', stderr: '' }),
+  });
+  resetSubcommandCacheForTest();
+  const planS3 = await deviceFlashHandler(
+    { action: 'plan', firmware: '/a/app.bin', chip: 'esp32', port: '/dev/cu.wch' }, espDeps(espHead(9)));
+  check('ESP 端到端：plan 阶段就拒绝「显式 chip=esp32 + S3 固件」（不让人先点一次审批卡再看错）',
+    planS3.ok === false && String(planS3.error).includes('不匹配'), `${planS3.ok}/${String(planS3.error).slice(0, 30)}`);
+  const planS3Implicit = await deviceFlashHandler(
+    { action: 'plan', firmware: '/a/app.bin', port: '/dev/cu.wch' }, espDeps(espHead(9)));
+  check('ESP 端到端：未传 chip 时 plan 通过但带告警（指出镜像其实是 S3，建议显式传 chip）',
+    planS3Implicit.ok === true && planS3Implicit.warnings.some((w) => w.includes('chip=esp32s3')));
+  resetSubcommandCacheForTest();
+  const planOk = await deviceFlashHandler(
+    { action: 'plan', firmware: '/a/app.bin', chip: 'esp32', port: '/dev/cu.wch' }, espDeps(espHead(0)));
+  check('ESP 端到端：头里是 esp32（0）且声明 esp32 时 plan 通过、无芯片告警',
+    planOk.ok === true && !planOk.warnings.some((w) => w.includes('镜像头')), JSON.stringify(planOk.warnings || []).slice(0, 80));
+  // 摘要不含文件内容 ⇒ 必须靠 flash 阶段的二次检查兜住「同路径换镜像」
+  resetSubcommandCacheForTest();
+  const flashSwapped = await deviceFlashHandler(
+    { action: 'flash', firmware: '/a/app.bin', chip: 'esp32', port: '/dev/cu.wch', plan_digest: planOk.plan_digest },
+    espDeps(espHead(9)));
+  check('ESP 端到端：plan 用 esp32 镜像、flash 时换成 S3 镜像 → 仍被拒（摘要防不住换文件，这层才防得住）',
+    flashSwapped.ok === false && String(flashSwapped.error).includes('不匹配'), String(flashSwapped.error).slice(0, 40));
+  resetSubcommandCacheForTest();
+
+  // ④ ESP-IDF 正常产物是「4 段」，其中 partition-table 的 magic 是 0xAA50、不是 ESP 镜像头。
+  // 这一层必须**静默跳过**：把它当错误报出来，会导致每一份真实的 IDF 产物都被拦住。
+  // （只测 parseEspImageHeader 返回 not-esp-image 不够 —— 那只是它自己，调用点那层的
+  //   「continue 还是报错」是另一回事，漏了就没人管。M7 变异就是靠这条才被抓到。）
+  const partTable = Buffer.alloc(24); partTable[0] = 0xaa; partTable[1] = 0x50;
+  const esptoolOutputs = { readHead: (f) => (/partition/.test(f) ? partTable : espHead(0)) };
+  const multiSizes = { '/a/app.bin': 900 * 1024, '/a/partition-table.bin': 3072 };
+  const multiDeps = {
+    platform: 'darwin', exec: espExec, readHead: esptoolOutputs.readHead,
+    stat: (f) => ({ isFile: () => true, size: multiSizes[f] ?? 1024 }),
+    run: async () => ({ code: 0, stdout: 'Chip is ESP32', stderr: '' }),
+  };
+  resetSubcommandCacheForTest();
+  const multi = await deviceFlashHandler({
+    action: 'plan', chip: 'esp32', port: '/dev/cu.wch',
+    segments: [{ offset: '0x10000', file: '/a/app.bin' }, { offset: '0x8000', file: '/a/partition-table.bin' }],
+  }, multiDeps);
+  check('ESP 端到端：多段里混入 partition-table（magic 0xAA50）时静默跳过、不当错误（否则真实 IDF 产物全被拦）',
+    multi.ok === true, `${multi.ok}/${String(multi.error).slice(0, 50)}`);
+  check('ESP 端到端：被跳过的段不在告警里制造噪音（非 ESP 镜像不是「问题」，提醒它等于教人忽略告警）',
+    multi.ok === true && !(multi.warnings || []).some((w) => w.includes('不是 ESP') || w.includes('partition-table')),
+    JSON.stringify(multi.warnings || []).slice(0, 100));
+  resetSubcommandCacheForTest();
+}
+
+// ── L4f：.zip（OTA 容器）登记（2026-10-31）───────────────────────────────────
+// 登记一个扩展名的目的常常不是「支持它」，而是把判定从「不认识」升级成「确定不对」：
+// resolveImageFormat 对未登记扩展名返回 known=false，而 esptoolFormatCheck 在 known=false 时
+// **只告警、放行**。所以「没登记」在行为上等于「照写」——把 OTA 容器字节铺到 0x0，
+// esptool 返回 0、板子起不来。
+{
+  const zip = esptoolFormatCheck('/a/ota.zip');
+  check('.zip 已登记为已知容器 ⇒ esptool 通道硬拒（未登记时它只告警、会照写容器字节）',
+    zip.ok === false && String(zip.error).includes('OTA 升级包'),
+    `${zip.ok}/${String(zip.error).slice(0, 40)}`);
+  check('.zip 的拒绝理由写明本版本未接 adb sideload（给出路，而不是只说「不行」）',
+    String(zip.error).includes('adb sideload') && String(zip.error).includes('recovery'));
+  // 对照：未登记扩展名仍只提醒不拒绝 —— 锁住「登记 .zip 没有把整张格式闸变成白名单」
+  const stray = esptoolFormatCheck('/a/fw.weird');
+  check('对照：未登记扩展名仍只告警放行（登记 .zip 没把格式闸变成白名单）',
+    stray.ok === true && String(stray.warning).includes('未登记的镜像格式'));
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

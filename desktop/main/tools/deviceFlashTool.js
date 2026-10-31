@@ -34,6 +34,7 @@ const {
   CHIP_ARGS, partitionCandidates, buildFlashPlan, buildBackupPlan, approvalCard, planDigest,
   checkSegmentsFit, parseFlashIdInfo, normalizeSegments, parseSize, parseVidPid,
   resolveImageFormat, esptoolFormatCheck, parseHandshake, HANDSHAKE_VERDICTS,
+  parseEspImageHeader, checkImageChip, ESP_IMAGE_MIN_HEADER,
 } = require('../deviceFlash');
 const { parseUsbTree, classifyPorts } = require('../deviceProbe');
 const { splitPyserialOutput } = require('../devicePorts');
@@ -193,6 +194,52 @@ function checkFirmware(firmware, { stat = fs.statSync } = {}) {
   return { ok: errors.length === 0, errors, warnings };
 }
 
+/** 只读前 n 字节：镜像头在文件开头，读整份固件（可能几十 MB）没有意义。 */
+function defaultReadHead(file, n = ESP_IMAGE_MIN_HEADER) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const b = Buffer.alloc(n);
+    const got = fs.readSync(fd, b, 0, n, 0);
+    return b.subarray(0, got);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * 逐段核对「镜像头里的芯片」与本次声明的 chip（纯组合，不做 IO 之外的判断）。
+ *
+ * 为什么每段都查：ESP-IDF 产物通常 4 段，bootloader 与 app 都带完整镜像头；
+ * partition-table（magic 0xAA50）和文件系统镜像不是 ESP 镜像 ⇒ `parseEspImageHeader` 返回
+ * `ok:false`，这里**静默跳过**——那不是问题，拿它报警只会制造噪音。
+ *
+ * 为什么 plan 与 flash 都要查：`planDigest` 只覆盖「路径 + 偏移 + argv」，**不含文件内容**，
+ * 所以「plan 时是好镜像、flash 时同路径换成另一颗芯片的镜像」不会让摘要失配。
+ * 摘要是防参数篡改的，防不了换文件；这一层补的就是那个缺口。
+ */
+function checkImageChips(segments, { chip, chipExplicit = false, readHead = defaultReadHead } = {}) {
+  const errors = [];
+  const warnings = [];
+  const chips = [];
+  for (const s of segments || []) {
+    let head;
+    try {
+      head = readHead(s.file, ESP_IMAGE_MIN_HEADER);
+    } catch (e) {
+      // 读不到头部不是「镜像有问题」：可能没权限或文件在别处被移走，交给后面的 stat/写入去报真因
+      warnings.push(`读不到 ${s.file} 的头部，跳过芯片一致性校验（${String(e?.message || e).slice(0, 80)}）`);
+      continue;
+    }
+    const header = parseEspImageHeader(head);
+    if (!header.ok) continue;
+    chips.push({ file: s.file, chip: header.chipName || `id:${header.chipId}` });
+    const r = checkImageChip({ header, chip, chipExplicit });
+    if (r.error) errors.push(r.error);
+    if (r.warning) warnings.push(r.warning);
+  }
+  return { ok: errors.length === 0, errors, warnings, chips };
+}
+
 /**
  * 枚举本机 USB 设备的 VID:PID（与 device_probe 共用同一份命令表与解析器）。
  * 存在的意义：`port` 是**字符串**，`/dev/cu.usbmodem1301` 可能明天指向另一块板子；
@@ -327,6 +374,9 @@ async function deviceFlashHandler(args = {}, deps = {}) {
   const port = String(args.port || '').trim();
   const firmware = String(args.firmware || '').trim();
   const chip = String(args.chip || 'esp32').toLowerCase();
+  // 「用户是否显式说了芯片」与「缺省 esp32」必须分开：缺省值不能当作声明去拒绝一次烧写，
+  // 但显式声明与镜像头冲突时就必须拒 —— 见 checkImageChip 的三档结论。
+  const chipExplicit = Boolean(String(args.chip || '').trim());
   const offset = String(args.offset || '0x0');
   // 提前定义：backup 分支也要用；若留在下面会造成「先用后定义」的 TDZ 崩溃（不是 undefined）
   const tail = (s) => String(s || '').slice(-TAIL_CHARS);
@@ -636,6 +686,13 @@ async function deviceFlashHandler(args = {}, deps = {}) {
         error: `段与段重叠：${o.later}（${o.laterOffset}）会盖掉 ${o.earlier} 的尾部（止于 0x${o.earlierEnd.toString(16)}），请检查偏移`,
       };
     }
+    // 镜像与芯片的一致性：`.bin` 不带「我是给哪颗芯片编的」元数据，esptool 也不核对，
+    // 这里是**唯一能拦的地方**。放在 plan 而不只在 flash：让人在确认卡之前就看到冲突。
+    const chipChk = checkImageChips(segs.segments, {
+      chip, chipExplicit, readHead: deps.readHead || defaultReadHead,
+    });
+    if (!chipChk.ok) return { ok: false, action, error: chipChk.errors.join('；'), warnings: chipChk.warnings };
+    warnings.push(...chipChk.warnings);
     // 串口白名单在 plan 阶段只**告警**（不拒绝）：板子可能确实还没插，用户仍想先看到将要执行的命令。
     // 但判据必须是「枚举出了别的口，却没有这个口」——ports 为空时「不在列表」恒真，会变成误报。
     const portRes = await readPorts({ exec, platform });
@@ -775,6 +832,12 @@ async function deviceFlashHandler(args = {}, deps = {}) {
   }
   const segs = inspectSegments(built.segments, deps);
   if (!segs.ok) return { ok: false, action, error: segs.errors.join('；') };
+  // 摘要防参数篡改、防不了换文件（它不含文件内容）⇒ 这里再查一次镜像头芯片，
+  // 否则「plan 时是 ESP32 的镜像、flash 时同路径换成 S3 的镜像」能一路过闸。
+  const chipChk = checkImageChips(segs.segments, {
+    chip, chipExplicit, readHead: deps.readHead || defaultReadHead,
+  });
+  if (!chipChk.ok) return { ok: false, action, error: chipChk.errors.join('；') };
   const portRes = await readPorts({ exec, platform });
   const portGateRes = portGate(port, portRes, action === 'verify' ? '校验' : '写入');
   if (portGateRes) return { ...portGateRes, action };
