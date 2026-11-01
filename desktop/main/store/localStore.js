@@ -349,6 +349,27 @@ class LocalStore {
     return { ok: true, thread: t };
   }
 
+  /**
+   * 改会话的执行根（cwd）
+   *
+   * 用途只有一个：隔离副本被清理后，让该会话回到项目目录继续跑。
+   * 背景：`thread.cwd` 是「这个会话在哪个目录执行」的唯一持久真相（createThread 写入、
+   * forkThread 继承），副本被清掉后它就成了指向不存在目录的死指针——不修它，会话打开即失败。
+   * 只允许改成真实存在的目录：写进一个不存在的路径等于把死指针换成另一个死指针。
+   */
+  updateThreadCwd(threadId, cwd) {
+    this.requireWritable(); // V08：corrupt-blocked 态拒绝写入（fail-closed）
+    const t = this.data.threads.find((x) => x.id === Number(threadId));
+    const next = String(cwd || '').trim();
+    if (!t) return { ok: false, error: '会话不存在' };
+    if (!next) return { ok: false, error: '目标目录不能为空' };
+    if (!fs.existsSync(next)) return { ok: false, error: `目录不存在：${next}` };
+    t.cwd = next;
+    t.updatedAt = Date.now();
+    this.flush();
+    return { ok: true, thread: t };
+  }
+
   // A3：归档可见 —— 「删除」的本地语义是归档，必须提供恢复/彻底删除出口
   listArchivedThreads() {
     return this.data.threads

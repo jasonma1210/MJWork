@@ -109,9 +109,20 @@ export interface ComposerProps {
   onLastFailedChange?: (v: { text: string } | null) => void;
   /** 是否已进入某个会话（false 时不展示项目/分支/上下文环） */
   workspaceBound?: boolean;
+  /** 本轮是否**主动**选过项目（重启后残留的上次项目不算）：工作区两件套的显示前提之一 */
+  projectPicked?: boolean;
   runMode?: string;
   onModeChange?: (m: string) => void;
   worktreeInfo?: { path?: string; branch?: string } | null;
+  /** 副本已达上限（勾着 Worktree 且数量 >= WORKTREE_LIMIT）⇒ 禁用发送，提示先清理 */
+  worktreeBlocked?: boolean;
+  /** 工作目录**实际所在**分支（事实：来自 git 探测/切换结果） */
+  currentBranch?: string;
+  /** 本次任务选中的基线分支（空 = 跟随当前）。选择器只改它，切不切由发送前确认卡决定 */
+  selectedBranch?: string;
+  onSelectBranch?: (b: string) => void;
+  /** 分支操作的一句话反馈（成功/失败都走这里，与 worktree 的 modeMsg 同一条出口） */
+  onBranchMsg?: (m: string) => void;
   extras?: ComposerExtras | null;
   onExtrasChange?: (e: ComposerExtras) => void;
   plusOpen?: boolean;

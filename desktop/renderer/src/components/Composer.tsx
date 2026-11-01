@@ -4,11 +4,12 @@ import type { DragEvent as ReactDragEvent, ClipboardEvent as ReactClipboardEvent
 import type {
   ComposerProps, SlashCommand, AttachmentChipsProps, AttachmentChipProps, QueuedTasksProps,
 } from './composerTypes';
-import { IconArrowUp, IconBot, IconEdit, IconEye, IconFile, IconFolder, IconGitBranch, IconMic, IconPlug, IconPlus, IconSpinner, IconSquare, IconTrash, IconUsers, IconX, IconZap } from './icons';
+import { IconArrowUp, IconBot, IconEdit, IconEye, IconFile, IconFolder, IconMic, IconPlug, IconPlus, IconSpinner, IconSquare, IconTrash, IconUsers, IconX, IconZap } from './icons';
 import ContextRing from './ContextRing';
 import InlineAlert from './InlineAlert';
 import PlusMenu from './PlusMenu';
 import ComposerControls from './ComposerControls';
+import ComposerWorkspaceRow from './ComposerWorkspaceRow';
 import { projectDisplayName } from '../lib/projectName';
 import { useI18n, tGlobal } from '../i18n';
 import Button from './ui/Button';
@@ -54,8 +55,11 @@ export default function Composer({
   cwd = '', lastFailed = null, onLastFailedChange,
   // 是否已进入某个会话（= 真的身处当前工作区）。
   // false 时状态行不显示项目/分支/上下文环：新建任务页不得把「上次打开的项目」当已选事实展示。
-  workspaceBound = false,
-  runMode, onModeChange, worktreeInfo,
+  workspaceBound = false, projectPicked = false,
+  runMode, onModeChange, worktreeInfo, worktreeBlocked = false,
+  // 分支：currentBranch 是「工作目录实际所在」（事实），selectedBranch 是「本次任务的基线」
+  // （选择器只改后者，切不切由发送前的确认卡决定）。onBranchMsg 复用 modeMsg 那条就地提示。
+  currentBranch, selectedBranch, onSelectBranch, onBranchMsg,
   extras, onExtrasChange, plusOpen, onPlusOpenChange, voice, onDropFiles, connectedServers = [],
   enabledSkills = [],
   // 附件 chips（拖入/粘贴/「添加到对话框」）：状态归 ChatArea（useAgentRun.send 统一转 @路径 上下文）
@@ -74,6 +78,7 @@ export default function Composer({
   const [planDraft, setPlanDraft] = useState({ title: '', prompt: '' });
   const taRef = useRef<HTMLTextAreaElement>(null);
   const expert = extras?.expert || null;
+  const isolated = runMode === 'worktree';
   const voiceActive = voice?.state === 'recording' || voice?.state === 'transcribing';
   // R-15（2026-10-22 产品边界）：派活态 = 输入框上方常驻「目标条」回答「这一发发给谁」——
   // 从原来 10rem 宽的小徽标升级为独立一行（团队名 + 成员数 + 预算 + 明显退出），
@@ -256,12 +261,8 @@ export default function Composer({
               {projectDisplayName(project)}
             </button>
           )}
-          {project?.path && (
-            <span className="truncate flex items-center gap-1" title={project.branch ? t('composer.branchName', { branch: project.branch }) : t('composer.notGitRepo')}>
-              <IconGitBranch size={13} />
-              {project.branch || t('composer.notGit')}
-            </span>
-          )}
+          {/* 分支不再在这里印一遍：下方工具行左端的分支选择器就是它唯一的落点——
+              同一个事实印两处，其中一处还是不可点的标签，正是「Git 按钮点了没反应」的由来。 */}
           {contextUsage && (
             <ContextRing usage={contextUsage} onClick={onCompact} compacting={compacting} />
           )}
@@ -676,16 +677,32 @@ export default function Composer({
               <IconMic size={15} />
             </button>
             <span className="w-px h-4 bg-border shrink-0 mx-1" aria-hidden="true" />
+            {/* 工作区两件套与执行配置同一行（对齐 WorkBuddy）：分支 chip + ☐Worktree
+                紧挨在一起，因为它们回答的是同一个问题「这一发在哪儿、从哪出发」。
+                门控在这里而不在组件内：新建任务页不得把上次项目当已选事实展示。 */}
+            {/* 门控口径（2026-11-01 修正）：分支/Worktree 是「下一条任务从哪出发」的选择，
+                所以它必须出现在**新任务页**（只要项目是用户主动选的），而不是只在会话里。
+                判据 = 有项目 && （已进入会话 或 本轮主动选过项目）：
+                · 只写 workspaceBound 会让新建任务时根本没有这个入口（WB 的 chip 正是在任务开始前）；
+                · 只写 project?.path 又会让「重启残留的上次项目」被当成已选（空态伪装）。 */}
+            {!!project?.path && (workspaceBound || projectPicked) && (
+              <ComposerWorkspaceRow
+                projectPath={project?.path || ''}
+                currentBranch={currentBranch || project?.branch || ''}
+                selectedBranch={selectedBranch}
+                onSelectBranch={onSelectBranch}
+                worktree={isolated}
+                locked={!!worktreeInfo?.path}
+                onToggleWorktree={(next) => onModeChange?.(next ? 'worktree' : 'local')}
+                onMsg={onBranchMsg}
+              />
+            )}
             <ComposerControls
               providers={providers}
               selectedModel={selectedModel}
               onSelectModel={onSelectModel}
               approval={approval}
               onApprovalChange={onApprovalChange}
-              project={project}
-              mode={runMode}
-              onModeChange={onModeChange}
-              worktreeInfo={worktreeInfo}
             />
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -709,8 +726,10 @@ export default function Composer({
                 }
                 onSend();
               }}
-              disabled={!loading && !input.trim() && !(attachments || []).length}
-              title={loading ? (queueable ? t('composer.queueSendTip') : t('composer.stopGenTip')) : (dispatchMode ? t('composer.dispatchTip') : t('composer.send'))}
+              disabled={worktreeBlocked || (!loading && !input.trim() && !(attachments || []).length)}
+              title={worktreeBlocked
+                ? t('worktree.limit.sendDisabledTooltip')
+                : (loading ? (queueable ? t('composer.queueSendTip') : t('composer.stopGenTip')) : (dispatchMode ? t('composer.dispatchTip') : t('composer.send')))}
               aria-label={loading ? (queueable ? t('composer.queueSend') : t('composer.stopGen')) : (dispatchMode ? t('composer.dispatch') : t('composer.send'))}
               className={`${loading && !queueable ? 'bg-danger-solid' : 'bg-accent-solid'} text-on-accent rounded-full w-8 h-8 flex items-center justify-center disabled:opacity-50`}
             >
@@ -718,6 +737,7 @@ export default function Composer({
             </button>
           </div>
         </div>
+
       </div>
     </div>
   );

@@ -47,6 +47,8 @@ export interface RunThread {
 export interface RunWorktree {
   path?: string;
   branch?: string;
+  /** 建副本时用的基线分支（显示/排障用：用户以为基于 A、实际基于 B 时能一眼看出） */
+  base?: string;
 }
 
 /** 模型选择器的当前选中项。**不含** context_window（那由 lib/modelConfig 现算注入）。 */
@@ -163,6 +165,12 @@ export interface UseAgentRunDeps {
   plan: RunPlan | null;
   planMode: boolean;
   runMode: string;
+  /** 工作目录**实际所在**分支（事实）。缺省 = 由主进程按当前分支推导 */
+  currentBranch?: string;
+  /** 本次任务选中的基线分支（空 = 跟随当前）；勾了 Worktree 时它就是副本的起点 */
+  selectedBranch?: string;
+  /** 当前仓库的副本数量（上限判定：>= WORKTREE_LIMIT 时禁止再建，发送被拦下） */
+  worktreeCount?: number;
   voice: RunVoice;
 
   // ── 项目与会话 ──────────────────────────────────────────────
@@ -208,6 +216,10 @@ export interface UseAgentRunDeps {
   setRunMode: Setter<string>;
   setModeMsg: Setter<string>;
   setWorktree: Setter<RunWorktree | null>;
+  /** 分支切换成功后回写「当前分支」（事实） */
+  setBranch?: (b: string) => void;
+  /** 切换成功后清空选中（选择回到「跟随当前」） */
+  setSelectedBranch?: (b: string) => void;
   /** 可选：产出文件卡片（旧布局没有这一栏） */
   setRunFiles?: Setter<unknown[]>;
 

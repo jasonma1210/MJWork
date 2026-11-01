@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { BUILTIN_SKILL_IDS } from '../lib/agent';
 // T2-2：compactHistory 调用随运行流程迁至 hooks/useAgentRun.ts
 import InlineAlert from './InlineAlert';
+import Button from './ui/Button';
 import { toast, confirm } from './feedback';
 import WelcomePage from './WelcomePage'; // T2-2：欢迎页拆分（composerProps 与对话页共享）
 import MessageStream, { MSG_WINDOW, RunFooter, renderMessages } from './MessageStream'; // T2-2：消息流域拆分
@@ -17,6 +18,8 @@ import { effectiveContextWindow } from '../lib/modelConfig';
 import { projectDisplayName } from '../lib/projectName';
 import Composer from './Composer'; // T2-2：输入区拆分
 import WorktreeBar from './WorktreeBar';
+import WorktreeCleanupDialog from './WorktreeCleanupDialog';
+import { WORKTREE_LIMIT, WORKTREE_WARN_AT } from '../constants/worktree';
 import { useVoice } from '../hooks/useVoice';
 // F-005：MCP 工具名 → 服务名的反解。与 agent-core / mcpToolDefs 共用 shared/mcpNameCodec.mjs
 //（零 Node 内置依赖，渲染层可直接静态 import；与 lib/mcpTools.js 引 shared/mcpToolDefs.mjs 同一模式）
@@ -36,6 +39,8 @@ export default function ChatArea({
   thread, selectedModel, project, onNewMessage, mcpTools = [], enabledSkills = [], onOpenProjectPicker, initialPrompt, onPromptConsumed, approvalSettings, agentsMd = null,
   providers = [], onSelectModel, onApprovalChange, onThreadStatus, onAgentFilesChange, onSubagentEvent,
   onThreadCreated,
+  // 会话列表刷新（App.scheduleLoadData）：清理副本后归档了哪些会话，侧栏要立刻反映
+  onThreadsChanged,
   // 正文里的文件提及点击 → 右侧预览栏打开（App.openFileInPane；相对路径按项目根解析）
   onOpenFile,
   // 自动建目录回调（App.selectProject）：新建任务未主动选目录时，ChatArea 自动创建
@@ -106,6 +111,17 @@ export default function ChatArea({
   const steerPendingRef = useRef(null);
   const [runMode, setRunMode] = useState('local'); // local | worktree（对标 Codex 运行模式）
   const [worktree, setWorktree] = useState(null); // 隔离工作区 { path, branch }
+  // currentBranch：工作目录**实际所在**分支（切换成功后回写；空串 = 尚未探测，回落 project.branch）
+  // selectedBranch：本次任务选中的**基线**分支（空 = 跟随当前）。对齐 WorkBuddy：选择器只写这个，
+  // 真正 checkout 推迟到发送前，由确认卡（脏工作区还给三选一）把住。
+  const [branch, setBranch] = useState('');
+  const [selectedBranch, setSelectedBranch] = useState('');
+  // 副本数量与清理弹窗（对齐 WorkBuddy：勾了 Worktree 才统计；>=25 提示、>=50 弹清理）
+  const [wtCount, setWtCount] = useState(0);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  // 会话的执行根已被清理（thread.cwd 指向不存在的副本）：横幅提示 + 一键指回项目目录
+  const [copyMissing, setCopyMissing] = useState('');
+  const wtWarnedRef = useRef(''); // 只在「项目+数量」变化时提醒一次，别每次重渲染都弹
   const [modeMsg, setModeMsg] = useState(''); // 模式切换提示
   // A4：会话级扩展状态（数字员工 / 技能 / 连接器 / 候选编制），随线程持久化、重开可恢复
   const EMPTY_EXTRAS = { expert: null, skillIds: [], mcpServers: [], candidateRoster: null };
@@ -427,12 +443,135 @@ export default function ChatArea({
     };
   }, []);
 
+  // 隔离态从 thread.cwd **派生**（不再靠内存 state）：
+  //   · 此前切会话不重置、重启后归零 ⇒ 同项目两个会话会串到同一个副本，重启后又会跑回主目录；
+  //   · 而 createThread 早就把执行根写进了 thread.cwd（forkThread 还继承它），真相一直在，只是没人读。
+  const threadCwdForDerive = thread?.cwd || '';
+  const threadIdForDerive = thread?.id;
+  useEffect(() => {
+    const threadCwd = threadCwdForDerive;
+    if (!threadCwd) { setCopyMissing(''); return undefined; }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await window.mjcode?.describeWorktree?.({ path: threadCwd });
+        if (cancelled) return;
+        if (r?.managed && r?.exists) {
+          setWorktree({ path: threadCwd, branch: r.branch || '' });
+          setRunMode('worktree');
+          setSelectedBranch('');
+          setCopyMissing('');
+        } else if (r?.managed) {
+          // 副本已被清理：**不能**继续显示隔离态，否则界面说隔离、实际按 local 跑
+          setWorktree(null);
+          setRunMode('local');
+          setCopyMissing(threadCwd);
+        } else {
+          setWorktree(null);
+          setRunMode('local');
+          setCopyMissing('');
+        }
+      } catch (err) {
+        console.warn('[worktree] describeWorktree failed:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [threadIdForDerive, threadCwdForDerive]);
+
+  // 副本已被清理的会话：把执行根指回项目目录（只接受真实存在的目录，见 localStore.updateThreadCwd）
+  async function switchToProjectDir() {
+    const dest = project?.path || '';
+    if (!thread?.id || !dest) { setModeMsg(tGlobal('worktree.useProjectDirNoProject')); return; }
+    const r = await window.mjcode?.localSetThreadCwd?.({ threadId: thread.id, cwd: dest });
+    if (!r?.ok) { setModeMsg(r?.error || tGlobal('worktree.useProjectDirFailed')); return; }
+    setCopyMissing('');
+    setModeMsg(tGlobal('worktree.useProjectDirDone', { path: dest }));
+    onThreadsChanged?.();
+  }
+
+  // 副本计数：只在勾了 Worktree 时查（没勾时这一整块零开销，也不用为「用户没打算隔离」付出一次 git 调用）
+  useEffect(() => {
+    if (runMode !== 'worktree' || !project?.path) {
+      setWtCount(0);
+      setCleanupOpen(false);
+      return undefined;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await window.mjcode?.countWorktrees?.({ cwd: project.path });
+        if (cancelled) return;
+        const n = Number(r?.count) || 0;
+        setWtCount(n);
+        if (n >= WORKTREE_LIMIT) { setCleanupOpen(true); return; }
+        if (n >= WORKTREE_WARN_AT) {
+          const key = `${project.path}:${n}`;
+          if (wtWarnedRef.current !== key) {
+            wtWarnedRef.current = key;
+            toast({
+              message: tGlobal('worktree.countWarning', { count: n, cleanupLimit: WORKTREE_LIMIT }),
+              duration: 6000,
+            });
+          }
+        }
+      } catch (err) {
+        // 计数失败不阻断任何操作（它只是提示与上限判定）；但要留痕，否则「为什么没提示」查不到
+        console.warn('[worktree] countWorktrees failed:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [runMode, project?.path, worktree?.path]);
+
+  // 清理：只清「超过 N 天没动过 + 工作区干净」的副本（判据在主进程，见 cleanupWorktrees）
+  async function cleanupWorktrees(opts) {
+    const { olderThanDays, deleteThreads } = opts || {};
+    const r = await window.mjcode?.cleanupWorktrees?.({ cwd: project?.path || '', olderThanDays });
+    if (!r?.ok) { setModeMsg(r?.error || tGlobal('worktree.cleanup.failed')); return null; }
+    // 联动：副本没了，指向它的会话就成了死指针。默认**不删**（用户的对话历史比磁盘空间贵），
+    // 由用户在弹窗里显式勾选；删除走的是本仓既有语义「归档」（可在归档里恢复），不是物理删除。
+    // 当前正在看的会话不归档——把用户眼前的东西抽走等于让他莫名回到空态。
+    if (deleteThreads) {
+      const norm = (v) => String(v || '').replace(/\/+$/, '');
+      const cleaned = (r.cleanedWorktreePaths || []).map(norm);
+      try {
+        const list = await api.threads(project?.path || '');
+        const hits = (Array.isArray(list) ? list : []).filter((t) => cleaned.includes(norm(t.cwd)));
+        let archived = 0;
+        for (const t of hits) {
+          if (String(t.id) === String(thread?.id)) continue;
+          await api.deleteThread(t.id);
+          archived += 1;
+        }
+        if (archived > 0) {
+          onThreadsChanged?.();
+          setModeMsg(tGlobal('worktree.cleanup.threadsArchived', { n: archived }));
+        }
+      } catch (err) {
+        // 归档失败不能拖累「副本已清理」这个已完成的事实：分开报
+        console.warn('[worktree] archive cleared threads failed:', err);
+        setModeMsg(tGlobal('worktree.cleanup.threadsArchiveFailed'));
+      }
+    }
+    const again = await window.mjcode?.countWorktrees?.({ cwd: project?.path || '' });
+    const n = Number(again?.count) || 0;
+    setWtCount(n);
+    if (n < WORKTREE_LIMIT) setCleanupOpen(false);
+    setModeMsg(tGlobal('worktree.cleanup.result', {
+      cleaned: r.cleanedCount || 0, dirty: r.skippedDirtyCount || 0, recent: r.skippedRecentCount || 0,
+    }));
+    return r;
+  }
+
   // 切换项目时清空一切与上一个项目/任务绑定的状态。
   // 否则隔离工作区会指向旧项目的副本，Agent 把改动写进错误目录。
   useEffect(() => {
     setWorktree(null);
     setRunMode('local');
     setModeMsg('');
+    // 分支的实时真相与选中态都要清：留着上一个项目的分支名，选择器会显示一个当前目录里
+    // 根本不存在的分支，而「隔离工作区以它为基线」这一条就是拿错基线建副本
+    setBranch('');
+    setSelectedBranch('');
     setToolCalls([]);
     setStreamingText('');
     setQueued([]);
@@ -493,11 +632,15 @@ export default function ChatArea({
   const { stop, ingestFiles, pickFiles, send, steer, queueNext, clearContext, enablePlanMode, switchMode, compactContext, activeRunId, runBaselineSha } = useAgentRun({
     input, loading, selectedModel, project, projectPicked, thread, cwd, mcpTools, enabledSkills,
     fileSkills, memories, agentsMd, approvalSettings, planMode, runMode, worktree, sessionExtras,
+    // 隔离工作区的基线：选中分支优先（用户显式选的），否则跟随当前分支（事实）
+    currentBranch: branch || project?.branch || '',
+    selectedBranch,
     messages, compacting, plan, voice,
     attachments, setAttachments,
     setInput, setModelWarning, setPlan, setPlanReport, setDecomposing, setMessages, setLastFailed, setLoading,
     setToolCalls, setRunSummary, setRunUsage, setQueued, setStreamingText, setReasoningText, setRunFiles,
     setWindowStart, setCompacting, setPlanMode, setRunMode, setModeMsg, setWorktree,
+    setBranch, setSelectedBranch,
     abortRef, activeThreadIdRef, activeRunIdRef, runStartRef, agentFilesRef, messagesRef, steerPendingRef,
     onNewMessage, onThreadStatus, onAgentFilesChange, onThreadCreated, onAutoProject, onSubagentEvent,
     // R-15/R-5：轮末接力分流（latest-ref 持 sendOrDispatch；未选中军团时内部回落 send）
@@ -609,7 +752,7 @@ export default function ChatArea({
   // T2-2：Composer 接线在欢迎页与对话页间共享（仅 workspaceBound 语义随场景不同）
   const composerProps = {
     input, setInput, onSend: sendOrDispatch, onStop: stop, onPickFiles: pickFiles,
-    loading, selectedModel, project,
+    loading, selectedModel, project, projectPicked,
     onOpenProjectPicker, agentsMd,
     providers, onSelectModel,
     approval: approvalSettings, onApprovalChange,
@@ -619,6 +762,13 @@ export default function ChatArea({
     onCompact: compactContext, compacting,
     contextUsage, onPlanMode: enablePlanMode, planMode,
     runMode, onModeChange: switchMode, worktreeInfo: worktree, modeMsg,
+    worktreeBlocked: runMode === 'worktree' && wtCount >= WORKTREE_LIMIT,
+    // 分支两件事分开传：currentBranch 是事实，selectedBranch 是本次任务的基线
+    currentBranch: branch || project?.branch || '',
+    selectedBranch,
+    onSelectBranch: setSelectedBranch,
+    onBranchMsg: setModeMsg,
+    worktreeCount: wtCount,
     decomposing, plan, onPlanChange: setPlan,
     planReport, onPlanReportChange: setPlanReport,
     cwd, lastFailed, onLastFailedChange: setLastFailed,
@@ -736,7 +886,6 @@ export default function ChatArea({
         send={send}
         modelWarning={modelWarning}
         setModelWarning={setModelWarning}
-        runMode={runMode}
         worktree={worktree}
         setWorktree={setWorktree}
         setRunMode={setRunMode}
@@ -779,11 +928,34 @@ export default function ChatArea({
             </InlineAlert>
           </div>
         )}
-        {/* P1-H：隔离工作区收口条（合并回主目录/提升为分支/清理）——worktree 只建不收的断链修复 */}
+        {/* 副本已被清理的会话：说清事实 + 给一个出口（否则这个会话再发消息会莫名失败）*/}
+        {copyMissing && (
+          <div className="max-w-3xl w-full mx-auto mb-3">
+            <InlineAlert type="warn">
+              <span className="flex items-center gap-2 flex-wrap">
+                <span className="min-w-0">{t('worktree.copyMissing', { path: copyMissing })}</span>
+                <Button size="xs" variant="accent-ghost" onClick={() => void switchToProjectDir()}>
+                  {t('worktree.useProjectDir')}
+                </Button>
+              </span>
+            </InlineAlert>
+          </div>
+        )}
+        {/* P1-H：隔离工作区收口条（合并回主目录/提升为分支/清理）——worktree 只建不收的断链修复。
+            A11：不再随「运行模式=隔离」显隐。开关关掉只是「后续不再往副本里写」，
+            副本和里面的改动仍在磁盘上；此前把它一起藏起来，用户关掉开关就再也找不到收口入口
+            （只能手动敲 git worktree 命令）——那正是这条收口条当初要解决的问题。 */}
         <WorktreeBar
-          worktree={runMode === 'worktree' ? worktree : null}
+          worktree={worktree}
           onClosed={() => { setWorktree(null); setRunMode('local'); }}
           onMsg={(m) => setModeMsg(m)}
+        />
+        {/* 副本数达上限：与 WorkBuddy 同款清理弹窗（7/15/30 天，默认 15） */}
+        <WorktreeCleanupDialog
+          open={cleanupOpen}
+          count={wtCount}
+          onClose={() => setCleanupOpen(false)}
+          onConfirm={cleanupWorktrees}
         />
         {/* P0-B：任务清单——让长任务的进度对用户可见（模型经 todo_write 实时维护）
             P0-6（2026-10-22）：此前两处挂载都是「裸挂载」（组件标签不传任何 props），

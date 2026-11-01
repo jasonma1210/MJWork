@@ -15,5 +15,75 @@
   "mergeBackHint": "Merge the worktree's changes back into the main directory",
   "promoteHint": "Promote to a real branch (mj/ prefix) and remove the worktree",
   "removeHint": "Remove the isolated worktree (unmerged changes will be lost)",
-  "cleanup": "Clean Up"
+  "branchTitle": "Pick the task's base branch (nothing switches until you send)",
+  "selectBranch": "Select branch",
+  "searchBranch": "Search branches",
+  "localBranches": "Local branches",
+  "remoteBranches": "Remote branches",
+  "noBranches": "No branch found",
+  "loadingBranches": "Reading branches…",
+  "branchRenderLimitHint": "Showing the first {count} branches; search to narrow down",
+  "fetchRefresh": "Fetch updates",
+  "fetching": "Fetching…",
+  "listFailed": "Failed to read branches: {error}",
+  "noRemote": "No remote configured; listing local branches only",
+  "initGitHint": "Initialize a Git repository to enable Worktree",
+  "enableHint": "When enabled, a separate workspace is created from the selected branch for the task, so files in the original working directory are left untouched.",
+  "selectedHint": "This task will start from {branch}",
+  "branchSwitched": "Switched to {branch}",
+  "created": "Isolated workspace created on {branch}",
+  "createFailedFallback": "Failed to create the worktree; the task runs as a normal task.",
+  "branchSwitch": {
+    "title": "Switch branch",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "canceled": "Send cancelled — branch not switched",
+    "desc": "{folder} currently belongs to branch {current}. This task selected branch {selected}. Confirming will switch the branch and create the task.",
+    "dirtyBlocked": "The workspace has uncommitted changes, so the branch cannot be switched. Handle them first and retry.",
+    "gitIdentityMissing": "Git author identity is not configured. Set user.name and user.email, or choose Stash and retry.",
+    "failed": "Failed to switch branch. Please retry.",
+    "dirty": {
+      "desc": "{folder} currently belongs to branch {current} and has uncommitted changes. Pick how to handle them; the task will then switch to {selected} and be created.",
+      "group": "How to handle uncommitted changes",
+      "commit": "Commit to {branch}",
+      "stash": "Stash, including untracked files.",
+      "discard": "Discard — this cannot be undone.",
+      "recommend": "Recommended"
+    }
+  },
+  "creating": {
+    "title": "Creating isolated workspace"
+  },
+  "branchLocked": "This task already runs in an isolated copy — its base was fixed at creation time. Merge or clean up the copy above before changing the base.",
+  "cleanupLabel": "Clean Up",
+  "branchCopied": "Branch name copied",
+  "copyFailed": "Copy failed: clipboard unavailable",
+  "countWarning": "Worktree task workspaces are close to the limit ({count}/{cleanupLimit}). Clean up idle tasks to free space before creating more.",
+  "branchLabel": {
+    "copy": "Copy branch name"
+  },
+  "limit": {
+    "sendDisabledTooltip": "You have reached the Worktree workspace limit. Clean up idle worktrees before using it again."
+  },
+  "cleanup": {
+    "title": "Task workspace limit reached",
+    "description": "You already have {count} task workspaces (worktrees), which is the limit, so Worktree cannot be used for new tasks. Choose a cleanup scope.",
+    "scopePrefix": "Clean worktrees older than",
+    "scopeSuffix": "days (branches and files)",
+    "scopeAria": "Choose Worktree cleanup scope",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "result": "Cleaned {cleaned} worktree(s); skipped {dirty} dirty and {recent} not-yet-old.",
+    "done": "Cleaned {cleaned}; skipped {dirty} and {recent} not yet old enough.",
+    "failed": "Cleanup failed",
+    "deleteThreads": "Also archive the conversations that used these copies",
+    "deleteThreadsHint": "Off by default: a copy is a cache, the conversation history is not. Archived conversations can be restored.",
+    "threadsArchived": "Archived {n} conversation(s) — restorable from Archive",
+    "threadsArchiveFailed": "Copies were cleaned up, but archiving the related conversations failed"
+  },
+  "copyMissing": "This conversation's working directory (isolated copy) has been cleaned up: {path}",
+  "useProjectDir": "Use project folder",
+  "useProjectDirDone": "Working directory switched to {path}",
+  "useProjectDirFailed": "Failed to switch working directory",
+  "useProjectDirNoProject": "No project folder available"
 }

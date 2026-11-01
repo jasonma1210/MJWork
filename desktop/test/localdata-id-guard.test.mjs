@@ -37,6 +37,7 @@ const store = {
   restoreThread: (id) => { calls.push(['restoreThread', id]); return { ok: true }; },
   purgeThread: (id) => { calls.push(['purgeThread', id]); return { ok: true }; },
   setThreadProject: (id, p) => { calls.push(['setThreadProject', id, p]); return { ok: true }; },
+  updateThreadCwd: (id, cwd) => { calls.push(['updateThreadCwd', id, cwd]); return { ok: true }; },
   getPreference: () => undefined,
   setPreference: () => ({ ok: true }),
 };
@@ -122,6 +123,18 @@ await check('local:messages/list 接受数字 threadId', async () => {
 await check('local:messages/replace 接受数字 threadId', async () => {
   await call('local:messages/replace', { threadId: 7, messages: [] });
   ok(calls.some((c) => c[0] === 'replaceMessages'), '未落到 store');
+});
+
+// 2026-11-01：副本被清理后把会话执行根指回项目目录（新增通道，同样要接受数字 threadId）
+await check('local:threads/set-cwd 接受数字 threadId 并落 store', async () => {
+  const r = await call('local:threads/set-cwd', { threadId: 11, cwd: '/tmp/proj' });
+  ok(r && r.ok, '应返回 ok');
+  ok(calls.some((c) => c[0] === 'updateThreadCwd' && c[1] === 11 && c[2] === '/tmp/proj'), '未落到 store');
+});
+
+await check('local:threads/set-cwd 拒绝空 cwd（写空等于把指针清掉）', async () => {
+  const e = await rejects(call('local:threads/set-cwd', { threadId: 11, cwd: '' }));
+  ok(!!e, '空 cwd 必须被边界拦下');
 });
 
 console.log(`\n结果：${pass}/${total} 通过`);

@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "generatedAt": "2026-10-31T00:58:20.900Z",
+  "generatedAt": "2026-11-01T01:31:23.285Z",
   "note": "② ratchet 基线（位置级）：key = 文件#语句内容哈希；新增即红，消失请重跑 --write",
   "tiers": {
     "bareIife": 45,
@@ -409,7 +409,7 @@
       "line": 16,
       "text": "(async () => { const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-ws-')); const docs = path.j"
     },
-    "test/worktree.test.js#eda4d1f1c11f": {
+    "test/worktree.test.js#e3ca92d55182": {
       "tier": "bareIife",
       "line": 22,
       "text": "(async () => { const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-wt-')); const repo = path.j"
@@ -529,6 +529,38 @@
     },
     {
       "at": "2026-10-31T00:58:20.900Z",
+      "added": 1,
+      "removed": 1,
+      "net": 0,
+      "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-11-01T00:09:55.429Z",
+      "added": 1,
+      "removed": 1,
+      "net": 0,
+      "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-11-01T00:49:19.591Z",
+      "added": 1,
+      "removed": 1,
+      "net": 0,
+      "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-11-01T01:04:30.334Z",
+      "added": 1,
+      "removed": 1,
+      "net": 0,
+      "files": [],
+      "reason": "[auto] 净变化 ≤ 0（清理 / 键轮换），无需人工理由"
+    },
+    {
+      "at": "2026-11-01T01:31:23.285Z",
       "added": 1,
       "removed": 1,
       "net": 0,

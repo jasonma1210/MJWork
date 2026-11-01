@@ -1,10 +1,12 @@
 import ModelSelector from './ModelSelector';
-import { IconAlert, IconBranch, IconFolder, IconShield } from './icons';
+import { IconAlert, IconFolder, IconShield } from './icons';
 import { APPROVAL_MODES, SANDBOX_MODES, migrateApprovalMode, isRiskyApproval } from '../constants/approval';
 import { useI18n, tGlobal } from '../i18n';
 
-// Composer 任务控制台（对标 Codex 输入框周围区域）
-// 模型 / 权限档位 / 运行模式三项常驻，其余能力在 D 批补齐
+// Composer 执行配置行（对标 Codex 输入框周围区域）：权限档位 / 沙箱 / 模型三项常驻。
+// 分支与 Worktree 开关属「工作区」维度（这一发在哪个目录里跑），单独一行放在本行下方：
+// 三个配置项 + 分支 + 开关挤在同一行时，左右侧栏同时展开的窄列里会把模型名和发送键挤没
+// （真机反馈过「工具行被压成一个方块」，见下 CHIP 注释）。
 // A10：档位值域统一到 constants/approval.js（此前与设置页两处值域冲突，设置实际失效）
 // i18n：顶层常量会冻结求值结果（切语言不更新），与 getModeOptions 同款改为渲染期函数
 export function getPermissionOptions() {
@@ -13,14 +15,6 @@ export function getPermissionOptions() {
 
 export function getSandboxOptions() {
   return SANDBOX_MODES.map((m) => ({ value: m.id, label: tGlobal(m.nameKey) }));
-}
-
-// i18n：顶层常量不能冻结求值结果，改为函数在渲染时调用，切换语言即时生效
-export function getModeOptions() {
-  return [
-    { value: 'local', label: tGlobal('composer.mode.local'), hint: tGlobal('composer.mode.localHint') },
-    { value: 'worktree', label: tGlobal('composer.mode.worktree'), hint: tGlobal('composer.mode.worktreeHint') },
-  ];
 }
 
 // 统一 chip 设计语言：与输入框内所有下拉控件同高（h-7）、同圆角（rounded-lg）、
@@ -34,9 +28,8 @@ export function getModeOptions() {
 const CHIP = 'h-7 shrink-0 inline-flex items-center gap-2 rounded-lg border px-2 text-xs text-text bg-transparent hover:bg-hover cursor-pointer transition-colors';
 const CHIP_SELECT = 'bg-transparent outline-none cursor-pointer max-w-[140px] truncate';
 
-export default function ComposerControls({ providers, selectedModel, onSelectModel, approval, onApprovalChange, project: _project, mode, onModeChange, worktreeInfo }) {
+export default function ComposerControls({ providers, selectedModel, onSelectModel, approval, onApprovalChange }) {
   const { t } = useI18n();
-  const modeOptions = getModeOptions();
   const permissionOptions = getPermissionOptions();
   const sandboxOptions = getSandboxOptions();
   // 遗留值迁移：旧 auto / always-ask 读取时映射到新档位
@@ -44,26 +37,6 @@ export default function ComposerControls({ providers, selectedModel, onSelectMod
   const risky = isRiskyApproval(approval);
   return (
     <div className="flex items-center gap-2 flex-nowrap min-w-0">
-      {/* 运行模式：本地 / 隔离工作区（worktree 态转 accent 色，隔离执行必须可见） */}
-      <label
-        className={`${CHIP} ${mode === 'worktree' ? 'border-accent bg-accent-bg text-accent' : 'border-border'}`}
-        title={modeOptions.find((o) => o.value === mode)?.hint}
-      >
-        <IconBranch size={12} className="shrink-0" />
-        <select
-          value={mode}
-          onChange={(e) => onModeChange?.(e.target.value)}
-          className={CHIP_SELECT}
-        >
-          {modeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      </label>
-      {mode === 'worktree' && worktreeInfo?.branch && (
-        <span className="text-xs text-text2 truncate max-w-[160px]" title={t('composer.isolatedBranch', { branch: worktreeInfo.branch })}>
-          {worktreeInfo.branch}
-        </span>
-      )}
-
       {/* 权限档位（风险态强化：自动执行 / 完全访问时转警示色 —— 权限档位必须可见） */}
       <label className={`${CHIP} ${risky ? 'border-warn bg-warn-bg text-warn' : 'border-border'}`} title={risky ? t('composer.riskyApprovalTip') : t('composer.approvalTierTip')}>
         {risky ? <IconAlert size={12} className="shrink-0" /> : <IconShield size={12} className="shrink-0 text-text2" />}

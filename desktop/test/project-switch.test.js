@@ -63,12 +63,25 @@ const pane = read('components/RightPane.jsx');
 // 原因：exhaustive-deps 修复时给该 effect 补了 onAgentFilesChange（稳定的 useState
 // setter，语义正确且不改变行为），精确匹配会因此误报「找不到 effect」。
 // 本测试的意图是验证重置逻辑存在且完整，不是锁定依赖列表的写法。
+// 2026-11-01 修正选择器：原正则用 `[\s\S]*?` 从**最早**的 useEffect 起跨段匹配，
+// 于是只要后面某个 effect 的依赖是 [project?.path…]，它就会把中间所有代码（含别的 effect）
+// 一起吞进来——实测把新的「隔离态派生」effect 的 `if (…) { setWorktree(…) }` 误判成
+// 「重置被条件守卫」。改为：逐段取 useEffect 的函数体（括号配对），再看紧跟其后的依赖数组。
 function findProjectResetEffect(src) {
-  const re = /useEffect\(\(\) => \{([\s\S]*?)\n  \}, \[project\?\.path[^\]]*\]\)/g;
-  let m;
-  while ((m = re.exec(src)) !== null) {
-    // 含 worktree 重置的那个才是目标 effect
-    if (/setWorktree\(/.test(m[1])) return m[1];
+  const marker = 'useEffect(() => {';
+  for (let i = src.indexOf(marker); i >= 0; i = src.indexOf(marker, i + marker.length)) {
+    const openBrace = i + marker.length - 1;
+    let depth = 0;
+    let end = -1;
+    for (let j = openBrace; j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}') { depth--; if (depth === 0) { end = j; break; } }
+    }
+    if (end < 0) break;
+    const body = src.slice(openBrace + 1, end);
+    const deps = src.slice(end, src.indexOf(')', end) + 1);
+    if (!/\[project\?\.path/.test(deps)) continue;
+    if (/setWorktree\(/.test(body)) return body;
   }
   return null;
 }

@@ -31,6 +31,48 @@
 - **MCP + skills** — connect MCP servers or use the 136 bundled skills; both are workspace-scoped.
 - **Local-first storage** — conversations, credentials and settings live in a local SQLite database under the OS app-data directory.
 
+## Browser takeover (your own Chrome session)
+
+Besides the built-in standalone automation (`browser_*`, which spins up a clean headless environment), the app can drive the Chrome tabs you are **already signed in to**.
+
+| Piece | Location |
+|---|---|
+| Main-process tools | `main/chromeTools.js` |
+| Relay server | `main/chromeRelay/server.js`, `protocol.js` |
+| Browser extension | `chrome-extension/` (Manifest V3, `tabs` + `debugger` permissions) |
+
+- **Per-connection consent**: every connection must be confirmed inside the app — there is no install-once, always-on grant.
+- **Which one**: use `chrome_*` when you need your logged-in state (intranet, signed-in SaaS, admin consoles); use `browser_*` when you need a clean, reproducible environment.
+- Cloud-side agents cannot reach the browser session on your machine — that follows from the local-first architecture, it is not a setting.
+
+## Permissions and approval tiers
+
+Three action levels + four approval modes + three sandbox tiers; whenever a judgement is uncertain it takes the stricter side (fail-closed).
+
+**Action levels (`main/approval.js`)**
+
+| Level | Meaning | Typical |
+|---|---|---|
+| L1 `danger-command` | high-risk / irreversible command | shell patterns flagged as dangerous, escape primitives in code execution |
+| L2 `file-write` | local file writes | `write_file` / `edit_file` / `apply_patch` |
+| L3 `mcp-tool` | external MCP tools | every `mcp__*` tool |
+
+- Read-only tools (`READONLY_TOOLS`) run without a prompt.
+- **Unregistered tools are treated as L2** — fail-closed; nothing is silently allowed just because it was never registered.
+- Reversibility (`REVERSIBILITY`) is judged separately: external side effects and destructive local actions are always treated as irreversible.
+- **The card text is part of the safety surface**: every tool that can reach L1 or is non-rememberable must carry a hand-written summary in `approvalSummary()` — degrading to the raw JSON dump counts as a defect and is blocked by a gate in `test/approval.test.js`. When an action is irreversible, the card is the only place the user can find out what is about to happen.
+
+**Approval modes (strictness ascending)**: `never` < `auto-safe` < `on-request` (default) < `always`
+
+- `auto-safe`: L2 runs without asking; L1 / L3 still ask.
+- `never`: asks only for L1 and for irreversible / non-rememberable L3 actions.
+- "Notify after execution" (`approvalNotice`) is a boolean preference **orthogonal** to the mode; it never changes what gets asked.
+
+**Sandbox tiers**: `read-only` / `workspace-write` / `full-access`
+
+- `full-access` can **only** be bound by the host through the session run path; a direct IPC call is clamped back to `workspace-write` (`main/tools/execGovernance.js`).
+- Role templates can only tighten permissions, never relax them.
+
 ## Tech stack
 
 | Layer | Choice |
@@ -40,7 +82,7 @@
 | Agent engine | `agent-core` — own tool loop, model adapters, token/context accounting |
 | Storage | SQLite (`sql.js`), Yjs for collaborative buffers |
 | Optional backend | Express 4 + PostgreSQL + JWT |
-| Quality gates | `node --test` (310 suites), ESLint warning ratchet, `tsc --noEmit`, doc-vs-source fact check |
+| Quality gates | `node --test` (324 suites), ESLint warning ratchet, `tsc --noEmit`, doc-vs-source fact check |
 
 ## Run it (development)
 

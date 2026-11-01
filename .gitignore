@@ -205,3 +205,4 @@ desktop/renderer/src/__*probe*.jsx
 # 纪律：只阻止误入库，不做删除。
 # ─────────────────────────────────────────────────────────────
 desktop/build/ocr/
+.mjcode/

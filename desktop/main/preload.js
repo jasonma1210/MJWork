@@ -79,6 +79,19 @@ contextBridge.exposeInMainWorld('mjcode', {
   promoteWorktree: (payload) => ipcRenderer.invoke('worktree:promote', payload),
   syncWorktree: (payload) => ipcRenderer.invoke('worktree:sync', payload),
   removeWorktree: (payload) => ipcRenderer.invoke('worktree:remove', payload),
+  // 副本数量 / 按闲置天数清理（上限判定与「清理超过 N 天」弹窗的数据面）
+  // 判断路径是否我方副本（会话恢复/失效判定；只读，路径可以已不存在）
+  describeWorktree: (payload) => ipcRenderer.invoke('worktree:describe', payload),
+  countWorktrees: (payload) => ipcRenderer.invoke('worktree:count', payload),
+  cleanupWorktrees: (payload) => ipcRenderer.invoke('worktree:cleanup', payload),
+  // 分支选择器（输入框下方）：读分组 / 拉取更新 / 脏状态 / 切换
+  // 与上面 tool:gitBranch（给模型用的 `git branch -a` 原文）分开：渲染层要的是结构化数据，
+  // 解析「给人看的」文本在 detached HEAD、pager、颜色下都会错。
+  // 语义对齐 WorkBuddy：选分支（纯状态）与切分支（checkoutBranch，带 dirtyPolicy）是两个动作。
+  listBranches: (payload) => ipcRenderer.invoke('git:branches', payload),
+  refreshBranches: (payload) => ipcRenderer.invoke('git:refreshBranches', payload),
+  worktreeStatus: (payload) => ipcRenderer.invoke('git:worktreeStatus', payload),
+  checkoutBranch: (payload) => ipcRenderer.invoke('git:checkoutBranch', payload),
   // Dialog / Project
   pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),
   pickFiles: () => ipcRenderer.invoke('dialog:pickFiles'),
@@ -169,6 +182,8 @@ contextBridge.exposeInMainWorld('mjcode', {
   localCreateThread: (payload) => ipcRenderer.invoke('local:threads/create', payload),
   localSetThreadStatus: (payload) => ipcRenderer.invoke('local:threads/set-status', payload),
   localDeleteThread: (payload) => ipcRenderer.invoke('local:threads/delete', payload),
+  // 改会话执行根：仅用于「隔离副本已被清理 → 指回项目目录」
+  localSetThreadCwd: (payload) => ipcRenderer.invoke('local:threads/set-cwd', payload),
   // A1：重命名 / A3：归档恢复 / B1：归组
   localRenameThread: (payload) => ipcRenderer.invoke('local:threads/rename', payload),
   localArchivedThreads: () => ipcRenderer.invoke('local:threads/archived'),

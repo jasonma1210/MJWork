@@ -31,6 +31,48 @@
 - **MCP + 技能** — 可接 MCP 服务器，也可用内置 136 个技能，均按工作区隔离。
 - **本地优先存储** — 会话、凭证、设置都在系统应用数据目录下的本地 SQLite 里。
 
+## 浏览器接管（Chrome 会话）
+
+除了自带的独立浏览器自动化（`browser_*`，起一个干净的无头环境），应用还能接管你本机**已登录**的 Chrome 标签页。
+
+| 组成 | 位置 |
+|---|---|
+| 主进程工具 | `main/chromeTools.js` |
+| 中继服务 | `main/chromeRelay/server.js`、`protocol.js` |
+| 浏览器扩展 | `chrome-extension/`（Manifest V3，`tabs` + `debugger` 权限） |
+
+- **逐次授权**：每次连接都要在应用内确认，没有「装一次就长期常驻」的隐式授权。
+- **怎么选**：要复用登录态（企业内网、已登录的 SaaS、后台系统）用 `chrome_*`；要干净可复现的自动化环境用 `browser_*`。
+- 云侧 Agent 拿不到你本机的浏览器会话——这是本地优先架构的结果，不是配置差异。
+
+## 权限与审批分级
+
+三层动作分级 + 四档审批模式 + 三档沙箱；判定不确定时一律取更严的一侧（fail-closed）。
+
+**动作分级（`main/approval.js`）**
+
+| 级别 | 含义 | 典型场景 |
+|---|---|---|
+| L1 `danger-command` | 高危 / 不可逆命令 | Shell 命中危险模式、代码执行里的逃逸原语 |
+| L2 `file-write` | 本机文件写入 | `write_file` / `edit_file` / `apply_patch` |
+| L3 `mcp-tool` | MCP 外部工具 | 全部 `mcp__*` |
+
+- 只读工具（`READONLY_TOOLS`）直接放行，不弹卡。
+- **未登记的工具按 L2 处理**——fail-closed，不存在「没登记就默认放行」。
+- 可补偿性（`REVERSIBILITY`）单独判定：外部副作用与本机销毁类动作一律按不可逆对待。
+- **卡面文案本身属于安全面**：所有会落到 L1 或不可记忆的工具，`approvalSummary()` 里必须有专门撰写的说明；退化成原始 JSON dump 视为缺陷，由 `test/approval.test.js` 的门禁拦截。动作不可逆时，卡面是用户唯一能知道「接下来要发生什么」的地方。
+
+**审批模式（严格度递增）**：`never` < `auto-safe` < `on-request`（默认）< `always`
+
+- `auto-safe`：L2 自动放行，L1 / L3 仍询问。
+- `never`：除 L1 与不可逆 / 不可记忆的 L3 外不询问。
+- 「执行后告知」（`approvalNotice`）是与档位**正交**的布尔偏好，不改变任何询问行为。
+
+**沙箱三档**：`read-only` / `workspace-write` / `full-access`
+
+- `full-access` **只能**经会话运行链路由宿主绑定；IPC 直连会被钳制回 `workspace-write`（`main/tools/execGovernance.js`）。
+- 角色模板只能收紧权限、不能放宽。
+
 ## 技术栈
 
 | 层 | 选型 |
@@ -40,7 +82,7 @@
 | Agent 引擎 | `agent-core`：自研工具循环、模型适配、token/上下文记账 |
 | 存储 | SQLite（`sql.js`），协同缓冲用 Yjs |
 | 可选服务端 | Express 4 + PostgreSQL + JWT |
-| 质量门禁 | `node --test`（310 套件）、ESLint 警告棘轮、`tsc --noEmit`、文档与源码数字核对 |
+| 质量门禁 | `node --test`（324 套件）、ESLint 警告棘轮、`tsc --noEmit`、文档与源码数字核对 |
 
 ## 如何运行（开发）
 

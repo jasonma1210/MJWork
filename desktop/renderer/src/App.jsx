@@ -31,6 +31,7 @@ import { restoreMcpTools } from './lib/mcpTools';
 import { loadAgentsMd } from './lib/agentsMd';
 import ipc from './lib/ipc';
 import FeedbackHost, { confirm, toast } from './components/feedback';
+import BranchSwitchHost from './components/BranchSwitchDialog';
 // P3-1：MCP 工具执行的请求级进度条（全局一条，订阅主进程 mcp:progress）
 import McpProgressStrip from './components/McpProgressStrip';
 import { createProjectActions } from './lib/projectActions';
@@ -562,6 +563,7 @@ export default function App() {
               if (activeThread?.id) api.setThreadStatus(activeThread.id, status).then(() => loadData()).catch((err) => console.warn('[app] setThreadStatus failed:', err));
             }}
             onNewMessage={scheduleLoadData}
+            onThreadsChanged={scheduleLoadData}
             onThreadCreated={(t) => setActiveThread(t)}
             onAutoProject={selectProject}
             mcpTools={mcpTools}
@@ -721,6 +723,8 @@ export default function App() {
         }}
       />
       <FeedbackHost />
+      {/* 发送前「切换分支」确认卡（含脏工作区三选一）：命令式调用，宿主在此挂一次 */}
+      <BranchSwitchHost />
       <McpProgressStrip />
       {archiveOpen && (
         <ArchiveModal

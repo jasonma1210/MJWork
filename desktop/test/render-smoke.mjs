@@ -251,6 +251,10 @@ check('渲染冒烟：侧栏 / 工作区条 / 审批卡可独立渲染', () => {
   const targets = [
     ['components/Sidebar.jsx', { threads: [], projects: [], activeThread: null, activeProject: null, onSelect: noop }],
     ['components/WorktreeBar.jsx', { worktree: null, onClosed: noop, onMsg: noop }],
+    // 输入框下方的分支选择器：条件渲染（无 cwd 时不渲染），必须显式给 cwd 才真跑到主体
+    ['components/GitBranchPicker.tsx', { cwd: '/tmp', currentBranch: 'main', onSelect: noop }],
+    // 工作区两件套（分支 chip + Worktree 勾选框）：无 cwd 时只渲染勾选框，故要显式给 projectPath
+    ['components/ComposerWorkspaceRow.tsx', { projectPath: '/tmp', currentBranch: 'main', worktree: false, onToggleWorktree: noop }],
     ['components/ApprovalCard.jsx', { req: null, onDecision: noop }],
   ];
   const failures = [];

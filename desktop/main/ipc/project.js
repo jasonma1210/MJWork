@@ -14,6 +14,8 @@ const guard = require('./payloadGuard');
 // 产出文件「另存为」的路径解析与工具层同一套语义（相对路径按项目根解析）。
 // exec.js 只是 re-export 了这个函数，直接引定义处，避免为一个 4 行 helper 拖入整个工具执行层。
 const { resolveToolPath } = require('../tools/execCwd');
+// 分支切换/拉取会改动主检出目录：不弹审批（用户在选择器里的主动动作），但必须留痕
+const { audit } = require('../audit/auditLog');
 const logger = require('../logger');
 
 // X14：粘贴落盘的单文件上限（base64 字符数 ≈ 文件字节数 ×4/3）。无路径附件（粘贴图片等）
@@ -98,17 +100,120 @@ function register() {
   });
 
   // ── Git Worktree 隔离工作区（对标 Codex Worktree 模式）──
-  ipcMain.handle('worktree:create', async (_, { path: projectPath, taskTitle } = {}) => {
+  // base：以哪个分支为基线建副本（来自输入框下方的分支选择器）。
+  // 缺省由主进程按「当前分支」推导——渲染层的 project.branch 是**选项目那一刻**的快照，
+  // 用户之后切过分支它就过期了；把「基于哪个分支」的最终判定权留在主进程，才不会有
+  // 「界面显示 A、副本其实是 B」。分支名不进白名单校验逻辑（worktree.createWorktree 里
+  // 以 listBranches 结果为准），此处只守形状与长度。
+  ipcMain.handle('worktree:create', async (_, { path: projectPath, taskTitle, base } = {}) => {
     try {
       // X14：projectPath 会作为 git worktree add 的仓库根、taskTitle 进新分支名——
       // 路径允许空格（assertStrings 而非 assertTokens），类型与长度在边界守
       guard.assertStrings(
-        { path: projectPath, taskTitle },
-        { path: 4096, taskTitle: { max: 200, optional: true, allowEmpty: true } },
+        { path: projectPath, taskTitle, base },
+        {
+          path: 4096,
+          taskTitle: { max: 200, optional: true, allowEmpty: true },
+          base: { max: 200, optional: true, allowEmpty: true },
+        },
       );
-      return { ok: true, ...(await worktree.createWorktree(projectPath, taskTitle)) };
+      return { ok: true, ...(await worktree.createWorktree(projectPath, taskTitle, base)) };
     } catch (e) {
       return fail('worktree:create', e);
+    }
+  });
+
+  // ── 分支操作（输入框下方的 Git 按钮）──
+  // 语义对齐 WorkBuddy：**选分支不等于切分支**。选择器只记「本次任务的基线」，
+  // 真正切换发生在发送前，由确认卡（含脏工作区三选一）把住。因此这里四条通道：
+  //   git:branches       读本地/远程分组（只读）
+  //   git:refreshBranches 拉取更新 = fetch --prune + 重列（只读，不动工作区）
+  //   git:worktreeStatus  脏状态（只读，确认卡据此决定给不给三选一）
+  //   git:checkoutBranch  真切换（带 dirtyPolicy，破坏性动作，必须留痕）
+  // 切换不弹审批卡：它是用户在确认卡上刚点过「确认」的动作，再问一遍＝同一动作两次打扰；
+  // 但必须写审计——这是本仓唯一能改主检出目录 HEAD 的入口。
+  ipcMain.handle('git:branches', async (_, { cwd } = {}) => {
+    try {
+      guard.assertStrings({ cwd }, { cwd: 4096 });
+      return { ok: true, ...(await worktree.listBranches(cwd)) };
+    } catch (e) {
+      return fail('git:branches', e);
+    }
+  });
+
+  ipcMain.handle('git:refreshBranches', async (_, { cwd } = {}) => {
+    try {
+      guard.assertStrings({ cwd }, { cwd: 4096 });
+      const r = await worktree.refreshBranches(cwd);
+      audit('git_refresh_branches', String(cwd || ''), r.fetched ? 'fetch --prune' : '无远端，仅重读本地', 'auto');
+      return { ok: true, ...r };
+    } catch (e) {
+      const r = fail('git:refreshBranches', e);
+      audit('git_refresh_branches', String(cwd || ''), `失败：${e && e.message}`, 'blocked');
+      return r;
+    }
+  });
+
+  // 副本数量与按天清理（对齐 WorkBuddy 的 countWorktrees / cleanupWorktrees）
+  // 计数是只读的；清理会删目录与分支，属于破坏性动作 —— 但它由**用户在清理弹窗上确认**触发，
+  // 且只清「超过 N 天没动过 + 工作区干净」的副本，故不另加审批卡，改为强制审计留痕。
+  // 只读：判断某路径是否我方副本（会话恢复用）。路径可能已不存在，故不要求可读，
+  // 只按前缀判「归属」，存在时才读分支。
+  ipcMain.handle('worktree:describe', async (_, { path: target } = {}) => {
+    try {
+      guard.assertStrings({ path: target }, { path: 4096 });
+      return { ok: true, ...(await worktree.describeWorktree(target)) };
+    } catch (e) {
+      return fail('worktree:describe', e);
+    }
+  });
+
+  ipcMain.handle('worktree:count', async (_, { cwd } = {}) => {
+    try {
+      guard.assertStrings({ cwd }, { cwd: 4096 });
+      return { ok: true, count: await worktree.countWorktrees(cwd) };
+    } catch (e) {
+      return fail('worktree:count', e);
+    }
+  });
+
+  ipcMain.handle('worktree:cleanup', async (_, { cwd, olderThanDays } = {}) => {
+    try {
+      guard.assertStrings({ cwd }, { cwd: 4096 });
+      const days = Number.isFinite(olderThanDays) && olderThanDays > 0 ? Math.min(3650, Math.floor(olderThanDays)) : 15;
+      const r = await worktree.cleanupWorktrees(cwd, { olderThanDays: days });
+      audit('worktree_cleanup', String(cwd || ''),
+        `超过 ${days} 天；清理 ${r.cleanedCount}（脏跳过 ${r.skippedDirtyCount} / 新跳过 ${r.skippedRecentCount} / 失败 ${r.failedCount}）`, 'auto');
+      return { ok: true, ...r };
+    } catch (e) {
+      const r = fail('worktree:cleanup', e);
+      audit('worktree_cleanup', String(cwd || ''), `失败：${e && e.message}`, 'blocked');
+      return r;
+    }
+  });
+
+  ipcMain.handle('git:worktreeStatus', async (_, { cwd } = {}) => {
+    try {
+      guard.assertStrings({ cwd }, { cwd: 4096 });
+      return { ok: true, ...(await worktree.worktreeStatus(cwd)) };
+    } catch (e) {
+      return fail('git:worktreeStatus', e);
+    }
+  });
+
+  ipcMain.handle('git:checkoutBranch', async (_, { cwd, branch, dirtyPolicy } = {}) => {
+    try {
+      guard.assertStrings({ cwd, branch }, { cwd: 4096, branch: 200 });
+      const policy = ['abort', 'commit', 'stash', 'discard'].includes(dirtyPolicy) ? dirtyPolicy : 'abort';
+      const r = await worktree.checkoutBranch(cwd, branch, policy);
+      audit('git_checkout_branch', String(branch), `dirtyPolicy=${policy}${r.blockedByDirty ? '；被脏工作区拦下' : ''}`, r.blockedByDirty ? 'blocked' : 'auto');
+      // code 一并回传：身份缺失（GIT_IDENTITY_MISSING）要由界面说「先配 user.name/email」，
+      // 而不是笼统的「切换失败」（用户会去查网络，实际是 git config 少了两个字段）
+      return { ok: true, ...r };
+    } catch (e) {
+      const r = fail('git:checkoutBranch', e);
+      audit('git_checkout_branch', String(branch || ''), `失败：${e && e.message}`, 'blocked');
+      return { ...r, code: (e && e.code) || null };
     }
   });
 

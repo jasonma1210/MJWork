@@ -19,3 +19,6 @@ export type { MenuItemProps } from './MenuItem';
 
 export { default as ChipButton } from './ChipButton';
 export type { ChipButtonProps } from './ChipButton';
+
+export { default as Checkbox } from './Checkbox';
+export type { CheckboxProps } from './Checkbox';

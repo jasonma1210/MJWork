@@ -15,5 +15,75 @@
   "mergeBackHint": "将隔离工作区的改动合并回主目录",
   "promoteHint": "提升为正式分支（mj/ 前缀）并移除 worktree",
   "removeHint": "移除隔离工作区（未合并改动将丢失）",
-  "cleanup": "清理"
+  "branchTitle": "切换任务基线分支（不立即切换，发送前确认）",
+  "selectBranch": "选择分支",
+  "searchBranch": "搜索分支",
+  "localBranches": "本地分支",
+  "remoteBranches": "远程分支",
+  "noBranches": "未找到分支",
+  "loadingBranches": "正在读取分支…",
+  "branchRenderLimitHint": "仅展示前 {count} 个分支，可搜索缩小范围",
+  "fetchRefresh": "拉取更新",
+  "fetching": "正在拉取…",
+  "listFailed": "读取分支列表失败：{error}",
+  "noRemote": "没有配置远端仓库，只列出本地分支",
+  "initGitHint": "初始化 Git 仓库以启用 Worktree",
+  "enableHint": "启用后，会基于所选分支为任务创建独立工作区，避免直接修改原工作目录中的文件。",
+  "selectedHint": "本次任务将基于 {branch} 分支",
+  "branchSwitched": "已切换到 {branch}",
+  "created": "已在 {branch} 创建独立工作区",
+  "createFailedFallback": "Worktree 创建失败，已回退为普通任务。",
+  "branchSwitch": {
+    "title": "切换分支",
+    "confirm": "确认",
+    "cancel": "取消",
+    "canceled": "已取消发送：没有切换分支",
+    "desc": "当前 {folder} 空间内容归属 {current} 分支。本次任务已选择 {selected} 分支。确认后，将切换分支并创建任务。",
+    "dirtyBlocked": "当前工作空间存在未提交改动，无法切换分支，请先处理后重试。",
+    "gitIdentityMissing": "未配置 Git 提交身份，请先设置 user.name 和 user.email，或选择「暂存」后重试。",
+    "failed": "切换分支失败，请重试。",
+    "dirty": {
+      "desc": "当前 {folder} 空间内容归属 {current} 分支，且存在未提交的变更，请选择处理方式，完成后将自动切换至 {selected} 分支并创建任务。",
+      "group": "未提交改动的处理方式",
+      "commit": "提交至 {branch} 分支",
+      "stash": "暂存，包含未跟踪文件。",
+      "discard": "丢弃，此操作无法撤销。",
+      "recommend": "推荐"
+    }
+  },
+  "creating": {
+    "title": "正在创建独立工作区"
+  },
+  "branchLocked": "任务已在隔离副本中运行，基线在创建那一刻就定下了；要换基线请先在上方收口条里合并或清理副本",
+  "cleanupLabel": "清理",
+  "branchCopied": "已复制分支名",
+  "copyFailed": "复制失败：剪贴板不可用",
+  "countWarning": "Worktree 任务工作区即将达到上限（{count}/{cleanupLimit}），可清理闲置任务，释放空间后再新建。",
+  "branchLabel": {
+    "copy": "复制分支名"
+  },
+  "limit": {
+    "sendDisabledTooltip": "已达关联 Worktree 工作区上限，请先清理闲置 Worktree 后再使用。"
+  },
+  "cleanup": {
+    "title": "任务工作区已达上限",
+    "description": "当前已达到 {count} 个任务工作区（Worktree）上限，无法继续在新任务使用 Worktree。请选择清理范围。",
+    "scopePrefix": "清理超过",
+    "scopeSuffix": "天前的任务工作区分支和文件",
+    "scopeAria": "选择 Worktree 清理范围",
+    "confirm": "确定",
+    "cancel": "取消",
+    "result": "已清理 {cleaned} 个副本（脏副本跳过 {dirty} / 未到期跳过 {recent}）",
+    "done": "本轮清理 {cleaned} 个；跳过：脏 {dirty} 个、未满 {recent} 个。",
+    "failed": "清理失败",
+    "deleteThreads": "同时归档这些副本对应的会话",
+    "deleteThreadsHint": "默认不勾：副本是缓存，对话历史不是。归档后可在「归档」里恢复。",
+    "threadsArchived": "已归档 {n} 个会话（可在归档里恢复）",
+    "threadsArchiveFailed": "副本已清理，但归档对应会话失败"
+  },
+  "copyMissing": "这个会话的执行目录（隔离副本）已被清理：{path}",
+  "useProjectDir": "改用项目目录",
+  "useProjectDirDone": "已把会话执行目录改为 {path}",
+  "useProjectDirFailed": "切换执行目录失败",
+  "useProjectDirNoProject": "当前没有可用的项目目录"
 }

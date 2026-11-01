@@ -34,7 +34,6 @@ export interface WelcomePageProps {
   send: (text: string) => void;
   modelWarning: boolean;
   setModelWarning: (v: boolean) => void;
-  runMode: string;
   worktree: { path?: string; branch?: string } | null;
   setWorktree: (v: { path?: string; branch?: string } | null) => void;
   setRunMode: (mode: string) => void;
@@ -44,7 +43,7 @@ export interface WelcomePageProps {
 export default function WelcomePage({
   composerProps, ambient, project, projectPicked, onOpenProjectPicker,
   send, modelWarning, setModelWarning,
-  runMode, worktree, setWorktree, setRunMode, setModeMsg,
+  worktree, setWorktree, setRunMode, setModeMsg,
 }: WelcomePageProps) {
   const { t } = useI18n();
   return (
@@ -108,9 +107,10 @@ export default function WelcomePage({
         </div>
       )}
 
-      {/* P1-H：隔离工作区收口条（合并回主目录/提升为分支/清理）——worktree 只建不收的断链修复 */}
+      {/* P1-H：隔离工作区收口条（合并回主目录/提升为分支/清理）——worktree 只建不收的断链修复。
+          A11：与 ChatArea 同口径——只要有副本就显示，不随 Worktree 开关的开关态显隐。 */}
       <WorktreeBar
-        worktree={runMode === 'worktree' ? worktree : null}
+        worktree={worktree}
         onClosed={() => { setWorktree(null); setRunMode('local'); }}
         onMsg={(m: string) => setModeMsg(m)}
       />

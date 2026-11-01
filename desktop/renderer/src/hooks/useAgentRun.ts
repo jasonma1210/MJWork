@@ -2,7 +2,7 @@
 // 类型集中在外置的 ./useAgentRunTypes（deps 契约 50+ 字段，塞回本文件会顶破 code 行软档）；
 // 函数体保持 T2-2 搬移时的实现不变 —— 本轮只做「边界收口」，不改业务逻辑。
 import { useEffect, useRef, useState } from 'react';
-import type { UseAgentRunDeps, RunThread, RunMessage, SendOpts } from './useAgentRunTypes';
+import type { UseAgentRunDeps, RunThread, RunMessage, SendOpts, RunProject, RunWorktree } from './useAgentRunTypes';
 import { runAgent, decomposeTask, looksLargeTask } from '../lib/agent';
 // P0-4：上下文压缩实现移到独立模块（窗口现算 / 运行中守卫 / 撤销带），本文件只做状态装配
 import { compactSession } from '../lib/compactSession';
@@ -11,6 +11,8 @@ import { captureBaseline } from '../lib/runBaseline';
 import { getModelOverrides, buildRunModel } from '../lib/modelConfig';
 import { api } from '../lib/api';
 import { toast } from '../components/feedback';
+import { askBranchSwitch } from '../components/BranchSwitchDialog';
+import { WORKTREE_LIMIT } from '../constants/worktree';
 import { runRegistry, makeRunState } from '../lib/runRegistry';
 import { abortGroupsForThread } from '../lib/stopThreadWork';
 import { arrayBufferToBase64, buildExpertPrompt, agentFilesOf } from '../lib/chatHelpers';
@@ -120,12 +122,14 @@ export default function useAgentRun(d: UseAgentRunDeps) {
   const {
     input, loading, selectedModel, project, projectPicked, thread, cwd, mcpTools, enabledSkills,
     fileSkills, memories, agentsMd, approvalSettings, planMode, runMode, worktree, sessionExtras,
+    currentBranch = '', selectedBranch = '', worktreeCount = 0,
     messages, compacting, plan, voice,
     // 附件 chips（拖入/粘贴/添加到对话框）：状态归 ChatArea，经 deps 注入（与 input 同架构）
     attachments = [], setAttachments,
     setInput, setModelWarning, setPlan, setPlanReport, setDecomposing, setMessages, setLastFailed, setLoading,
     setToolCalls, setRunSummary, setRunUsage, setQueued, setStreamingText, setReasoningText, setRunFiles,
     setWindowStart, setCompacting, setPlanMode, setRunMode, setModeMsg, setWorktree,
+    setBranch, setSelectedBranch,
     abortRef, activeThreadIdRef, activeRunIdRef, runStartRef, agentFilesRef, messagesRef, steerPendingRef,
     onNewMessage, onThreadStatus, onAgentFilesChange, onThreadCreated, onAutoProject, onSubagentEvent, relayRef,
   } = d;
@@ -419,9 +423,27 @@ export default function useAgentRun(d: UseAgentRunDeps) {
     // 执行/diff/测试实际发生在原项目目录（污染用户工作区）。
     // 解析一次后写入本轮闭包：后续 projectRoot 变化只会影响新 run，
     // 不会覆盖进行中 run 的工作根（send 闭包捕获的是本轮解析值）。
-    const executionRoot = (runMode === 'worktree' && worktree?.path)
-      ? worktree.path
+    // 分支基线（对齐 WB beforeSendPrompt）：没勾 Worktree 才需要动主目录，动之前要过确认卡；
+    // 勾了则主目录一动不动，副本直接从选中分支建。取消/失败一律终止本次发送。
+    if (!(await ensureBranchForTask(effectiveProject?.path || ''))) return;
+    // 副本在**发送这一刻**才建（基线可能刚选完）；建失败按 WB 的 createFailedFallback
+    // 回退为普通任务继续跑。注意用返回值而不是闭包里的 worktree：setState 不会回填本轮闭包。
+    const wtRes = runMode === 'worktree'
+      ? await ensureWorktree(effectiveProject, worktree)
+      : { ok: true, worktree: null };
+    if (!wtRes.ok) return; // 副本已达上限：与 WB 一致，宁可这一发不发，也不静默换成主目录执行
+    const runWorktree = wtRes.worktree;
+    const executionRoot = runWorktree?.path
+      ? runWorktree.path
       : (effectiveProject?.path || cwd);
+    // 把「这一轮实际在哪跑」写回会话：thread.cwd 是执行根的唯一持久真相，不写回就会出现
+    // 「本轮在主目录跑完、下次打开这个会话又被派生的旧副本路径拽回去」。
+    // 只在该会话此前确实跑在副本里（worktree 有值且本轮没走副本）时才写，避免每轮无谓 IPC。
+    if (!runWorktree?.path && worktree?.path && thread?.id && effectiveProject?.path) {
+      Promise.resolve(window.mjcode?.localSetThreadCwd?.({ threadId: thread.id, cwd: effectiveProject.path }))
+        .then((r) => { if (!asObj<{ ok?: boolean }>(r)?.ok) console.warn('[worktree] switch thread cwd back to project failed'); })
+        .catch((err) => console.warn('[worktree] switch thread cwd back to project failed:', errText(err)));
+    }
     if (!currentThread) {
       // 存储异常必须复位 loading：此前 createThread/sendMessage 抛错时本轮已把 loading 置 true，
       // 异常直穿 → loading 永久卡死，用户再也发不出消息（此处 rs 尚未注册、abortRef 可能还是上一轮的
@@ -886,6 +908,8 @@ export default function useAgentRun(d: UseAgentRunDeps) {
 
   // B-P0-4：同步闩锁防重复提交（连按两次 Enter 会建两个会话 + 双花 token）。必须在第一个 await 之前置位；.finally 覆盖所有 return 分支；steer 的 force 补发由 setTimeout 排队，不受影响。
   const sendingRef = useRef(false);
+  // 切换运行模式的请求序号：建副本要 1~2s，期间用户可能反复开关，只认最后一次（迟到结果丢弃）
+  const modeReqRef = useRef(0);
   async function send(text: string | undefined, forcedThread: RunThread | null | undefined, opts: SendOpts = {}) {
     if (!opts.force && sendingRef.current) return;
     sendingRef.current = true;
@@ -923,28 +947,124 @@ export default function useAgentRun(d: UseAgentRunDeps) {
     setInput((v) => (v.trim() ? `${v}${tGlobal('runtime.planModeSuffix')}` : '/plan '));
   }
 
-  // 切换运行模式：进入隔离工作区时按需创建 worktree 副本
+  /** 本次任务的基线分支：用户显式选中优先，否则跟随当前分支（事实） */
+  function baseBranchOf(proj: RunProject | null): string {
+    return selectedBranch || currentBranch || proj?.branch || '';
+  }
+
+  /**
+   * 分支作为「任务基线」的落地点（对齐 WorkBuddy 的 beforeSendPrompt）
+   *
+   * 三种情况，语义完全不同，不能合并：
+   *   ① 没选分支 / 选的就是当前分支 → 什么都不做（零打扰）；
+   *   ② 勾了 Worktree → **不切主目录**。副本直接从选中分支建，主目录保持原样才是隔离承诺；
+   *   ③ 没勾 Worktree → 必须切主目录，于是先确认（脏工作区给三选一），再 checkout。
+   * 返回 false = 用户取消或切换失败，本次发送终止（**不能**带着「以为切了」的状态继续跑）。
+   */
+  async function ensureBranchForTask(repo: string): Promise<boolean> {
+    const selected = selectedBranch || '';
+    if (!repo || !selected) return true;
+    const current = currentBranch || '';
+    if (selected === current) return true;
+    if (runMode === 'worktree') return true;
+
+    const mj = window.mjcode;
+    // 脏状态读不到时按「干净」继续，而不是按「脏」：多弹一个不成立的三选一，用户会以为
+    // 自己一定有待提交改动；而真脏的话 git 自己会拒绝 checkout，返回值里带原因（fail-closed）
+    let dirty = false;
+    try {
+      const st = asObj<{ ok?: boolean; hasUncommittedChanges?: boolean }>(await mj?.worktreeStatus?.({ cwd: repo }));
+      dirty = st?.hasUncommittedChanges === true;
+    } catch (e) {
+      console.warn('[branch] worktreeStatus failed, assume clean:', errText(e));
+    }
+
+    // 卡片要说出「哪个工作空间」，项目名缺失时用目录名兜底（否则文案会出现「当前  空间」）
+    const folder = project?.name || repo.split('/').filter(Boolean).pop() || '';
+    const ans = await askBranchSwitch({ folder, current, selected, dirty });
+    if (!ans.ok) { setModeMsg(tGlobal('worktree.branchSwitch.canceled')); return false; }
+
+    try {
+      const r = asObj<{ ok?: boolean; error?: string; code?: string; blockedByDirty?: boolean; currentBranch?: string }>(
+        await mj?.checkoutBranch?.({ cwd: repo, branch: selected, dirtyPolicy: ans.policy }),
+      );
+      if (r?.blockedByDirty) { setModeMsg(tGlobal('worktree.branchSwitch.dirtyBlocked')); return false; }
+      if (!r?.ok) {
+        // 身份缺失与「切换失败」必须分开说：前者要用户去配 user.name/email，后者才是重试
+        setModeMsg(r?.code === 'GIT_IDENTITY_MISSING'
+          ? tGlobal('worktree.branchSwitch.gitIdentityMissing')
+          : tGlobal('worktree.branchSwitch.failed'));
+        return false;
+      }
+      const now = r.currentBranch || selected;
+      setBranch?.(now);
+      setSelectedBranch?.(''); // 已生效：选择回到「跟随当前」，否则下次发送会拿旧选择再问一遍
+      setModeMsg(tGlobal('worktree.branchSwitched', { branch: now }));
+      return true;
+    } catch (err) {
+      setModeMsg(tGlobal('worktree.branchSwitch.failed'));
+      console.warn('[branch] checkoutBranch failed:', errText(err));
+      return false;
+    }
+  }
+
+  /**
+   * 勾了 Worktree 但还没有副本时，**在发送这一刻**建（对齐 WorkBuddy：勾选只是意图）
+   *
+   * 为什么不在勾选时就建：基线分支可能在勾选之后才选，提前建会用错基线；用户也可能只是
+   * 勾了一下又取消，那样每次手滑都留一个副本目录（还要靠上限 8 去兜）。
+   * 创建失败按 WorkBuddy 的 createFailedFallback 处理：**回退为普通任务继续跑**，
+   * 而不是把这条消息拦下来——用户要的是任务，隔离是它的执行方式。
+   */
+  async function ensureWorktree(proj: RunProject | null, existing: RunWorktree | null) {
+    if (existing?.path) return { ok: true, worktree: existing };
+    if (!proj?.path) return { ok: true, worktree: null };
+    // 上限：此时**不能**回退成普通任务——勾着 Worktree 却跑在主目录，等于悄悄换了执行方式。
+    // 与 WB 同口径：发送键已被禁用（tooltip 说明原因），这里再兜一层（键盘/队列等旁路）。
+    if (worktreeCount >= WORKTREE_LIMIT) {
+      setModeMsg(tGlobal('worktree.limit.sendDisabledTooltip'));
+      return { ok: false, worktree: null };
+    }
+    setModeMsg(tGlobal('worktree.creating.title'));
+    try {
+      const r = asObj<{ ok?: boolean; path?: string; branch?: string; base?: string; error?: string }>(
+        await window.mjcode?.createWorktree?.({
+          path: proj.path,
+          taskTitle: thread?.title || proj.name,
+          base: baseBranchOf(proj),
+        }),
+      );
+      if (!r?.ok) {
+        setRunMode('local');
+        setModeMsg(tGlobal('worktree.createFailedFallback'));
+        console.warn('[worktree] create failed, fallback to normal task:', r?.error || 'unknown');
+        return { ok: true, worktree: null };
+      }
+      const wt = { path: r.path, branch: r.branch, base: r.base };
+      setWorktree(wt);
+      setModeMsg(tGlobal('worktree.created', { branch: r.branch || '' }));
+      return { ok: true, worktree: wt };
+    } catch (err) {
+      setRunMode('local');
+      setModeMsg(tGlobal('worktree.createFailedFallback'));
+      console.warn('[worktree] create failed, fallback to normal task:', errText(err));
+      return { ok: true, worktree: null };
+    }
+  }
+
+  // 勾选框只翻转意图，不在这里建副本（原因见 ensureWorktree 注释）
   async function switchMode(next: string) {
     if (next === runMode) return;
     setModeMsg('');
-    if (next !== 'worktree') { setRunMode('local'); return; }
-    setRunMode('worktree');
-    if (!project?.path) { setModeMsg(tGlobal('runtime.selectProjectFirst')); setRunMode('local'); return; }
-    if (worktree?.path) return;
-    setModeMsg(tGlobal('runtime.creatingWorktree'));
-    try {
-      const mj = window.mjcode;
-      const r = asObj<{ ok?: boolean; path?: string; branch?: string; error?: string }>(await mj?.createWorktree?.({
-        path: project.path,
-        taskTitle: thread?.title || project.name,
-      }));
-      if (!r?.ok) { setModeMsg(r?.error || tGlobal('runtime.worktreeCreateFailed')); setRunMode('local'); return; }
-      setWorktree({ path: r.path, branch: r.branch });
-      setModeMsg(tGlobal('runtime.worktreeCreated', { branch: r.branch || '' }));
-    } catch (err) {
-      setModeMsg(tGlobal('runtime.worktreeCreateFailedDetail', { error: errText(err) }));
+    if (next !== 'worktree') {
+      modeReqRef.current += 1; // 作废在途创建（关掉勾选就是「这一发别隔离」）
       setRunMode('local');
+      // 关掉勾选 ≠ 删掉副本：里面的改动还在磁盘上，收口入口（WorktreeBar）继续常驻
+      if (worktree?.path) setModeMsg(tGlobal('runtime.worktreeKept', { branch: worktree.branch || '' }));
+      return;
     }
+    if (!project?.path) { setModeMsg(tGlobal('runtime.selectProjectFirst')); return; }
+    setRunMode('worktree');
   }
 
   // /compact：早期对话摘要化（对标 Codex 上下文压缩）；P0-4 实现移到 lib/compactSession，此处只做状态装配

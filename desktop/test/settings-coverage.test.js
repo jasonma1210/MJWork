@@ -159,12 +159,37 @@ check('新建任务不显示工作区 chip（空态不得伪装成已选）', ()
   // 调用点接线（workspaceBound={!!thread}）在 ChatArea.jsx，欢迎页副标题在 WelcomePage.tsx
   const chat = read('components/Composer.tsx');
   // 项目 / 分支 / 上下文环三段必须在 workspaceBound 门控之内
-  const gate = chat.match(/\{workspaceBound && \(([\s\S]*?)\n      \)\}/);
-  assert.ok(gate, '未找到 workspaceBound 门控块');
-  for (const marker of ['IconFolder', 'IconGitBranch', 'ContextRing']) {
-    assert.ok(gate[1].includes(marker),
-      `${marker} 不在 workspaceBound 门控内：新建任务页仍会显示工作区信息`);
+  // 2026-11-01：判据拆成两块，各守各的语义——
+  //   · 状态行（项目/分支/上下文环）仍只认 workspaceBound：它陈述「本会话在哪个工作区」，空态不该出现；
+  //   · 工作区两件套（分支 chip + Worktree）改认「有项目 &&（已进入会话 || 本轮主动选过项目）」：
+  //     它是「下一条任务从哪出发」的选择，必须能在**新任务页**用（WB 的 chip 就在任务开始前）。
+  // 两块都用**括号配对**取整（旧正则靠缩进锚定，遇嵌套 `)}` 会静默截断，实测漏判过 ContextRing）。
+  const gateStarts = [
+    '{workspaceBound && (',
+    '{!!project?.path && (workspaceBound || projectPicked) && (',
+  ];
+  const gates = [];
+  for (const startToken of gateStarts) {
+    for (let i = chat.indexOf(startToken); i >= 0; i = chat.indexOf(startToken, i + 1)) {
+      let depth = 0;
+      for (let j = i; j < chat.length; j++) {
+        if (chat[j] === '{') depth++;
+        else if (chat[j] === '}') { depth--; if (depth === 0) { gates.push(chat.slice(i, j + 1)); break; } }
+      }
+    }
   }
+  assert.ok(gates.length >= 2, `门控块应有状态行与工作区两处，实际 ${gates.length}`);
+  // 自检：配对结果必须都是完整的门控块（否则下面的「包含」判定会退化成整文件搜索）
+  assert.ok(gates.every((g) => gateStarts.some((t) => g.startsWith(t)) && g.endsWith('}')),
+    '门控块配对结果形状异常（可能是括号配对被字符串里的花括号干扰）');
+  assert.ok(gates.every((g) => g.length < chat.length / 2), '门控块吃掉了半个文件（配对失效）');
+  const gated = gates.join('\n');
+  for (const marker of ['IconFolder', 'ContextRing', 'ComposerWorkspaceRow']) {
+    assert.ok(gated.includes(marker),
+      `${marker} 不在门控内：新建任务页仍会显示工作区信息`);
+  }
+  assert.equal(chat.split('<ComposerWorkspaceRow').length - 1, 1,
+    'ComposerWorkspaceRow 渲染点必须唯一（多挂一处就有一处可能漏门控）');
   assert.match(read('components/ChatArea.jsx'), /workspaceBound=\{!!thread\}/,
     'Composer 未按「是否已进入会话」传入 workspaceBound');
   // 欢迎页副标题同样受「主动选择」门控：残留的上次项目不得当默认事实展示

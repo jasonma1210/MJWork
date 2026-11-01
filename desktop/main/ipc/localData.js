@@ -240,6 +240,13 @@ function register() {
     const { threadId, title } = payload;
     return deps.getLocalStore() ? deps.getLocalStore().renameThread(threadId, title) : { ok: false };
   });
+  // 隔离副本被清理后，把会话的执行根指回项目目录（只接受真实存在的目录）
+  ipcMain.handle('local:threads/set-cwd', async (_, payload) => {
+    guard.assertIds(payload, ['threadId']);
+    guard.assertStrings(payload, { cwd: 1024 });
+    const { threadId, cwd } = payload;
+    return deps.getLocalStore() ? deps.getLocalStore().updateThreadCwd(threadId, cwd) : { ok: false };
+  });
   // A3：归档可见 —— 恢复 / 彻底删除 / 列表
   ipcMain.handle('local:threads/archived', async () => deps.getLocalStore() ? deps.getLocalStore().listArchivedThreads() : []);
   ipcMain.handle('local:threads/restore', async (_, payload) => {
