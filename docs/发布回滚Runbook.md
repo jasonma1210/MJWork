@@ -34,6 +34,18 @@
 7. Release 页核对：三平台制品齐全 + latest(-beta).yml 存在 + CHANGELOG 链接
 ```
 
+> **本机推送前置（否则第 3/4 步 `git push` 会 502）**
+> 若 `~/.gitconfig` 配了 `[url "https://gh-proxy.com/https://github.com/"] insteadOf = https://github.com/`，
+> 它会把**所有** github 请求改写成走 gh-proxy 只读镜像 ⇒ `git push` 报
+> `CONNECT tunnel failed, response 502` 或 `No anonymous write access`（读镜像偶发 502，写一律拒绝）。
+> 两种解法，任选其一：
+> 1. **仓库本地（推荐，持久、不动全局）**：
+>    `git config --local 'url.https://github.com/.pushInsteadOf' 'https://github.com/'`
+>    `git config --local http.version HTTP/1.1`
+> 2. **一次性**：`GIT_CONFIG_GLOBAL=<去掉 gh-proxy 段的 gitconfig> GIT_HTTP_VERSION=1.1 git push origin <ref>`
+>
+> 注：`gh release view` / `gh run list` 走 GitHub API，不受该改写影响，可用来独立核验发布结果。
+
 签名 secrets（GitHub → Settings → Secrets）：
 
 | 平台 | 变量 |
