@@ -13,7 +13,9 @@ async function check(name, fn) {
   catch (e) { console.error(`[FAIL] ${name} — ${e.message}`); process.exitCode = 1; }
 }
 
-const gitBin = fs.existsSync('/usr/bin/git') ? '/usr/bin/git' : 'git';
+// 走 PATH 解析的 `git`（与 main/worktree.js 一致），不要写死 /usr/bin/git：
+// CI runner 上该绝对路径不可直接 spawn（ENOENT），会连锁弄坏临时仓库状态。
+const gitBin = 'git';
 function sh(cwd, args) {
   const { execFileSync } = require('child_process');
   return execFileSync(gitBin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -24,6 +26,9 @@ function sh(cwd, args) {
   const repo = path.join(tmp, 'repo');
   fs.mkdirSync(repo);
   sh(repo, ['init', '-q']);
+  // 把初始分支命名为 main：兼容所有 git 版本，不依赖运行机的 init.defaultBranch
+  // （默认可能是 master，会让全套「预期 main」断言级联失败）
+  sh(repo, ['checkout', '-q', '-b', 'main']);
   sh(repo, ['config', 'user.email', 't@t.io']);
   sh(repo, ['config', 'user.name', 't']);
   fs.writeFileSync(path.join(repo, 'README.md'), '# base\n');
@@ -267,7 +272,12 @@ function sh(cwd, args) {
     sh(tmp, ['init', '--bare', '-q', 'origin.git']);
     sh(repo, ['remote', 'add', 'origin', bare]);
     sh(repo, ['push', '-q', '-u', 'origin', 'main']);
+    // 让裸仓库默认分支指向 main：否则克隆会落到未出生的 master，
+    // 后续 `git checkout -q main` 直接 pathspec 失败并级联
+    sh(bare, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
     sh(tmp, ['clone', '-q', bare, peer]);
+    // 兜底：显式建出本地 main（跟随 origin/main），不依赖克隆时的默认分支解析
+    sh(peer, ['checkout', '-q', '-B', 'main', 'origin/main']);
     sh(peer, ['config', 'user.email', 'p@p.io']);
     sh(peer, ['config', 'user.name', 'p']);
     sh(peer, ['checkout', '-q', '-b', 'feat/remote-only']);
