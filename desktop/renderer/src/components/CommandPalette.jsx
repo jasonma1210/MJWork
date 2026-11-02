@@ -11,10 +11,12 @@ export default function CommandPalette({ open, onClose, threads, onSelectThread,
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const [files, setFiles] = useState([]);
+  // R3-1：正文检索结果（与文件检索分开存：两者的失败处理与节流条件不同）
+  const [msgHits, setMsgHits] = useState([]);
   const inputRef = useRef(null);
 
   useEffect(() => {
-    if (!open) { setQ(''); setActive(0); return; }
+    if (!open) { setQ(''); setActive(0); setMsgHits([]); return; }
     inputRef.current?.focus();
   }, [open]);
 
@@ -34,6 +36,27 @@ export default function CommandPalette({ open, onClose, threads, onSelectThread,
     return () => { cancelled = true; clearTimeout(t); };
   }, [open, projectPath, q]);
 
+  // R3-1：正文检索（250ms debounce，至少 2 个字符）。
+  // 为什么单独一个 effect 而不并进上面的 glob：两者一个走主进程全库扫描、一个走文件系统，
+  // 失败语义不同（搜失败要让用户看见「没搜到 ≠ 没搜」），合并会让错误互相掩盖。
+  useEffect(() => {
+    if (!open || q.trim().length < 2 || !window.mjcode?.localSearchMessages) {
+      setMsgHits([]);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      window.mjcode.localSearchMessages({ query: q.trim(), limit: 8 })
+        .then((r) => {
+          if (cancelled) return;
+          const hits = Array.isArray(r?.hits) ? r.hits : [];
+          setMsgHits(hits.slice(0, 8));
+        })
+        .catch(() => { if (!cancelled) setMsgHits([]); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [open, q]);
+
   // O5：按类目分组（命令 / 会话 / 文件），各类限额，避免会话占满 40 条把文件挤没
   const groups = useMemo(() => {
     const kw = q.trim().toLowerCase();
@@ -44,6 +67,14 @@ export default function CommandPalette({ open, onClose, threads, onSelectThread,
       .filter((t) => !kw || (t.title || tr('palette.newThread')).toLowerCase().includes(kw))
       .slice(0, 15)
       .map((t) => ({ kind: tr('palette.threadKind'), icon: <IconMessage size={14} />, label: t.title || tr('palette.newThread'), hint: t.model_name || '', run: () => onSelectThread?.(t) }));
+    const msgs = msgHits.map((r) => ({
+      kind: tr('palette.msgKind'),
+      icon: <IconSearch size={14} />,
+      label: String(r.snippet || '').slice(0, 120),
+      hint: r.threadTitle || '',
+      // 点击进入该消息所在会话；会话不在当前列表（已归档/已删除）时不做动作，避免跳到空壳
+      run: () => { const th = threads.find((x) => x.id === r.threadId); if (th) onSelectThread?.(th); },
+    }));
     const fls = files.slice(0, 15).map((f) => {
       const name = String(f).split('/').pop();
       // O4：glob 结果可能是绝对路径，直接使用；相对路径才与项目根拼接
@@ -53,9 +84,10 @@ export default function CommandPalette({ open, onClose, threads, onSelectThread,
     const out = [];
     if (cmds.length) out.push({ kind: tr('palette.cmdKind'), items: cmds });
     if (ths.length) out.push({ kind: tr('palette.threadKind'), items: ths });
+    if (msgs.length) out.push({ kind: tr('palette.msgKind'), items: msgs });
     if (fls.length) out.push({ kind: tr('palette.fileKind'), items: fls });
     return out;
-  }, [q, commands, threads, files, onSelectThread, onOpenFile, projectPath, tr]);
+  }, [q, commands, threads, files, msgHits, onSelectThread, onOpenFile, projectPath, tr]);
 
   const flatItems = useMemo(() => groups.flatMap((g) => g.items), [groups]);
 

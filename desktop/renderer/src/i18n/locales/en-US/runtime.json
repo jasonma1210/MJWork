@@ -71,6 +71,7 @@
   "sandboxIsolatedNo": "not isolated",
   "memNeedProject": "Select a project before writing memories",
   "memSaved": "Saved to project memory",
+  "exportNeedsLocal": "Export is only available in local mode",
   "engineFallback": "This run had no process isolation (the engine executed inside the app process): if the engine fails, the UI goes down with it. Restart the app; if it keeps happening, export diagnostics.",
   "memSaveFailed": "Failed to save memory: {error}",
   "threadCreateFailed": "Failed to create the conversation; this run has been stopped: {error}\nTry again; if it keeps failing, check that the local conversation store is writable.",

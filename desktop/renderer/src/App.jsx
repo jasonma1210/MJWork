@@ -703,6 +703,19 @@ export default function App() {
           { label: tr('app.cmdDesk'), run: () => navDispatch({ type: 'page', page: 'desk' }) },
           { label: tr('app.cmdUsage'), run: () => navDispatch({ type: 'page', page: 'dashboard' }) },
           { label: tr('app.cmdFiles'), run: () => { if (activeThread) { setPaneTab('files'); setPaneOpen(true); } } },
+          // R3-2：导出当前会话。路径由主进程的系统保存对话框给出（渲染层不传路径）。
+          // 取消是正常操作，不弹提示；失败必须弹——否则用户以为文件已生成。
+          { label: tr('app.cmdExportThread'), run: async () => {
+            if (!activeThread) return;
+            try {
+              const r = await api.exportThread(activeThread.id);
+              if (r?.ok) toast({ message: tr('app.exportDone', { path: String(r.filePath || '') }) });
+              else if (r?.code === 'EXPORT_CANCELLED') return;
+              else toast({ message: tr('app.exportFailed', { error: String(r?.error || tr('runtime.unknownError')) }) });
+            } catch (err) {
+              toast({ message: tr('app.exportFailed', { error: String(err?.message || err) }) });
+            }
+          } },
           { label: tr('app.cmdSummary'), run: () => { if (activeThread) { setPaneTab('subtasks'); setPaneOpen(true); } } },
           { label: tr('app.cmdTerminal'), run: () => { if (activeThread) { setPaneTab('terminal'); setPaneOpen(true); } } },
           { label: tr('app.cmdToggleSidebar'), hint: '⌘B', run: () => setSidebarOpen((v) => !v) },

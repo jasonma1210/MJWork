@@ -2,6 +2,7 @@
   "cmdKind": "命令",
   "threadKind": "会话",
   "fileKind": "文件",
+  "msgKind": "消息正文",
   "newThread": "新会话",
   "searchPlaceholder": "搜索会话、文件，或执行命令…",
   "escClose": "Esc 关闭",

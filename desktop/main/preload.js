@@ -195,6 +195,9 @@ contextBridge.exposeInMainWorld('mjcode', {
   localMessages: (payload) => ipcRenderer.invoke('local:messages/list', payload),
   // R2-6：首页聚合（主进程一次遍历；渲染层不再逐会话拉消息）
   localStatsSummary: () => ipcRenderer.invoke('local:stats/summary'),
+  // R3-1 / R3-2：正文检索 与 会话导出（导出路径只由系统对话框给出）
+  localSearchMessages: (payload) => ipcRenderer.invoke('local:messages/search', payload),
+  localExportThread: (payload) => ipcRenderer.invoke('local:threads/export', payload),
   localAddMessage: (payload) => ipcRenderer.invoke('local:messages/add', payload),
   // /compact 落库：压缩摘要历史整体替换（P2-6 收口）
   localReplaceMessages: (payload) => ipcRenderer.invoke('local:messages/replace', payload),

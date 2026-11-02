@@ -71,6 +71,7 @@
   "sandboxIsolatedNo": "未隔离",
   "memNeedProject": "请先选择项目，再写入记忆",
   "memSaved": "已写入项目记忆",
+  "exportNeedsLocal": "导出仅在本机模式下可用",
   "engineFallback": "本次运行未启用进程隔离（引擎在应用主进程内执行）：一旦引擎出错，界面会一起中断。建议重启应用；若反复出现，请导出诊断信息。",
   "memSaveFailed": "记忆写入失败：{error}",
   "threadCreateFailed": "创建会话失败，已停止本次运行：{error}\n请重试；若持续失败，请检查本机会话存储是否可写。",

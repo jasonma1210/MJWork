@@ -127,6 +127,15 @@ export const api = {
     ? window.mjcode.localSetThreadStatus({ id, status })
     : request(`/threads/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) })),
   messages: (id) => (localMode ? localMessages(id) : request(`/threads/${id}/messages`)),
+  // R3-1：正文检索（本地能力）。服务端无对应路由，返回空结果而不是抛错——
+  // 「搜不到」与「搜失败」在 UI 上必须能区分，故这里不 reject。
+  searchMessages: (payload) => (localMode && window.mjcode?.localSearchMessages
+    ? window.mjcode.localSearchMessages(payload)
+    : Promise.resolve({ query: '', hits: [], total: 0, truncated: false, unavailable: true })),
+  // R3-2：导出会话为 Markdown（本地能力；路径由系统保存对话框给出）
+  exportThread: (id) => (localMode && window.mjcode?.localExportThread
+    ? window.mjcode.localExportThread({ threadId: id })
+    : Promise.resolve({ ok: false, code: 'UNAVAILABLE', error: t('runtime.exportNeedsLocal') })),
   // P1-6：会话分支（仅本地模式；服务端无对应路由）——从某条历史消息处开一支新会话
   forkThread: (id, fromMessageId) => {
     if (!localMode) return Promise.reject(new Error(t('runtime.forkOnlineUnsupported')));

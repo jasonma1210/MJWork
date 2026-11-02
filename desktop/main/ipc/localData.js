@@ -7,7 +7,8 @@
 //                      MJ_SERVER_DEFAULT, getMemoryManager, getMemoryScheduler, getMemoryFileSync })
 //   - localVault 为共享 Map 引用（provider id → 解密内存态），resolveSecret 在 main.js 读取；
 //   - localStore/credentialCrypto 在 whenReady 后才初始化，故用 getter。
-const { ipcMain, shell } = require('electron');
+const { ipcMain, shell, dialog, BrowserWindow } = require('electron');
+const fsp = require('fs/promises');
 const path = require('path');
 const modelsFile = require('../modelsFile');
 const guard = require('./payloadGuard');
@@ -19,6 +20,8 @@ const { governanceStats } = require('../governanceStats');
 // worktree 根只用来判断「执行根是否落在隔离副本里」）。
 const checkpointStore = require('../store/checkpointStore');
 const { worktreeRoot } = require('../worktree');
+// 导出留痕：与 ledger:export 同口径（只记「导出了哪个会话、多少条」，不记正文）
+const { audit } = require('../audit/auditLog');
 
 let deps = null;
 
@@ -282,6 +285,48 @@ function register() {
     const store = deps.getLocalStore();
     if (!store) return { threads: 0, archivedThreads: 0, messages: 0, tokensInput: 0, tokensOutput: 0, generatedAt: Date.now() };
     return store.statsSummary();
+  });
+  // R3-1（2026-11-03）：正文检索。空查询返回空结果而不是全量——「点开面板即全表返回」
+  // 既浪费也会让用户以为搜到了东西。query 长度上限 200：再长的输入不是检索，是粘贴。
+  ipcMain.handle('local:messages/search', async (_, payload = {}) => {
+    const empty = { query: '', hits: [], total: 0, truncated: false };
+    const store = deps.getLocalStore();
+    if (!store) return empty;
+    guard.assertStrings(payload || {}, { query: { max: 200, optional: true, allowEmpty: true } });
+    const q = String(payload?.query || '');
+    if (!q.trim()) return empty;
+    return store.searchMessages(q, { limit: payload?.limit, threadId: payload?.threadId ?? null });
+  });
+  // R3-2（2026-11-03）：导出会话为 Markdown。路径**只能**来自系统保存对话框
+  // （与 ledger:export 同一纪律：渲染层传来的路径一律忽略，否则等于开放任意路径写入）。
+  ipcMain.handle('local:threads/export', async (_, payload = {}) => {
+    guard.assertIds(payload, ['threadId']);
+    const store = deps.getLocalStore();
+    if (!store) return { ok: false, code: 'UNAVAILABLE', error: '本地数据层未初始化' };
+    const doc = store.exportThreadMarkdown(payload.threadId);
+    if (!doc.ok) return { ...doc, code: 'NOT_FOUND' };
+    let picked;
+    try {
+      const win = BrowserWindow.getFocusedWindow() || null;
+      const opts = {
+        title: '导出会话为 Markdown',
+        defaultPath: doc.filename,
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+      };
+      picked = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts);
+    } catch (e) {
+      return { ok: false, code: 'DIALOG_FAILED', error: String(e?.message || '无法打开保存对话框') };
+    }
+    if (!picked || picked.canceled || !picked.filePath) return { ok: false, code: 'EXPORT_CANCELLED', error: '已取消导出' };
+    try {
+      await fsp.writeFile(picked.filePath, doc.content, 'utf8');
+    } catch (e) {
+      return { ok: false, code: 'WRITE_FAILED', error: String(e?.message || '写入失败') };
+    }
+    try {
+      audit('thread_export', String(payload.threadId), `file=${picked.filePath}`, 'recorded');
+    } catch { /* 审计失败不影响导出结果：文件已经写成，这里是补充留痕 */ }
+    return { ok: true, filePath: picked.filePath, bytes: Buffer.byteLength(doc.content, 'utf8') };
   });
   // /compact 落库：压缩摘要历史整体替换（P2-6 收口）
   ipcMain.handle('local:messages/replace', async (_, payload) => {

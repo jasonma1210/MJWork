@@ -280,6 +280,82 @@ class LocalStore {
     };
   }
 
+  /**
+   * 正文检索（R3-1，2026-11-03）。
+   *
+   * 口径（写清边界，避免被当成全文检索引擎）：
+   *   · 只匹配 `content`（用户/助手/系统消息正文），**不含工具调用参数**——参数里常有凭证与
+   *     大段文件内容，把它们纳入检索既没有用户价值，也会让结果噪音压过答案；
+   *   · 大小写不敏感的子串匹配，不做分词、不做模糊纠错（中文分词需要词典，属 R2-3 迁库后接 FTS 的活）；
+   *   · `total` 是**真实命中数**（继续扫完全部消息），`hits` 按上限截断 —— 两者分开，
+   *     否则「只返回 20 条」会被误读成「只有 20 条」。
+   *
+   * @param {string} query 关键词（trim 后为空直接返回空结果，不做「空查询返回全部」这种危险默认）
+   * @param {{limit?: number, threadId?: number|string|null}} [opts]
+   */
+  searchMessages(query, { limit = 20, threadId = null } = {}) {
+    const q = String(query == null ? '' : query).trim();
+    const out = { query: q, hits: [], total: 0, truncated: false };
+    if (!q) return out;
+    const needle = q.toLowerCase();
+    const cap = Math.min(50, Math.max(1, Math.trunc(Number(limit) || 20)));
+    const titles = new Map(this.data.threads.map((t) => [t.id, String(t.title || '')]));
+    const idx = this._ensureIndex();
+    const threadIds = threadId == null ? [...idx.keys()] : [Number(threadId)];
+    for (const tid of threadIds) {
+      for (const m of idx.get(tid) || []) {
+        const text = String(m.content || '');
+        const at = text.toLowerCase().indexOf(needle);
+        if (at < 0) continue;
+        out.total += 1;
+        if (out.hits.length >= cap) continue; // 继续计数，只截断返回体
+        out.hits.push({
+          threadId: tid,
+          threadTitle: titles.get(tid) || '',
+          messageId: m.id,
+          role: m.role,
+          createdAt: Number(m.createdAt) || 0,
+          snippet: snippetAround(text, at, q.length),
+        });
+      }
+    }
+    out.truncated = out.total > out.hits.length;
+    return out;
+  }
+
+  /**
+   * 会话导出为 Markdown（R3-2）。纯函数：只产出内容，不落盘（落盘与选路径在 IPC 层，用系统对话框）。
+   *
+   * 取舍：工具调用只导出**工具名**，不导出参数与结果 —— 参数里常含凭证/令牌、结果里常含整份文件，
+   * 把它们写进一个用户可能随手分享的 .md 里，是数据外泄的常见路径。
+   */
+  exportThreadMarkdown(threadId) {
+    const t = this.data.threads.find((x) => x.id === Number(threadId));
+    if (!t) return { ok: false, error: '会话不存在' };
+    const msgs = this.listMessages(threadId);
+    const lines = [`# ${t.title || '未命名会话'}`, ''];
+    lines.push(`- 会话 ID：${t.id}`);
+    if (t.cwd) lines.push(`- 执行目录：${t.cwd}`);
+    if (t.modelName) lines.push(`- 模型：${t.modelName}`);
+    lines.push(`- 消息条数：${msgs.length}`);
+    lines.push(`- 导出时间：${new Date().toISOString()}`, '');
+    for (const m of msgs) {
+      const who = m.role === 'user' ? '用户' : (m.role === 'assistant' ? '助手' : String(m.role || '消息'));
+      lines.push(`## ${who} · ${formatStamp(m.createdAt)}`);
+      const body = String(m.content || '').trim();
+      if (body) lines.push('', body);
+      const calls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
+      if (calls.length) {
+        const names = calls
+          .map((c) => String((c && (c.name || (c.function && c.function.name))) || '').trim())
+          .filter(Boolean);
+        lines.push('', `> 工具调用 ${calls.length} 次${names.length ? `：${names.join('、')}` : ''}（参数与结果未导出）`);
+      }
+      lines.push('');
+    }
+    return { ok: true, filename: `${safeFilename(t.title || `会话-${t.id}`)}.md`, content: lines.join('\n') };
+  }
+
   // ── 线程 ──
   listThreads(projectPath) {
     return [...this.data.threads]
@@ -709,6 +785,37 @@ class LocalStore {
     this.flush();
     return { ok: true };
   }
+}
+
+// ── 检索 / 导出的小工具（模块级纯函数，仅供上面的方法使用）──
+//
+// snippetAround 的坑：不能先对全文做空白归一再去 indexOf——归一后下标会整体前移，
+// 用旧下标切片会切错位置（表现为「搜索命中了，但摘要里没有关键词」）。故先按原文切片，
+// 再对**切片**做空白归一（关键词本身若含空白，匹配时已被 toLowerCase 处理，展示层无所谓）。
+function snippetAround(text, at, len) {
+  const pad = 40;
+  const start = Math.max(0, at - pad);
+  const end = Math.min(text.length, at + len + pad);
+  const raw = text.slice(start, end).replace(/\s+/g, ' ').trim();
+  return `${start > 0 ? '…' : ''}${raw}${end < text.length ? '…' : ''}`;
+}
+
+// 文件名安全化：路径分隔符与控制字符会让「保存到某目录」变成写到别处或直接失败
+function safeFilename(name) {
+  const clean = String(name || '')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\p{Cc}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return (clean || 'session').slice(0, 80);
+}
+
+function formatStamp(ts) {
+  const n = Number(ts) || 0;
+  const d = new Date(n);
+  if (!n || Number.isNaN(d.getTime())) return '时间未知';
+  const p = (v) => String(v).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 module.exports = { LocalStore };

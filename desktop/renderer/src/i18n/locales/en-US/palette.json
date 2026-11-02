@@ -2,6 +2,7 @@
   "cmdKind": "Commands",
   "threadKind": "Threads",
   "fileKind": "Files",
+  "msgKind": "Message text",
   "newThread": "New thread",
   "searchPlaceholder": "Search threads and files, or run a command…",
   "escClose": "Esc to close",

@@ -267,6 +267,32 @@ check('主文件缺失时从 .bak 恢复（不静默重置为空库）',
   sRecovered.recoveredFromBackup === true && sRecovered.listThreads().length === 1);
 check('恢复成功时不得进入 corrupt-blocked', sRecovered.corruptBlocked === false);
 
+// ── R3-1 / R3-2（2026-11-03）：正文检索 与 会话导出 ──
+const dirR3 = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-r3-'));
+const sR3 = new LocalStore(dirR3);
+const t1 = sR3.createThread({ title: '检索A', cwd: '/tmp/a' });
+const t2 = sR3.createThread({ title: '检索B', cwd: '/tmp/b' });
+sR3.addMessage({ threadId: t1.id, role: 'user', content: '请把 Timeout 改成 30000 毫秒' });
+sR3.addMessage({ threadId: t2.id, role: 'assistant', content: 'timeout 已调整为 30000' });
+sR3.addMessage({ threadId: t2.id, role: 'assistant', content: '无关内容', toolCalls: [{ id: 'c1', name: 'shell', args: { command: 'ls' } }] });
+
+const r1 = sR3.searchMessages('timeout');
+check('检索：大小写不敏感且跨会话', r1.total === 2 && r1.hits.length === 2, `total=${r1.total}`);
+check('检索：摘要里确实含关键词原文', r1.hits.every((h) => /timeout/i.test(h.snippet)));
+check('检索：空查询返回空结果（绝不等于全量）',
+  sR3.searchMessages('   ').total === 0 && sR3.searchMessages('   ').hits.length === 0);
+const r2 = sR3.searchMessages('timeout', { limit: 1 });
+check('检索：limit 只截断返回体，total 仍是真实命中数', r2.hits.length === 1 && r2.total === 2 && r2.truncated === true);
+const r3 = sR3.searchMessages('timeout', { threadId: t1.id });
+check('检索：可按单个会话限定', r3.total === 1 && r3.hits[0].threadId === t1.id);
+check('检索：工具调用参数不参与匹配（凭证/大段内容不进结果）', sR3.searchMessages('command').total === 0);
+
+const ex = sR3.exportThreadMarkdown(t2.id);
+check('导出：文件名安全化且是 .md', ex.ok && !/[\\/]/.test(ex.filename) && ex.filename.endsWith('.md'), ex.filename);
+check('导出：含会话标题与消息正文', ex.content.includes('# 检索B') && ex.content.includes('timeout 已调整为 30000'));
+check('导出：工具调用只写名字、不写参数', ex.content.includes('shell') && !ex.content.includes('command'));
+check('导出：不存在的会话返回 ok:false', sR3.exportThreadMarkdown(999999).ok === false);
+
 // scheduleFlush 定时器到期自动落盘（异步段收尾，统一在此清理与退出）
 (async () => {
   const dirTimer = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-timer-'));
@@ -286,6 +312,7 @@ check('恢复成功时不得进入 corrupt-blocked', sRecovered.corruptBlocked =
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(dirIdx, { recursive: true, force: true });
   fs.rmSync(dirRot, { recursive: true, force: true });
+  fs.rmSync(dirR3, { recursive: true, force: true });
   console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => {
