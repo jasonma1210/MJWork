@@ -6,7 +6,7 @@
 //   - 审批中心（requestApproval/applyApprovalDecision/alwaysRules/conversationRules）归属 main.js；
 //   - audit/sandbox/writeGuard/approval 为独立模块，直接 require 同源单例。
 // 导出供 main.js 复用：scheduledToolHandlers / createToolHandlers / 项目探测 runGit / MCP shellEnv。
-const { ipcMain, shell } = require('electron');
+const { ipcMain, shell, app } = require('electron');
 const path = require('path');
 const { execFile } = require('child_process');
 const fsp = require('fs/promises');
@@ -23,6 +23,12 @@ const { registerGitHunkIpc, registerDestructiveGitIpc } = require('../ipc/gitHun
 const { payloadShapeError } = require('../ipc/toolPayload');
 
 let deps = null;
+// 应用数据目录（治理配置所在的根）。取不到时返回空串：写守卫对空串直接返回「不命中」，
+// 即退化为改造前的行为，而不是把一次目录探测失败升级成「所有写操作被拒」。
+// （真实运行环境必然有值；空串只可能出现在非 Electron 宿主/单测 stub 中。）
+function userDataDirOf() {
+  try { return app.getPath('userData') || ''; } catch { /* 非 Electron 宿主：无 userData，无从判定应用配置 */ return ''; }
+}
 // P1-4：审批等待统一入口——返回 { decision, reason }，拒绝点把理由拼进工具结果与审计行
 async function awaitApproval(requestApproval, tool, args) {
   const waitP = requestApproval(tool, args);
@@ -338,12 +344,26 @@ async function runWriteTool(toolName, args) {
   // 这条提权链，若可被一次批准打开，保护就等于默认不存在。
   // 唯一例外：显式选择 full-access 档（产品语义即「不隔离」，用户已知情）时不走本闸。
   const effectivePolicy = sandboxPolicy || (rest.cwd ? 'workspace-write' : 'read-only');
+  const writeTargets = toolName === 'applyPatch'
+    ? writeGuard.patchTargets(rest.patch)
+    : (rest.path ? [rest.path] : []);
+  // ① 应用治理配置（userData 顶层）：与 cwd 无关、与审批档无关、不提供审批放行。
+  //    原实现只判 cwd 下的 .git/.mjcode，导致 auto-safe 档可静默改写 hooks.json（任意命令执行）
+  //    与 approval-rules.json（永久放行），见 2026-11-03 审查 RQ-01。
+  if (effectivePolicy !== 'full-access') {
+    const appHit = writeGuard.firstProtectedAppTarget(writeTargets, userDataDirOf(), rest.cwd);
+    if (appHit) {
+      audit(toolKey, rest.path || '(patch)', `应用配置写入被拦截：${appHit}`, 'blocked');
+      return {
+        ok: false, blocked: true, protectedPath: true, appConfig: true, path: appHit,
+        error: `写入目标属于应用自身配置：${appHit}。该文件决定审批规则与工具钩子，被改写等同于交出执行权限，`
+          + '因此不接受审批放行。若需调整，请在「设置」里由你本人修改。',
+      };
+    }
+  }
   if (effectivePolicy !== 'full-access' && rest.cwd) {
     const protectedPaths = writeGuard.protectedPathsFor(rest.cwd);
-    const targets = toolName === 'applyPatch'
-      ? writeGuard.patchTargets(rest.patch)
-      : (rest.path ? [rest.path] : []);
-    const hit = writeGuard.firstProtectedTarget(targets, protectedPaths, rest.cwd);
+    const hit = writeGuard.firstProtectedTarget(writeTargets, protectedPaths, rest.cwd);
     if (hit) {
       audit(toolKey, rest.path || '(patch)', `受保护路径写入被拦截：${hit}`, 'blocked');
       return {

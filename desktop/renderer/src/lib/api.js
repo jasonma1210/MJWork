@@ -245,6 +245,24 @@ export const api = {
   // Dashboard（离线降级：返回本地统计）
   dashboard: async () => {
     if (!localMode) return request('/dashboard');
+    // R2-6（2026-11-03）：优先走主进程聚合（一次遍历、一次 IPC）。
+    // 旧写法是「逐会话 await localMessages 再本地累加」——线程数 N 就是 N 次 IPC，
+    // 且每次在旧实现里还要全库 filter+sort，构成 N×M 的双重放大。
+    if (window.mjcode?.localStatsSummary) {
+      const raw = await window.mjcode.localStatsSummary();
+      const s = raw || {};
+      return {
+        data_scope: 'local',
+        threads: Number(s.threads) || 0,
+        messages: Number(s.messages) || 0,
+        tokens_input: Number(s.tokensInput) || 0,
+        tokens_output: Number(s.tokensOutput) || 0,
+        model_distribution: [],
+        recent_activity: [],
+        weekly_threads: [],
+      };
+    }
+    // 桥缺失（旧构建 / 浏览器调试）时的回落：保持可用，但会在线程多时明显变慢
     const threads = await window.mjcode.localThreads();
     let messages = [];
     for (const t of threads) messages = messages.concat(await window.mjcode.localMessages({ threadId: t.id }));

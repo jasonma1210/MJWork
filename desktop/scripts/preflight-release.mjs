@@ -123,6 +123,23 @@ check('P8 关键安全门禁套件存在（回归兜底）', () => {
   return need.join(', ');
 });
 
+// ── P9 Windows 更新签名校验：证书就位后不得继续关闭 ──────────────────────────
+// RQ-15（2026-11-03 审查）：build.win.verifyUpdateCodeSignature=false 意味着更新包不校验签名。
+// 现状是可以接受的（没证书，验了也装不上），但它是一个**会过期的例外**：证书一到位，
+// 「人工项①记得改回 true」就变成靠记性——而发布流水线的价值恰恰是不靠记性。
+// 判据（可被证伪）：有证书（CSC_LINK）却仍关闭校验 → 失败；没证书 → 通过并给出提醒。
+// 这样「证书到位」这一刻，闸门自动从提醒变成阻断，不需要任何人记得改脚本。
+check('P9 Windows 更新签名校验与证书状态一致', () => {
+  const pkg = readJson('desktop/package.json');
+  const flag = pkg?.build?.win?.verifyUpdateCodeSignature;
+  const hasCert = !!String(process.env.CSC_LINK || '').trim();
+  if (hasCert) {
+    assert(flag !== false, 'CSC_LINK 已配置（证书就位），但 build.win.verifyUpdateCodeSignature 仍为 false —— 更新包将不校验签名');
+    return '证书就位，校验已开启';
+  }
+  return flag === false ? '未签名构建：校验关闭（无证书，属已知例外；见 Runbook 人工项①）' : '校验开启';
+});
+
 // ── 汇总 ──────────────────────────────────────────────────────────────────────
 const failed = results.filter((r) => !r.ok);
 console.log(`发布前置检查（版本 ${version || '解析失败'}${SKIP_GIT ? '，git 项已跳过' : ''}）\n`);
@@ -134,7 +151,7 @@ for (const r of results) {
 // 人工项：机器判不了的，明列出来，不给假勾选
 console.log('\n── 以下项目机器无法判定，发布前必须人工确认 ──');
 for (const line of [
-  '① 签名证书就位后：package.json 的 verifyUpdateCodeSignature 改回 true 并补 build.win.publisherName（值须等于证书 Subject CN）',
+  '① 签名证书就位后：补 build.win.publisherName（值须等于证书 Subject CN）。verifyUpdateCodeSignature 已由 P9 机器判定——证书一到位仍关闭校验会直接失败，不必再靠记性',
   '② macOS 真机安装一次 dmg，确认能启动、能建会话、OCR 可用',
   '③ Windows / Linux 产物尚未纳入自动冒烟（见 B6 报告 5.4），发这两个平台前需人工核验',
   '④ CHANGELOG 面向用户的措辞已审校（不暴露内部代号 / 未定事项）',

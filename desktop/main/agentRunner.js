@@ -311,6 +311,11 @@ function startAgentRun(payload, sender) {
   runSeq += 1;
   const runId = payload.runId || `run-${Date.now().toString(36)}-${runSeq}`;
   const controller = new AbortController();
+  // RQ-16：引擎形态在这里**定一次**，done 载荷与执行分支共用同一判定。
+  // 此前只有执行分支自己判，in-process 回落只写一条 console.warn——用户与诊断都看不见
+  // 「本次运行没有进程隔离」，等于把降级当成正常。
+  const useEngineChild = !!(deps.engineHost && typeof deps.engineHost.isAvailable === 'function' && deps.engineHost.isAvailable());
+  const engineMode = useEngineChild ? 'child' : 'in-process';
   const emit = makeEmitter(sender, runId);
   runs.set(runId, { controller, sender });
   runApprovalModes.set(runId, runApprovalMode);
@@ -635,6 +640,8 @@ function startAgentRun(payload, sender) {
           totalCap: Number(final?.totalCap) || 0,
           totalSpent: Number(final?.totalSpent) || 0,
           roundCap: Number(final?.roundCap) || 0,
+          // RQ-16：'child' = 独立引擎进程；'in-process' = 主进程内跑（无隔离，崩溃会带走 UI）
+          engineMode,
         });
         doneEmitted = true;
 
@@ -769,7 +776,7 @@ function startAgentRun(payload, sender) {
       // T3-7：双路径执行——engineHost 可用则引擎跑独立子进程（崩溃半径/内存硬上限隔离），
       // 否则主进程 in-process（agentRunner 单测通道 + utilityProcess 不可用时的生产降级链）。
       let finalText;
-      if (deps.engineHost && typeof deps.engineHost.isAvailable === 'function' && deps.engineHost.isAvailable()) {
+      if (useEngineChild) {
         console.warn(`[agentRun] 引擎子进程驻留 runId=${runId}`);
         finalText = await deps.engineHost.runEngine(runId, engineParams, {
           toolHandlers: handlers,
@@ -782,6 +789,7 @@ function startAgentRun(payload, sender) {
           onSuspend: (info) => cb.onSuspend(info),
         });
       } else {
+        console.warn(`[agentRun] 引擎降级为主进程内运行（无进程隔离，崩溃将连带 UI）runId=${runId}`);
         const core = await deps.loadAgentCore();
         finalText = await core.runAgent({
           ...engineParams,

@@ -193,6 +193,8 @@ contextBridge.exposeInMainWorld('mjcode', {
   // P1-6：会话分支（从某条历史消息点 fork 出新会话）
   localForkThread: (payload) => ipcRenderer.invoke('local:threads/fork', payload),
   localMessages: (payload) => ipcRenderer.invoke('local:messages/list', payload),
+  // R2-6：首页聚合（主进程一次遍历；渲染层不再逐会话拉消息）
+  localStatsSummary: () => ipcRenderer.invoke('local:stats/summary'),
   localAddMessage: (payload) => ipcRenderer.invoke('local:messages/add', payload),
   // /compact 落库：压缩摘要历史整体替换（P2-6 收口）
   localReplaceMessages: (payload) => ipcRenderer.invoke('local:messages/replace', payload),

@@ -112,7 +112,9 @@ check('阈值为 0/非法时回落 3（不因配置错把任务永久停摆）',
 // 这里从源码里**取出**实际调用字面量再比对，而不是把常量抄一遍。
 {
   const src = readFileSync(new URL('../main/scheduler.js', import.meta.url), 'utf8');
-  const fired = [...src.matchAll(/runTask\(t\.id,\s*'([^']+)'/g)].map((m) => m[1]);
+  // RQ-07（2026-11-03）：自动触发改由 dispatchRun 统一入口（带并发闸），
+  // 字面量提取必须同时认两个入口，否则锚点会「取到 0 个」而自检直接红。
+  const fired = [...src.matchAll(/(?:runTask|dispatchRun)\(t\.id,\s*'([^']+)'/g)].map((m) => m[1]);
   check('scheduler 里存在自动触发调用点（锚点自检）', fired.length > 0, fired.join(','));
   const missed = fired.filter((v) => !src.includes(`trigger === '${v}'`));
   check('每个自动 trigger 字面量都被熔断条件覆盖（防拼写不一致导致永不熔断）',

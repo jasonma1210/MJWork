@@ -122,6 +122,10 @@ export const doneDataSchema = z.object({
   totalCap: z.number().optional(),
   totalSpent: z.number().optional(),
   roundCap: z.number().optional(),
+  // RQ-16（2026-11-03）：本次运行用的是独立引擎进程（child）还是主进程内（in-process）。
+  // 后者没有进程隔离——引擎 OOM/死循环会连带主进程与 UI 一起挂，属于必须让用户知道的降级。
+  // 不登记这个字段的后果不是报错，而是被 schema 静默 strip：界面永远看不到降级。
+  engineMode: z.enum(['child', 'in-process']).optional(),
 });
 
 // P2-8 / V-L1（N7）：V 层（评估接口）判定事件

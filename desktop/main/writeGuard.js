@@ -148,6 +148,73 @@ function firstProtectedTarget(targets, protectedPaths, base) {
   return null;
 }
 
+// ── 应用自身配置：userData 在写白名单内，但其中这几类文件**永不可**由模型写入 ──
+//
+// 为什么必须单独一张表（P0，2026-11-03 审查 RQ-01）：
+//   写白名单的三根是 {项目 cwd, 应用数据目录 userData, 系统临时目录}，
+//   而 PROTECTED_SUBPATH_NAMES 只按 **cwd** 展开（`.git` / `.mjcode`），于是 userData 下的
+//   治理配置从来没有进过受保护集合。后果是两条既成的提权链：
+//     · 改写 approval-rules.json → 追加「shell 恒允许」，下次启动即生效（规则库可记忆 shell）；
+//     · 改写 hooks.json → preToolUse 以 `spawn(cmd, {shell:true})` 执行任意命令，
+//       且它发生在审批之后、工具执行之前，L1 分级也拦不到。
+//   两者在 auto-safe 档下都不弹卡（write_file 是 L2，该档对 L2 直接放行）。
+//
+// 判据设计（为什么是「名字前缀」而不是「整目录」）：
+//   userData 同时承载业务数据（artifacts/、tool-outputs/、recordings/…），整目录禁写会误伤；
+//   而治理配置的集合是**可枚举且稳定**的，故按顶层文件名 + 派生后缀（.bak/.tmp/-wal/…）精确封锁。
+//   派生后缀必须一起保护：原子写先写 `x.tmp` 再 rename，只护 `x` 会留下半条通道。
+const PROTECTED_APP_NAMES = [
+  'approval-rules.json',   // 「始终允许」规则库：写入即等同永久放行
+  'hooks.json',            // 工具前后置脚本：写入即任意命令执行
+  'local-data.json',       // 会话/消息/加密凭证的唯一副本
+  'agent-checkpoints.json',// 断点
+  'scheduled-tasks.json',  // 定时任务与其运行历史
+  'im.json',               // IM 凭据（enc: 密文）
+  'mjcode-tasks.db',       // 任务/团队/记忆 SQLite 底座（含 -wal / -shm / .pre-vN.bak）
+];
+
+/**
+ * 判定某绝对路径是否为「应用治理配置」（永不可由模型写入）。
+ *
+ * 只判定 userData 的**顶层**文件：`artifacts/...`、`tool-outputs/...` 等业务子目录不在此列，
+ * 否则会把合法的产物落盘一并挡死。派生后缀（`.bak` / `.tmp` / `-wal` / `-shm` / `.pre-vN.bak`）
+ * 与主文件同等保护——原子写的临时文件是同一条链上的另一半。
+ *
+ * @param {string} absPath 待判定的绝对路径
+ * @param {string} userDataDir 应用数据目录
+ * @returns {boolean}
+ */
+function isProtectedAppPath(absPath, userDataDir) {
+  if (!userDataDir) return false;
+  const raw = String(absPath || '').trim();
+  if (!raw) return false;
+  const base = path.resolve(userDataDir);
+  const abs = path.resolve(raw);
+  // 先做包含判定（内部已含 realpath 精确比较，软链指向配置目录同样命中）
+  if (!isWithinRoot(abs, base)) return false;
+  const rel = path.relative(base, abs);
+  if (!rel || rel.startsWith('..')) return false;       // 目录本身不属于「某个配置文件」
+  const first = rel.split(path.sep)[0];                  // 顶层段：子目录内的同名文件不算
+  return PROTECTED_APP_NAMES.some((n) => first === n || first.startsWith(`${n}.`) || first.startsWith(`${n}-`));
+}
+
+/**
+ * 返回第一个落在「应用治理配置」内的写目标（绝对路径）；全部安全则返回 null。
+ * 与 firstProtectedTarget 的区别：本判定**不依赖 cwd**——无论调用方是否传 cwd、
+ * 无论写目标是相对还是绝对路径，都按 userData 的解析结果判定（缺 cwd 时白名单判定会失准，
+ * 这条不能跟着失准）。
+ */
+function firstProtectedAppTarget(targets, userDataDir, base) {
+  if (!userDataDir) return null;
+  for (const t of targets || []) {
+    const raw = String(t || '').trim();
+    if (!raw) continue;
+    const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base || process.cwd(), raw);
+    if (isProtectedAppPath(abs, userDataDir)) return abs;
+  }
+  return null;
+}
+
 /**
  * 期 3：文件能力降级——治理偏好 fsMode === 'read-only' 时拒绝一切写操作。
  * **单一事实来源**：exec.js 的写工具闸口（write_file/edit_file/apply_patch）与
@@ -165,7 +232,10 @@ module.exports = {
   firstOutsideTarget,
   patchTargets,
   PROTECTED_SUBPATH_NAMES,
+  PROTECTED_APP_NAMES,
   protectedPathsFor,
   firstProtectedTarget,
+  isProtectedAppPath,
+  firstProtectedAppTarget,
   isReadonlyFs,
 };

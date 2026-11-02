@@ -272,7 +272,7 @@ async function scanMissedTasks(now = new Date()) {
       persist();
       console.warn(`[scheduled] 任务「${t.name}」在应用未运行期间到期（${fmtLocal(latest)}），安排补跑一次`);
       try {
-        await runTask(t.id, 'catchup');
+        await dispatchRun(t.id, 'catchup');
       } catch (e) {
         console.error('[scheduled] 补跑失败:', e.message);
       }
@@ -445,10 +445,70 @@ async function runTask(id, trigger = 'manual') {
   return { ok: run.status === 'success', output: run.output, error: run.error, pendingActions: run.pending_actions };
 }
 
+// ── 全局并发闸（RQ-07，2026-11-03）──
+//
+// 为什么必须有：tick 会对同一分钟命中的**所有**任务直接 runTask。10 个任务都写 `0 9 * * *`
+// 时，同一分钟就会拉起 10 个引擎子进程 + 10 路模型调用——轻则撞供应商限流，重则把本机顶到 OOM，
+// 而且失败原因会显示成「模型限流」而不是「你自己排的任务撞车了」，误导排障方向。
+//
+// 语义边界（三条，缺一条就变成新的坑）：
+//   ① 只约束**自动触发**（scheduled / catchup / event）。用户手动点「立即运行」不排队：
+//      那是显式的一次操作，让他等一个看不见的队列比直接跑更糟；
+//   ② 排队在内存里，且同一任务不重复入队（否则每 20s 一个 tick 会堆出几十条重复项）；
+//   ③ 排队信息落到任务对象（queue_state / queued_at）并经 notify 推给 UI —— 静默延迟
+//      与「任务没跑」在界面上无法区分，那等于把并发问题变成数据完整性问题。
+const DEFAULT_MAX_CONCURRENT_RUNS = 3;
+let maxConcurrentRuns = DEFAULT_MAX_CONCURRENT_RUNS;
+const pendingQueue = [];   // [{ id, trigger }]，FIFO
+
+function queueIndexOf(id) {
+  return pendingQueue.findIndex((q) => q.id === id);
+}
+
+function enqueueRun(id, trigger) {
+  if (queueIndexOf(id) >= 0) return false; // 已在队列：不重复入队
+  pendingQueue.push({ id, trigger });
+  const t = store.tasks.find((x) => x.id === id);
+  if (t) {
+    t.queue_state = 'queued';
+    t.queued_at = new Date().toISOString();
+  }
+  persist();
+  notify();
+  console.warn(`[scheduled] 并发已达上限（${running.size}/${maxConcurrentRuns}），任务「${t?.name || id}」进入队列（第 ${pendingQueue.length} 位）`);
+  return true;
+}
+
+function drainQueue() {
+  while (pendingQueue.length > 0 && running.size < maxConcurrentRuns) {
+    const next = pendingQueue.shift();
+    const t = store.tasks.find((x) => x.id === next.id);
+    // 排队期间被删除 / 停用：直接丢弃，不留一条「永远排队」的僵尸卡片
+    if (!t || !t.enabled) continue;
+    if (t.queue_state) { delete t.queue_state; delete t.queued_at; }
+    dispatchRun(next.id, next.trigger, { fromQueue: true })
+      .catch((e) => console.error('[scheduled] 队列任务执行异常:', e?.message || e));
+  }
+  persist();
+  notify();
+}
+
+/**
+ * 自动触发的唯一入口：容量够就地跑，不够就排队。
+ * 用 finally 兜住 drainQueue——runTask 内部的 running.delete 不在 finally 里，
+ * 直接依赖它「一定会被执行」会让一次异常把队列永久卡死。
+ */
+function dispatchRun(id, trigger, { fromQueue = false } = {}) {
+  if (!fromQueue && running.size >= maxConcurrentRuns) {
+    enqueueRun(id, trigger);
+    return Promise.resolve({ ok: false, queued: true });
+  }
+  return runTask(id, trigger).finally(drainQueue);
+}
+
 function tick() {
   const now = new Date();
-  const key = minuteIso(now);
-  for (const t of store.tasks) {
+  const key = minuteIso(now);  for (const t of store.tasks) {
     if (!t.enabled) continue;
     // 事件触发任务不走时钟（由 ingestEvent 驱动），否则会拿空 schedule 去匹配
     if (t.trigger_type === 'event') continue;
@@ -459,7 +519,8 @@ function tick() {
     if (t.last_fired === key) continue;
     t.last_fired = key;
     persist();
-    runTask(t.id, 'scheduled').catch((e) => console.error('[scheduled] 触发失败:', e.message));
+    // 自动触发统一走并发闸（RQ-07）：容量满则入队，不静默丢弃
+    dispatchRun(t.id, 'scheduled').catch((e) => console.error('[scheduled] 触发失败:', e.message));
   }
 }
 
@@ -501,7 +562,7 @@ async function ingestEvent({ source, event, id } = {}) {
     t.event_seen = [...seen, eid].slice(-EVENT_SEEN_MAX);
     t.last_fired = minuteIso(new Date());
     persist();
-    runTask(t.id, 'event').catch((e) => console.error('[scheduled] 事件触发失败:', e.message));
+    dispatchRun(t.id, 'event').catch((e) => console.error('[scheduled] 事件触发失败:', e.message));
     started += 1;
   }
   if (started) notify();
@@ -520,12 +581,14 @@ function cryptoId() {
 // ── 对外 API ──
 // startScheduler 对执行上下文是权威定义：未提供的通道显式置空（不保留上一次的注入），
 // 避免调用方换了通道组合后旧通道仍然生效
-function startScheduler({ chatOnce, runAgentTask, replayAction, notify: n, taskTimeoutMs: tt } = {}) {
+function startScheduler({ chatOnce, runAgentTask, replayAction, notify: n, taskTimeoutMs: tt, maxConcurrentRuns: mc } = {}) {
   loadStore();
   execCtx.chatOnce = typeof chatOnce === 'function' ? chatOnce : null;
   execCtx.runAgentTask = typeof runAgentTask === 'function' ? runAgentTask : null;
   execCtx.replayAction = typeof replayAction === 'function' ? replayAction : null;
   if (Number(tt) > 0) taskTimeoutMs = Number(tt);
+  // RQ-07：自动触发的全局并发上限（缺省 3）。0 / 非法值不生效，避免「配成 0 导致永不执行」。
+  if (Number(mc) > 0) maxConcurrentRuns = Math.max(1, Math.trunc(Number(mc)));
   notifying = n || null;
   if (timer) clearInterval(timer);
   timer = setInterval(tick, TICK_MS);
@@ -799,4 +862,13 @@ module.exports = {
   ingestEvent, selectEventTargets,
   // 2026-10-18：任务级模型快照归一（provider 可能被删，运行时再判定）
   normalizeTaskModel,
+  // RQ-07（2026-11-03）：并发闸的可观测面与测试入口。
+  // tick 与 dispatchRun 一并导出，是为了让「5 个任务同分钟触发时在途 ≤ 上限」能被**真实行为**断言，
+  // 而不是靠读源码或读日志判定（README 里那些「已实现」的旧结论就是这么漂移掉的）。
+  tick, dispatchRun, getQueueState,
 };
+
+/** 并发闸快照：running = 正在执行的任务数，queued = 排队数，max = 当前上限 */
+function getQueueState() {
+  return { running: running.size, queued: pendingQueue.length, max: maxConcurrentRuns };
+}

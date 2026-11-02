@@ -150,5 +150,38 @@ check('G6 tsx-guard：真仓 0 违规，且 5 类样本逐条报红、合规样�
   assert.equal(run([emptyDir]).status, 2, '空目录未判错（空跑不能算过）');
 });
 
+// ── G9（R2-5，2026-11-03）类型检查盲区只减不增 ────────────────────────────────
+// 事实：renderer/tsconfig.json 的 include 只有 ts/tsx/d.ts，且 checkJs=false
+// ⇒ `.js` / `.jsx` 一律不进 tsc。实测存量 48 个文件 / 12,354 行（含 ChatArea.jsx 979 行）。
+// `npm run typecheck` 通过**不能**证明这些文件类型正确——这是「门禁绿 ≠ 没问题」的典型。
+//
+// 本轮不做 48 个文件的一次性转写（12k 行、无 props 类型、回归面覆盖不到），
+// 改为**棘轮**：存量冻结，只允许减少。这样「新增一个 .jsx」会立刻红，
+// 而拆薄/转写后忘记下调基线也会红（两个方向都锁住）。
+const JSX_BASELINE = 48;
+check('G9 渲染层 .js/.jsx 文件数不得增加（类型检查盲区棘轮）', () => {
+  const walk = (dir) => {
+    const out = [];
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) out.push(...walk(p));
+      else if (/\.(js|jsx)$/.test(e.name)) out.push(path.relative(SRC, p));
+    }
+    return out;
+  };
+  const files = walk(SRC);
+  assert.ok(files.length <= JSX_BASELINE,
+    `存量 ${files.length} 个 > 基线 ${JSX_BASELINE}：新增渲染层源文件必须是 .ts/.tsx（或先拆薄再下调基线）。新增项：${files.slice(JSX_BASELINE).join(', ')}`);
+  // 反向：转写完成后基线必须同步下调，否则棘轮松驰（与 max-lines 的 BASELINE_800 同纪律）
+  assert.ok(files.length >= JSX_BASELINE - 6,
+    `实测降到 ${files.length} 个，基线 ${JSX_BASELINE} 已明显松驰：请同步下调 JSX_BASELINE`);
+});
+
+check('G9b tsconfig 未把 .js/.jsx 偷偷纳入（防止「纳入了但没检查」的假覆盖）', () => {
+  const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'renderer', 'tsconfig.json'), 'utf8'));
+  const inc = (cfg.include || []).join(',');
+  assert.ok(!/\.jsx?\b/.test(inc), `include 出现 js/jsx 通配（但不一定开 checkJs，等于假覆盖）：${inc}`);
+});
+
 console.log(`\nrenderer-guards: ${pass}/${pass + fail} 通过`);
 if (fail > 0) process.exitCode = 1;

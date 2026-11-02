@@ -40,6 +40,31 @@ check('setProviderModel 更新模型', store.listProviders()[0].modelId === 'dee
 store.archiveThread(t.id);
 check('归档后列表不可见', store.listThreads().length === 0);
 
+// ── RQ-03（2026-11-03）：归档不得「假成功」──
+// 旧实现既不看 corrupt-blocked、也不看 flush 返回值，恒返回 ok:true：用户看到「已删除」，
+// 重启后会话又回来了。三条断言分别钉住「不存在的会话」「幂等」「阻断态」。
+check('归档不存在的会话返回 ok:false', store.archiveThread(999999).ok === false);
+const tArch = store.createThread({ title: '归档幂等', cwd: '/tmp/q' });
+check('首次归档成功', store.archiveThread(tArch.id).ok === true);
+check('重复归档幂等（unchanged=true）', (() => { const r = store.archiveThread(tArch.id); return r.ok === true && r.unchanged === true; })());
+const dirCorruptA = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-cur-'));
+fs.writeFileSync(path.join(dirCorruptA, 'local-data.json'), '{broken archive');
+const sCorruptA = new LocalStore(dirCorruptA);
+check('损坏且无备份 → 进入阻断态', sCorruptA.corruptBlocked === true);
+let archiveThrew = false;
+try { sCorruptA.archiveThread(1); } catch { archiveThrew = true; }
+check('阻断态归档必须抛错（fail-closed，不得返回 ok:true）', archiveThrew === true);
+
+// ── RQ-02（2026-11-03）：彻底删除返回可核对的计数 ──
+const tPurge = store.createThread({ title: '待彻底删除', cwd: '/tmp/purge' });
+store.addMessage({ threadId: tPurge.id, role: 'user', content: 'a' });
+store.addMessage({ threadId: tPurge.id, role: 'assistant', content: 'b' });
+const purgeRes = store.purgeThread(tPurge.id);
+check('彻底删除返回删除计数', purgeRes.ok === true && purgeRes.deleted.threads === 1 && purgeRes.deleted.messages === 2,
+  JSON.stringify(purgeRes.deleted));
+check('彻底删除后消息不复存在', store.listMessages(tPurge.id).length === 0);
+check('彻底删除回报原执行根（供调用方判断是否留下隔离副本）', purgeRes.cwd === '/tmp/purge');
+
 // ── P0-2a：记忆自动沉淀设置语义（缺省 false = 默认关闭）──
 // 旧 JSON 记忆 API（addMemory/listMemories/touchMemories）已随 P3-4/P1-16 删除——
 // 记忆唯一事实来源是 SQLite（MemoryManager，行为测试见 test/memory.test.js）；
@@ -198,6 +223,50 @@ check('20 条消息合并为少量写盘（≤2 次磁盘写）', writesBeforeFl
 check('合并刷盘后 20 条消息完整落盘', new LocalStore(dirHot).listMessages(tHot.id).length === 20);
 check('flushSync 幂等（无脏数据不再写盘）', (() => { const r = sHot.flushSync(); return r && r.ok === true && r.nothingPending === true; })()); // V08：返回值从布尔升级为 {ok,nothingPending}
 
+// ── R2-1（2026-11-03）：按会话索引 / 分页 / 全库统计 ──
+const dirIdx = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-idx-'));
+const sIdx = new LocalStore(dirIdx);
+const tA = sIdx.createThread({ title: 'A', cwd: '/tmp/a' });
+const tB = sIdx.createThread({ title: 'B', cwd: '/tmp/b' });
+for (let i = 0; i < 30; i += 1) sIdx.addMessage({ threadId: i % 2 ? tA.id : tB.id, role: 'user', content: `m${i}` });
+check('索引：两会话各自独立取回（不串线程）',
+  sIdx.listMessages(tA.id).length === 15 && sIdx.listMessages(tB.id).length === 15);
+check('索引：读路径复用同一 Map（不每次重建）', (() => {
+  sIdx.listMessages(tA.id);
+  const m1 = sIdx._byThread;
+  sIdx.listMessages(tB.id);
+  return m1 instanceof Map && sIdx._byThread === m1;
+})());
+sIdx.addMessage({ threadId: tA.id, role: 'assistant', content: 'new' });
+check('索引：新增消息立即可读（增量维护）', sIdx.listMessages(tA.id).slice(-1)[0].content === 'new');
+const page1 = sIdx.listMessagesPage(tA.id, { limit: 5 });
+check('分页：取最近 5 条且 hasMore=true',
+  page1.messages.length === 5 && page1.messages.slice(-1)[0].content === 'new' && page1.hasMore === true, `total=${page1.total}`);
+const cursor = page1.messages[0].id;
+const page2 = sIdx.listMessagesPage(tA.id, { limit: 5, beforeId: cursor });
+check('分页：beforeId 游标不重复也不跳条', page2.messages.length === 5 && page2.messages.every((m) => m.id < cursor));
+check('分页：limit 有上限保护', sIdx.listMessagesPage(tA.id, { limit: 999999 }).messages.length <= 2000);
+const stIdx = sIdx.statsSummary();
+check('统计：线程/消息数一致', stIdx.threads === 2 && stIdx.messages === 31, JSON.stringify(stIdx));
+sIdx.archiveThread(tB.id);
+check('统计：归档会话不计入 threads', sIdx.statsSummary().threads === 1 && sIdx.statsSummary().archivedThreads === 1);
+
+// ── R2-2（2026-11-03）：.bak 轮转 + 主文件缺失时的恢复（崩溃窗口）──
+const dirRot = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-rot-'));
+const sRot = new LocalStore(dirRot);
+const tRot = sRot.createThread({ title: 'rot', cwd: '/tmp/r' });
+sRot.flushSync();                       // 第一次：只有主文件，无 .bak
+sRot.addMessage({ threadId: tRot.id, role: 'user', content: 'after-rotation' });
+sRot.flushSync();                       // 第二次：轮转出 .bak（内容 = 上一版）
+const bakPath = path.join(dirRot, 'local-data.json.bak');
+check('.bak 轮转产出上一版快照', fs.existsSync(bakPath) && !fs.readFileSync(bakPath, 'utf8').includes('after-rotation'));
+check('轮转后主文件是最新版', fs.readFileSync(path.join(dirRot, 'local-data.json'), 'utf8').includes('after-rotation'));
+fs.unlinkSync(path.join(dirRot, 'local-data.json'));   // 模拟「轮转完成、新文件未落盘」时崩溃
+const sRecovered = new LocalStore(dirRot);
+check('主文件缺失时从 .bak 恢复（不静默重置为空库）',
+  sRecovered.recoveredFromBackup === true && sRecovered.listThreads().length === 1);
+check('恢复成功时不得进入 corrupt-blocked', sRecovered.corruptBlocked === false);
+
 // scheduleFlush 定时器到期自动落盘（异步段收尾，统一在此清理与退出）
 (async () => {
   const dirTimer = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-timer-'));
@@ -215,6 +284,13 @@ check('flushSync 幂等（无脏数据不再写盘）', (() => { const r = sHot.
   fs.rmSync(dirFork, { recursive: true, force: true });
   fs.rmSync(dirTimer, { recursive: true, force: true });
   fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dirIdx, { recursive: true, force: true });
+  fs.rmSync(dirRot, { recursive: true, force: true });
   console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
   process.exit(fail === 0 ? 0 : 1);
-})();
+})().catch((e) => {
+  // 裸 async IIFE 的失败会变成 unhandled rejection：退出码仍可能是 0，表现是「静默通过」。
+  // 显式兜住并置非零退出码（audit-check-await 的 ratchet 也会因此只降不升）。
+  console.error('[FAIL] 套件异常：', e && e.stack ? e.stack : e);
+  process.exitCode = 1;
+});

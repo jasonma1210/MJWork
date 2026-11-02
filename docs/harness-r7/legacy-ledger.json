@@ -6,10 +6,10 @@
     "deadBridgeMethods": {
       "source": "desktop/main/preload.js − desktop/renderer/src（口径同 test/bridge-parity.test.mjs）",
       "unit": "method",
-      "total": 281,
-      "referenced": 230,
+      "total": 282,
+      "referenced": 231,
       "dead": 51,
-      "ratio": 0.1815,
+      "ratio": 0.1809,
       "groups": [
         {
           "prefix": "market",

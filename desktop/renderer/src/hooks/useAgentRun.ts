@@ -137,6 +137,8 @@ export default function useAgentRun(d: UseAgentRunDeps) {
   // P0-6：在役 runId（state，供 TodoPanel 等视图层订阅本轮的 todos 事件）。
   // ref 版本（activeRunIdRef）继续承担「归属判定」，两者用途不同：ref 不缺一次重渲染。
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  // RQ-16：引擎隔离降级的一次性提示标记（不落库、不跨会话）
+  const engineFallbackNotifiedRef = useRef(false);
   // P1「撤回本轮」：本轮开始前的工作区基线 SHA（空串 = 工作区当时干净，撤回回到 HEAD）
   const [runBaselineSha, setRunBaselineSha] = useState('');
 
@@ -637,6 +639,12 @@ export default function useAgentRun(d: UseAgentRunDeps) {
       //      **同样没跑完但没有断点**的停止形态一律被当成正常完成。
       // 现在：stopReason 非空 = 引擎主动停下且任务未完；有断点 ⇒ suspended（可结束本轮），
       // 无断点 ⇒ incomplete（只能「继续」）。
+      // RQ-16：in-process 回落 = 无进程隔离。这是能力降级，不是正常形态，必须让用户看到一次
+      //（每个会话只提示一次：每条消息都弹会把提示变成噪音，最后没人看）。
+      if (meta?.engineMode === 'in-process' && !engineFallbackNotifiedRef.current) {
+        engineFallbackNotifiedRef.current = true;
+        toast({ message: tGlobal('runtime.engineFallback'), duration: 8000 });
+      }
       const stopReason = String(meta?.stopReason || '');
       const checkpointSaved = meta?.checkpointSaved === true;
       rs.runSummary = {

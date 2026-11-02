@@ -35,6 +35,7 @@ class LocalStore {
     this.recoveredFromBackup = false; // 诊断：本次加载是否走了 .bak 恢复
     this.pendingBakRepair = false;     // 主文件已知损坏：下次 flush 跳过 .bak 覆盖（防好备份被坏文件污染）
     this.corruptBlocked = false;       // V08：损坏且无备份 → 写入阻断态（load() 置位）
+    this._byThread = null;             // R2-1：threadId → messages[] 懒建索引（写路径增量维护）
     // P0-1：消息热路径合并刷盘状态。此前每条消息 addMessage 都触发整库 writeFileSync，
     // Agent 工具循环高峰每秒多条消息，同步写会卡死主进程事件循环（连带冻结 IPC 流式转发与审批响应）。
     this._flushTimer = null; // 挂起的合并刷盘定时器
@@ -80,7 +81,18 @@ class LocalStore {
       raw = fs.readFileSync(this.file, 'utf8');
     } catch (e) {
       readFailed = true;
-      if (e.code === 'ENOENT') return structuredClone(EMPTY); // 首次运行：无文件不是损坏，静默空库
+      if (e.code === 'ENOENT') {
+        // R2-2：rename 轮转后主文件可能短暂不存在（进程崩在两次落盘之间）。
+        // 有 .bak 就必须先恢复；没有才是真正的首次运行（此时绝不能进 corrupt-blocked）。
+        const recovered = this.loadFromBackup();
+        if (recovered) {
+          this.recoveredFromBackup = true;
+          this.pendingBakRepair = true;
+          console.error('[localStore] 主文件缺失，已从 .bak 恢复（上次落盘未完成）');
+          return recovered;
+        }
+        return structuredClone(EMPTY); // 首次运行：无文件不是损坏，静默空库
+      }
       console.error(`[localStore] local-data.json 读取失败（${e.message}），尝试 .bak 恢复`);
     }
     if (!readFailed) {
@@ -153,11 +165,26 @@ class LocalStore {
       return { ok: false, error: 'corrupt-blocked：本地数据文件损坏且无可用备份，写入已阻断（原件已保留，等待恢复或确认重置）' };
     }
     try {
+      // R2-2（2026-11-03）：用 rename 轮转代替「整库 copyFileSync + 整库写」。
+      // 语义不变（.bak 恒为**上一版**），但每次落盘少一次全量读+写；消息热路径上这是
+      // 与数据量成正比的固定开销。崩溃安全由两步保证：
+      //   ① rename 原子——要么 .bak 是上一版，要么还是再上一版，不会出现半截文件；
+      //   ② 若主文件此刻不存在，load() 的 ENOENT 分支会先从 .bak 恢复（见 load 注释）。
+      let rotated = false;
       if (fs.existsSync(this.file) && !this.pendingBakRepair) {
-        try { fs.copyFileSync(this.file, this.bak); } catch (e) { console.warn('[localStore] .bak 备份失败:', e.message); }
+        try { fs.renameSync(this.file, this.bak); rotated = true; } catch (e) {
+          // 跨设备/权限受限时回落复制（慢但正确）；两者都失败只告警，不阻断本次写入
+          console.warn('[localStore] .bak 轮转失败，回落复制:', e.message);
+          try { fs.copyFileSync(this.file, this.bak); } catch (e2) { console.warn('[localStore] .bak 备份失败:', e2.message); }
+        }
       }
       const res = writeFileDurable(this.file, JSON.stringify(this.data));
       if (!res.ok) {
+        // 轮转已把主文件挪走：写失败必须把它放回来，否则这次启动就没有主文件了。
+        // 用复制而不是再 rename——保住 .bak 这份备份（故障现场最需要它）。
+        if (rotated) {
+          try { fs.copyFileSync(this.bak, this.file); } catch (e) { console.warn('[localStore] 落盘失败后回补主文件失败（.bak 仍在）:', e.message); }
+        }
         // 失败必须让调用方知道：凭证/消息写不进去若被静默，用户下次重启才发现
         console.error('[localStore] 持久化失败:', res.error);
         return { ok: false, error: res.error };
@@ -198,6 +225,60 @@ class LocalStore {
   }
 
   nextId() { return this.data.seq++; }
+
+  // ── 按会话索引（R2-1，2026-11-03）──
+  //
+  // 为什么需要：messages 是**全部会话**消息的一维数组，而 listMessages / 统计 / 分页
+  // 都要按 threadId 取子集。原先每次调用都对整库 filter+sort（O(全部消息)），
+  // 会话越多、历史越长，打开任意一个会话都越慢——这是长会话「越用越卡」的根因。
+  //
+  // 维护策略：懒建 + 写路径增量维护。**不在读路径重建**（那等于把 O(N) 挪个位置），
+  // 只在 load()/异常形态时清空，下一次读时重建一次。
+  _ensureIndex() {
+    if (this._byThread) return this._byThread;
+    const idx = new Map();
+    for (const m of this.data.messages) {
+      const k = Number(m.threadId);
+      const list = idx.get(k);
+      if (list) list.push(m); else idx.set(k, [m]);
+    }
+    // 各桶按 id 升序（插入序）；同一批数据只排一次，读路径直接切片
+    for (const list of idx.values()) list.sort((a, b) => a.id - b.id);
+    this._byThread = idx;
+    return idx;
+  }
+
+  /** 分页读：limit + beforeId 游标（取 id < beforeId 的最近 limit 条），返回 {messages, hasMore} */
+  listMessagesPage(threadId, { limit = 100, beforeId = null } = {}) {
+    const all = this._ensureIndex().get(Number(threadId)) || [];
+    const cap = Math.min(2000, Math.max(1, Math.trunc(Number(limit) || 100)));
+    const pivot = Number(beforeId);
+    const end = Number.isFinite(pivot) && pivot > 0
+      ? (() => { let i = all.length; while (i > 0 && all[i - 1].id >= pivot) i -= 1; return i; })()
+      : all.length;
+    const start = Math.max(0, end - cap);
+    return { messages: all.slice(start, end), hasMore: start > 0, total: all.length };
+  }
+
+  /** 全库统计（一次遍历，供首页聚合用；替代渲染层逐会话拉取的 N+1 调用） */
+  statsSummary() {
+    let tokensInput = 0;
+    let tokensOutput = 0;
+    let archived = 0;
+    for (const t of this.data.threads) if (t.archived) archived += 1;
+    for (const m of this.data.messages) {
+      tokensInput += Number(m.tokensInput) || 0;
+      tokensOutput += Number(m.tokensOutput) || 0;
+    }
+    return {
+      threads: this.data.threads.length - archived,
+      archivedThreads: archived,
+      messages: this.data.messages.length,
+      tokensInput,
+      tokensOutput,
+      generatedAt: Date.now(),
+    };
+  }
 
   // ── 线程 ──
   listThreads(projectPath) {
@@ -257,6 +338,7 @@ class LocalStore {
       });
     }
     t.updatedAt = Date.now();
+    this._byThread = null;
     this.flush();
     return { ok: true, thread: t, copied: copied.length };
   }
@@ -283,6 +365,10 @@ class LocalStore {
       modelName: modelName || '', createdAt: Date.now(),
     };
     this.data.messages.push(m);
+    if (this._byThread) {
+      const list = this._byThread.get(m.threadId);
+      if (list) list.push(m); else this._byThread.set(m.threadId, [m]);
+    }
     t.updatedAt = Date.now();
     if (role === 'user' && (t.title === '新对话' || t.title === '新会话' || !t.title)) {
       t.title = String(content || '').slice(0, 50) || t.title;
@@ -293,11 +379,9 @@ class LocalStore {
   }
 
   listMessages(threadId) {
-    return this.data.messages
-      .filter((m) => m.threadId === Number(threadId))
-      // 按 id 升序（插入序）。此前写成 `a.createdAt - a.createdAt === 0 ? 0 : a.id - b.id`——
-      // 自身相减恒为 0，恒走 0 分支，排序退化为「保持数组顺序」，仅因 push 有序才碰巧正确
-      .sort((a, b) => a.id - b.id);
+    // 走索引（O(该会话消息数)），不再对全库 filter+sort。
+    // 返回副本：调用方历史上拿到的是新数组，允许原地 sort/push 而不影响本层状态。
+    return (this._ensureIndex().get(Number(threadId)) || []).slice();
   }
 
   // /compact 落库（P2-6 收口）：压缩后用摘要历史整体替换该会话消息。
@@ -326,15 +410,25 @@ class LocalStore {
       createdAt: Number(m.createdAt ?? m.created_at) || (now + i),
     }));
     this.data.messages = this.data.messages.filter((m) => m.threadId !== Number(threadId)).concat(next);
+    if (this._byThread) this._byThread.set(Number(threadId), next);
     t.updatedAt = now;
     this.flush();
     return { ok: true, replaced: next.length, removed: arr.length >= 0 ? undefined : undefined };
   }
 
   archiveThread(threadId) {
+    // V08 纪律：损坏阻断态下必须拒绝并回报，而不是「内存接受了、盘上没有」。
+    // 此前本方法既不校验阻断态、也不看 flush 的返回值，恒返回 ok:true——用户看到「已删除」，
+    // 重启后会话又回来了（2026-11-03 审查 RQ-03）。
+    this.requireWritable();
     const t = this.data.threads.find((x) => x.id === Number(threadId));
-    if (t) { t.archived = true; this.flush(); }
-    return { ok: true };
+    if (!t) return { ok: false, error: '会话不存在' };
+    if (t.archived) return { ok: true, thread: t, unchanged: true }; // 幂等：重复归档不重复写盘
+    t.archived = true;
+    t.updatedAt = Date.now();
+    const r = this.flush();
+    if (!r || !r.ok) return { ok: false, error: (r && r.error) || '落盘失败' };
+    return { ok: true, thread: t };
   }
 
   // A1：会话重命名（前后端此前均缺；空标题拒绝）
@@ -389,10 +483,23 @@ class LocalStore {
   purgeThread(threadId) {
     this.requireWritable(); // V08：corrupt-blocked 态拒绝写入（fail-closed）
     const id = Number(threadId);
+    // 记下删除前的执行根：若它指向隔离副本，副本目录会留在磁盘上——由调用方决定是否清理，
+    // 本层不擅自删目录（未提交的工作只能由用户确认后丢弃）。
+    const target = this.data.threads.find((x) => x.id === id) || null;
+    const before = this.data.messages.length;
     this.data.threads = this.data.threads.filter((x) => x.id !== id);
     this.data.messages = this.data.messages.filter((m) => m.threadId !== id);
-    this.flush();
-    return { ok: true };
+    if (this._byThread) this._byThread.delete(id);
+    const removedMessages = before - this.data.messages.length;
+    const r = this.flush();
+    // 删除是破坏性动作：落盘失败必须回报，不能像原来那样恒 ok:true（同 RQ-03 的「假成功」形态）
+    if (!r || !r.ok) return { ok: false, error: (r && r.error) || '落盘失败' };
+    return {
+      ok: true,
+      deleted: { threads: target ? 1 : 0, messages: removedMessages },
+      cwd: target ? String(target.cwd || '') : '',
+      projectPath: target ? String(target.projectPath || '') : '',
+    };
   }
 
   // B1：孤儿会话归组到项目

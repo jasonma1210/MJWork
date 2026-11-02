@@ -1,6 +1,6 @@
 {
   "title": "IM Integration",
-  "desc": "Enter your DingTalk / Feishu / WeCom custom-app credentials to connect your mobile IM to this local workspace.",
+  "desc": "Enter your DingTalk / Feishu / WeCom custom-app credentials to prepare for mobile IM access (this version only stores credentials and issues pairing codes; messaging is not available yet).",
   "scopeNote": "Config + pairing-code stage for now: credentials stay on this machine (OS keychain-encrypted); full OAuth authorization and messaging arrive in a later release.",
   "bridgeNotReady": "Main-process bridge not ready — restart the app and retry.",
   "platform": {

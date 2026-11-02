@@ -8,14 +8,61 @@
 //   - localVault 为共享 Map 引用（provider id → 解密内存态），resolveSecret 在 main.js 读取；
 //   - localStore/credentialCrypto 在 whenReady 后才初始化，故用 getter。
 const { ipcMain, shell } = require('electron');
+const path = require('path');
 const modelsFile = require('../modelsFile');
 const guard = require('./payloadGuard');
 // 三层记忆 M3：作用域常量（分层召回的唯一事实来源，避免宿主重写层级清单）
 const { SCOPES } = require('../memory');
 // N9：治理命中率观测只读出口（进程内单例，无需注入）
 const { governanceStats } = require('../governanceStats');
+// 彻底删除的级联清理需要这两个单例（断点在 main.js 启动时已完成 initCheckpointStore，
+// worktree 根只用来判断「执行根是否落在隔离副本里」）。
+const checkpointStore = require('../store/checkpointStore');
+const { worktreeRoot } = require('../worktree');
 
 let deps = null;
+
+/**
+ * 彻底删除会话的跨库级联（RQ-02）。
+ *
+ * 为什么不能只删 localStore：会话本体（threads/messages）在 JSON 里，但它派生出的
+ * 任务组在 SQLite、断点在另一个 JSON。只删本体留下的是「点开即 404」的幽灵任务组、
+ * 永不淘汰的断点条目，以及磁盘上无人认领的隔离副本。
+ *
+ * 边界（三条都不能省）：
+ *   · running 的任务组 fail-closed 不删——删了账目就悬空，用户失去取消入口；单独计数回报。
+ *   · 隔离副本只**报告**不删——目录里可能有未提交的改动，丢弃必须由用户确认。
+ *   · 每一步的失败都写进返回结构（带形态字段），不压成统一的 false。
+ *
+ * @param {number|string} threadId 会话 id
+ * @param {string} cwd 该会话删除前的执行根
+ * @returns {{taskGroups:number, taskGroupsKept:number, checkpoints:number, orphanWorktreeCwd:string,
+ *            taskGroupsError?:string, checkpointsError?:string}}
+ */
+function purgeThreadDerivatives(threadId, cwd) {
+  const out = { taskGroups: 0, taskGroupsKept: 0, checkpoints: 0, orphanWorktreeCwd: '' };
+  const taskStore = deps.getTaskStore ? deps.getTaskStore() : null;
+  if (taskStore) {
+    try {
+      for (const g of taskStore.listGroupsByThread(threadId, { limit: 200 })) {
+        const r = taskStore.deleteGroup(g.group_id);
+        if (r && r.ok) out.taskGroups += 1; else out.taskGroupsKept += 1;
+      }
+    } catch (e) {
+      out.taskGroupsError = e.message;
+      console.warn('[localData] 会话删除：任务组级联失败（其余清理继续）:', e.message);
+    }
+  }
+  try {
+    if (checkpointStore.clearCheckpoint(String(threadId))) out.checkpoints = 1;
+  } catch (e) {
+    out.checkpointsError = e.message;
+    console.warn('[localData] 会话删除：断点清理失败（其余清理继续）:', e.message);
+  }
+  const root = worktreeRoot();
+  if (cwd && root && path.resolve(cwd).startsWith(path.resolve(root) + path.sep)) out.orphanWorktreeCwd = cwd;
+  return out;
+}
 
 let modelsFileMtime = 0;
 let modelsFileLastStatus = { path: modelsFile.modelsFilePath(), exists: false, synced: 0, removed: 0, errors: [] };
@@ -220,7 +267,22 @@ function register() {
     if (!deps.getLocalStore()) throw new Error('本地数据层未初始化');
     return deps.getLocalStore().addMessage(payload || {});
   });
-  ipcMain.handle('local:messages/list', async (_, { threadId }) => deps.getLocalStore() ? deps.getLocalStore().listMessages(threadId) : []);
+  // R2-1：分页读。显式给 limit 才返回信封 {messages,hasMore,total}；不给则保持历史返回（数组）——
+  // 跨层契约一变就必须两侧同时改，这里用「显式 opt-in」把风险锁在一个参数上。
+  ipcMain.handle('local:messages/list', async (_, payload = {}) => {
+    const store = deps.getLocalStore();
+    if (!store) return [];
+    const { threadId, limit, beforeId } = payload || {};
+    guard.assertIds(payload, ['threadId']);
+    if (limit === undefined) return store.listMessages(threadId);
+    return store.listMessagesPage(threadId, { limit, beforeId });
+  });
+  // R2-6：首页聚合（一次遍历出全部数字）。替代渲染层「逐会话取消息再本地累加」的 N+1 调用。
+  ipcMain.handle('local:stats/summary', async () => {
+    const store = deps.getLocalStore();
+    if (!store) return { threads: 0, archivedThreads: 0, messages: 0, tokensInput: 0, tokensOutput: 0, generatedAt: Date.now() };
+    return store.statsSummary();
+  });
   // /compact 落库：压缩摘要历史整体替换（P2-6 收口）
   ipcMain.handle('local:messages/replace', async (_, payload) => {
     // /compact 会整体替换历史：threadId 必填，messages 必须是数组且有条数上限
@@ -271,7 +333,11 @@ function register() {
       }
     }
     const res = localStore.purgeThread(payload.threadId);
-    return salvage ? { ...res, salvage } : res;
+    // 本体没删成就不要再删派生数据：先保住「可重试」的语义，避免出现
+    // 「任务组没了、会话还在」这种半删状态（那比不删更难修）。
+    if (!res || !res.ok) return res;
+    const cascade = purgeThreadDerivatives(payload.threadId, res.cwd);
+    return { ...res, cascade, ...(salvage ? { salvage } : {}) };
   });
   // B1：孤儿会话归组
   ipcMain.handle('local:threads/set-project', async (_, payload) => {

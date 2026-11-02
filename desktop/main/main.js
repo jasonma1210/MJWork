@@ -245,7 +245,10 @@ localDataIpc.initLocalDataIpc({
   getMemoryManager: () => memoryManager,
   getMemoryScheduler: () => memoryScheduler,
   // M3：记忆文件双通道（打开项目时同步 .mjcode/ 记忆文件）
-  getMemoryFileSync: () => memoryFileSync,
+  // 同一行再挂一个 getter：RQ-02 的彻底删除需要 taskStore 做级联，而它在 whenReady 后才建
+  //（取不到时级联降级为「只清断点」）。写在同一行是行数门禁所致——本文件已在 code 行天花板，
+  // BASELINE_800 只减不增，新增一行就必须并进既有行。
+  getMemoryFileSync: () => memoryFileSync, getTaskStore: () => taskStore,
 });
 const { syncModelsFile, migrateLocalModelsToFile } = localDataIpc;
 
