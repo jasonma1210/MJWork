@@ -674,13 +674,19 @@ export default function useAgentRun(d: UseAgentRunDeps) {
         endedAt: Date.now(),
       };
       if (activeRunIdRef.current === rs.runId) { activeRunIdRef.current = null; setActiveRunId(null); }
+      // 归属判定（2026-11-03 用户报障）：本轮收尾**只在没有别的 run 接管时**才复位界面状态。
+      // 反例（真实存在的时序）：排队接力 / steer 补发 / 重试会把新一轮提前拉起来
+      //（新一轮在启动时已写入 activeRunIdRef），而上一轮的收尾稍后才到 —— 若这里不加归属判定，
+      // setLoading(false) 会把新一轮的「运行中」抹掉、abortRef 置空还会让停止按钮失效。
+      // 用户看到的就是：任务明明在跑，发送按钮却变回箭头且点了没反应。
+      const otherRunActive = activeRunIdRef.current != null && activeRunIdRef.current !== rs.runId;
       // 收尾音效：正常结束（含「断点已保存」的挂起）与用户手动停止分开——不看屏幕也能分辨结果
       playRunSound(aborted ? 'stopped' : 'success');
       // 2026-10-18 真机修复：UI 复位必须在**同步段**完成。
       // 此前复位在函数末尾（`stillActive` 那段），而它前面有若干 await（落库/记忆/排队接力）。
       // 点「停止」后 agent.js 会立刻本地 settle 回调这里，可只要落库慢一拍，用户就盯着
       // 「运行中」不动 —— 感受就是「停止按钮坏了」。这里先复位界面，持久化照旧在后面做。
-      if (activeThreadIdRef.current === threadKey) {
+      if (!otherRunActive && activeThreadIdRef.current === threadKey) {
         abortRef.current = null;
         setStreamingText('');
         // 2026-10-30（用户需求）：思考文本**不在收尾时清空**。
@@ -897,10 +903,14 @@ export default function useAgentRun(d: UseAgentRunDeps) {
         // P0-A：失败可挽回——记录本次输入，用户可一键「重试本轮」（历史已保留，无需手动重打）
         setLastFailed({ text: content });
       }
-      onThreadStatus?.('idle');
+      // 同上：被新一轮接管时不把线程置 idle（否则侧栏状态与真实运行状态相反）
+      if (activeRunIdRef.current == null || activeRunIdRef.current === rs.runId) onThreadStatus?.('idle');
     }
+    // 同站点 A 的归属判定（这里必须用 rs.runId 兜底：未走 onDone 的路径不会经过站点 A，
+    // 此时 activeRunIdRef 仍指向本轮，不能因为「非 null」就把自己的收尾也跳过 —— 那会卡住 loading）。
+    const otherRunActive = activeRunIdRef.current != null && activeRunIdRef.current !== rs.runId;
     const stillActive = activeThreadIdRef.current === threadKey;
-    if (stillActive) {
+    if (stillActive && !otherRunActive) {
       abortRef.current = null;
       setStreamingText('');
       // 同上：思考文本保留（收尾条的过程折叠区要用），只在下次发送/切会话时重置

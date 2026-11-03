@@ -214,5 +214,29 @@ check('G11 地标与播报：main / nav / log 三件套齐备', () => {
   assert.ok(/aria-relevant="additions"/.test(ms), '缺 aria-relevant="additions"（否则流式逐字都会播报）');
 });
 
+// ── G12 / G13（2026-11-03 用户报障）停止按钮在运行中消失 ──────────────────────
+// 报障原文：「任务在执行，输入框的发送按钮没有任何变化，应该是红色的停止按钮」。
+// 根因是两条独立漏洞，缺一条都会复现，所以两条都钉：
+//   ① useAgentRun 的收尾复位没有 run 归属判定 —— 排队接力 / steer 补发 / 重试把新一轮拉起来后，
+//      上一轮稍晚到达的收尾仍会 setLoading(false) 并把 abortRef 置空：按钮变回箭头且停止失效。
+//   ② ChatArea 的 Composer「在跑」只看 loading 一个见证 —— 它一旦被写错就无从恢复。
+//      改为 loading || activeRunId || teamBusy 三见证取或。
+check('G12 收尾复位必须带 run 归属判定（旧 run 不得抹掉新 run 的运行态）', () => {
+  const hook = stripComments(read('hooks/useAgentRun.ts'));
+  const guards = hook.match(/if \(!otherRunActive && activeThreadIdRef\.current === threadKey\)/g) || [];
+  assert.ok(guards.length >= 1, '主收尾路径缺 !otherRunActive 守卫（旧 run 会清掉新 run 的 loading）');
+  assert.ok(/if \(stillActive && !otherRunActive\)/.test(hook), '兜底收尾路径缺 !otherRunActive 守卫');
+  assert.ok(/const otherRunActive = activeRunIdRef\.current != null && activeRunIdRef\.current !== rs\.runId/.test(hook),
+    'otherRunActive 判据缺失或被改写（必须是「有别的 run 且不是本轮」）');
+});
+
+check('G13 Composer 的运行态由多见证合成，不得只看 loading', () => {
+  const chat = stripComments(read('components/ChatArea.jsx'));
+  assert.ok(/const composerBusy = loading \|\| !!activeRunId \|\| teamBusy/.test(chat),
+    'composerBusy 判据缺失：停止按钮会因为 loading 被改写而在运行中消失');
+  assert.ok(/loading: composerBusy/.test(chat),
+    'Composer 仍收到裸 loading（等待中按钮不会变成红色停止）');
+});
+
 console.log(`\nrenderer-guards: ${pass}/${pass + fail} 通过`);
 if (fail > 0) process.exitCode = 1;

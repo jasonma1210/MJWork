@@ -749,10 +749,19 @@ export default function ChatArea({
     }
   }
 
+  // 2026-11-03（用户报障：任务在跑但按钮没变成红色停止）：
+  // 「在跑」不能只看 loading —— 它会被收尾路径改写（上一轮稍晚到达的收尾可能把新一轮的运行态抹掉，
+  // 根因修复见 useAgentRun 的 otherRunActive 归属判定）。这里用三个独立见证合成，任一为真即视为在跑：
+  //   · loading     —— 本实例的 run 生命周期；
+  //   · activeRunId —— run 启动时写入、收尾才归零，是更硬的见证；
+  //   · teamBusy    —— 派活/编排组在跑（它走的是团队通道，不经过本实例的 loading）。
+  // 三者取或之后，停止按钮在最基本的「点了能停」这件事上不会再消失。
+  const composerBusy = loading || !!activeRunId || teamBusy;
+
   // T2-2：Composer 接线在欢迎页与对话页间共享（仅 workspaceBound 语义随场景不同）
   const composerProps = {
     input, setInput, onSend: sendOrDispatch, onStop: stop, onPickFiles: pickFiles,
-    loading, selectedModel, project, projectPicked,
+    loading: composerBusy, selectedModel, project, projectPicked,
     onOpenProjectPicker, agentsMd,
     providers, onSelectModel,
     approval: approvalSettings, onApprovalChange,
