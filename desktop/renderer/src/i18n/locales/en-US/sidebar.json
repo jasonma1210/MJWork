@@ -16,5 +16,6 @@
   "groupOperations": "Operations",
   "groupResources": "Resources",
   "collapseTitle": "Collapse sidebar (⌘B)",
-  "collapse": "Collapse sidebar"
+  "collapse": "Collapse sidebar",
+  "navAria": "Conversations and projects"
 }

@@ -76,5 +76,6 @@
   "revertBaseRun": "the state before this run",
   "revertConfirm": "Revert",
   "reverted": "Reverted changes in {n} file(s)",
-  "revertFailed": "Revert failed: {error}"
+  "revertFailed": "Revert failed: {error}",
+  "logAria": "Conversation"
 }

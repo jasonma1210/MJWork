@@ -437,6 +437,14 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-bg text-text">
+      {/* P0：跳过导航链接——键盘/读屏用户第一次 Tab 就能直接进主内容，
+          不必逐个穿过侧栏几十个会话项。平时 sr-only，聚焦时浮出到左上角。 */}
+      <a
+        href="#mj-main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-2 focus:z-toast focus:rounded-md focus:border focus:border-accent focus:bg-surface focus:px-3 focus:py-1.5 focus:text-xs focus:text-text"
+      >
+        {tr('app.skipToMain')}
+      </a>
       {splash}
       <header className="flex items-center gap-2 pl-[var(--titlebar-inset)] pr-3 h-11 shrink-0 border-b border-border">
         <TopBarActions onToggleSidebar={() => setSidebarOpen((v) => !v)} onOpenSearch={() => setPaletteOpen(true)} paneOpen={paneOpen} onTogglePane={() => { if (activeThreadRef.current) setPaneOpen((v) => !v); }} hasActiveThread={!!activeThread} onCycleTheme={cycleTheme} themeLabel={themeLabel()}         localMode={localMode} showDashboard={showDashboard} onOpenDashboard={() => navDispatch({ type: 'page', page: 'dashboard' })}
@@ -508,7 +516,12 @@ export default function App() {
         onRenameProject={renameProject}
       /></ErrorBoundary>
       )}
-      <div className="flex-1 min-w-0 flex flex-col relative">
+      {/* P0（2026-11-03）：主内容列承担 main 地标，读屏可「跳到主内容」。
+          用 role="main" 而不是改标签为 <main>：两者对辅助技术等价（<main> 默认映射 role=main），
+          而本组件嵌套 700 行，改标签名要精确配平闭括号——注释里的 `<div` 会污染配平结果，
+          改错一次就是整屏白屏。地标语义拿到了，风险为零。
+          tabIndex={-1}：跳过链接的落点必须可被聚焦，否则浏览器只滚动、不转移焦点（读屏仍停在侧栏）。 */}
+      <div id="mj-main" role="main" tabIndex={-1} className="flex-1 min-w-0 flex flex-col relative">
         {/* Toast 锚点：对话列顶部居中（portal 目标；用视口居中在右栏打开时会偏左） */}
         <div id="mj-toast-root" className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-toast flex flex-col items-center gap-2" />
         {showDashboard && <ErrorBoundary compact><Dashboard threadId={activeThreadId} /></ErrorBoundary>}

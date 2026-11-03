@@ -74,10 +74,14 @@ check('flex-1 滚动容器必须带 min-h-0', () => {
 check('对话消息流可滚动且不被撑高', () => {
   // T2-2：消息流容器已拆出 MessageStream.tsx，断言随实现走
   const chat = read('components/MessageStream.tsx');
-  const m = chat.match(/ref=\{scrollRef\} className="([^"]*)"/);
-  assert.ok(m, '未找到消息流容器 ref={scrollRef}');
-  assert.match(m[1], /overflow-y-auto/, '消息流未启用纵向滚动');
-  assert.match(m[1], /min-h-0/, '消息流缺 min-h-0：对话变长会把输入框顶出可视区');
+  // 2026-11-03：断言原先是 `ref={scrollRef} className="..."` 同行的字面匹配 ——
+  // 给容器追加 role/aria-live（P0 可访问性）后被拆成多行属性，断言直接红。
+  // 那是「断言与排版耦合」而不是行为回归。这里改为：以 ref={scrollRef} 为锚点，
+  // 在其后 600 字符窗口内（即同一个开标签）查找两个必备类，容忍任意换行与属性顺序。
+  const m = chat.match(/ref=\{scrollRef\}[\s\S]{0,600}?>/);
+  assert.ok(m && m[0].length > 20, '未找到消息流容器 ref={scrollRef}');
+  assert.match(m[0], /overflow-y-auto/, '消息流未启用纵向滚动');
+  assert.match(m[0], /min-h-0/, '消息流缺 min-h-0：对话变长会把输入框顶出可视区');
 });
 
 check('对话区外层是完整的 flex 列布局', () => {

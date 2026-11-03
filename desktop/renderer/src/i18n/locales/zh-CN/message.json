@@ -76,5 +76,6 @@
   "revertBaseRun": "本轮开始前",
   "revertConfirm": "撤回",
   "reverted": "已撤回 {n} 个文件的改动",
-  "revertFailed": "撤回失败：{error}"
+  "revertFailed": "撤回失败：{error}",
+  "logAria": "对话内容"
 }

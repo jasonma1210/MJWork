@@ -11,7 +11,10 @@
 // 配色全部 token 化，组件内零十六进制。
 import { useId, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react';
 
-const FIELD_BASE = 'w-full rounded-lg border bg-input text-text outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/30';
+// 焦点样式：环由 styles/theme.css 的 `input:focus-visible` 组统一提供（2px 实色 --sem-focus）。
+// 这里只保留 1px 边框变色做「二级提示」，不再叠加 box-shadow 环——
+// 同一控件上「边框变色 + 30% 阴影环 + 2px outline」三重指示既重又互相干扰。
+const FIELD_BASE = 'w-full rounded-lg border bg-input text-text outline-none transition-colors focus:border-accent';
 
 export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> {
   label?: ReactNode;

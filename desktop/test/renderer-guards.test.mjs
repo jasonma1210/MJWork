@@ -183,5 +183,36 @@ check('G9b tsconfig 未把 .js/.jsx 偷偷纳入（防止「纳入了但没检�
   assert.ok(!/\.jsx?\b/.test(inc), `include 出现 js/jsx 通配（但不一定开 checkJs，等于假覆盖）：${inc}`);
 });
 
+// ── G10（P0-1，2026-11-03）表单控件的焦点环必须存在且不被关掉 ────────────────
+// 事故形态：组件里 68 处 `outline-none`（特异性 0-1-0）与全局 `:focus-visible`（同为 0-1-0）
+// 争同一条声明，靠书写顺序决胜 —— 顺序一变焦点环静默消失，用户只看到 1px 边框变点色。
+// 断言两条：
+//   ① CSS 里存在「元素选择器 + :focus-visible」的提升规则（0-1-1 稳压 utility 类）；
+//   ② 不存在 `textarea:focus { outline: none }` 这类主动关轮廓的规则。
+// 注意：断言前必须剥掉 CSS 注释 —— 本套件自己就在注释里写了 `input:focus-visible` 与
+// 「68 处 outline-none」，不剥的话注释即满足断言，等于空转。
+const stripCss = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '');
+check('G10 表单控件焦点环：存在 0-1-1 规则，且没有关掉轮廓的规则', () => {
+  const css = stripCss(fs.readFileSync(path.join(SRC, 'styles', 'theme.css'), 'utf8'));
+  assert.ok(/(^|\})\s*input:focus-visible/.test(css), '缺少 input:focus-visible 规则（utility 类会盖掉全局环）');
+  assert.ok(/textarea:focus-visible/.test(css), '缺少 textarea:focus-visible 规则');
+  assert.ok(!/textarea:focus\s*\{\s*outline:\s*none/.test(css), '仍存在 textarea:focus { outline:none }（主动关掉焦点提示）');
+  assert.ok(!/--sem-focus:\s*rgba\(/.test(css), '--sem-focus 仍是半透明值（2px 环对比不足 3:1）');
+});
+
+// ── G11（P0-2，2026-11-03）地标与播报 ────────────────────────────────────────
+// 只断结构事实：主内容地标、侧栏导航地标、对话日志播报。断「有没有」而不是「长什么样」。
+check('G11 地标与播报：main / nav / log 三件套齐备', () => {
+  const app = stripComments(read('App.jsx'));
+  assert.ok(/role="main"/.test(app) && /id="mj-main"/.test(app), '主内容列缺 role="main" 或 id="mj-main"');
+  assert.ok(/tabIndex=\{-1\}/.test(app), '地标落点缺 tabIndex={-1}（跳过链接只能滚不能聚焦）');
+  assert.ok(/href="#mj-main"/.test(app), '缺跳过导航链接');
+  const side = stripComments(read('components/Sidebar.jsx'));
+  assert.ok(/<nav\s/.test(side) && /aria-label=\{t\('sidebar\.navAria'\)\}/.test(side), '侧栏缺 <nav aria-label>');
+  const ms = stripComments(read('components/MessageStream.tsx'));
+  assert.ok(/role="log"/.test(ms) && /aria-live="polite"/.test(ms), '对话区缺 role="log" + aria-live');
+  assert.ok(/aria-relevant="additions"/.test(ms), '缺 aria-relevant="additions"（否则流式逐字都会播报）');
+});
+
 console.log(`\nrenderer-guards: ${pass}/${pass + fail} 通过`);
 if (fail > 0) process.exitCode = 1;

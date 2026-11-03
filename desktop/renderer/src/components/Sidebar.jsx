@@ -60,6 +60,10 @@ export default function Sidebar({
       {/* 一级导航：三个入口 ——「新建任务」「助理」「定时任务」。
           选中态由 activeNavOf 计算（互斥且穷尽）；此前只有 New chat 传 active，
           且判据是 !activeThread —— 在定时任务页里没有打开会话，于是该亮的不亮。 */}
+      {/* P0（2026-11-03）：一级导航与会话列表收进 <nav> 地标，读屏可整块跳过。
+          外层必须带 flex-1 min-h-0 —— 里面 ThreadList 是 flex-1 + overflow-y-auto 的滚动体，
+          少了这两个类，会话多了会把页脚挤出视口。布局类名与包裹前等价。 */}
+      <nav aria-label={t('sidebar.navAria')} className="flex flex-col flex-1 min-h-0">
       <div className="px-2 space-y-1">
         <div className="px-3 pb-1 text-caption text-text2">{t('sidebar.groupOperations')}</div>
         <NavItem icon={<IconList size={16} />} label={t('sidebar.desk')} onClick={onOpenDesk} active={activeNav === 'desk'} />
@@ -91,6 +95,7 @@ export default function Sidebar({
         onRenameProject={onRenameProject}
         onOpenProjectPicker={onOpenProjectPicker}
       />
+      </nav>
 
       {/* 底部次级区：生态中心（D8：降级为弹层，但保留可达入口）/ 归档 / 设置 */}
       <div className="border-t border-border px-2 py-2 shrink-0">

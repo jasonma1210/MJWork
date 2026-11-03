@@ -222,7 +222,18 @@ export default function MessageStream({
   );
   return (
       <div className="relative flex-1 min-h-0 flex flex-col">
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-6 py-4" onScroll={handleScroll}>
+      {/* P0（2026-11-03）：对话区是「日志」型地标。aria-live 只播报**新增节点**
+          （aria-relevant="additions"），流式逐字更新属于文本变更、不会逐字朗读；
+          一条回答落地时它作为新节点被朗读一次——这正是读屏用户需要的信息量。 */}
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto px-6 py-4"
+        onScroll={handleScroll}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-label={t('message.logAria')}
+      >
         {/* 正文列与输入框同宽同左缘（Composer 为 max-w-3xl mx-auto）：此前消息贴左、
             输入框居中，1440 宽下两者错开约 130px，视觉上像是两套栅格 */}
         <div className="mx-auto w-full max-w-3xl">

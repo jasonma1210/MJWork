@@ -69,5 +69,6 @@
   "cmdSummary": "Open task summary",
   "cmdTerminal": "Open terminal",
   "threadDeleteFailed": "Failed to delete session: {error}",
-  "loadFailed": "Failed to load data: {error} (some lists may be empty; reload to retry)"
+  "loadFailed": "Failed to load data: {error} (some lists may be empty; reload to retry)",
+  "skipToMain": "Skip to main content"
 }

@@ -16,5 +16,6 @@
   "groupOperations": "经营",
   "groupResources": "资源",
   "collapseTitle": "收起左侧栏（⌘B）",
-  "collapse": "收起左侧栏"
+  "collapse": "收起左侧栏",
+  "navAria": "会话与项目"
 }

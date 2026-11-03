@@ -147,7 +147,7 @@
   --sem-info: #8ab4f8;            --sem-info-rgb: 138 180 248;
   --sem-overlay: rgba(0, 0, 0, 0.6);
   --sem-accent: #7FA98F;          --sem-accent-rgb: 127 169 143;
-  --sem-focus: rgba(127, 169, 143, 0.6); --sem-focus-rgb: 127 169 143;
+  --sem-focus: #7FA98F;          --sem-focus-rgb: 127 169 143;
   /* 淡底（Tailwind v3 对纯 CSS 变量色不支持 /opacity，故单独提供底色 token） */
   --sem-accent-bg: rgba(127, 169, 143, 0.14);
   --sem-danger-bg: rgba(216, 101, 92, 0.13);
@@ -227,7 +227,7 @@
   --sem-info: #1d4ed8;            --sem-info-rgb: 29 78 216;
   --sem-overlay: rgba(0, 0, 0, 0.35);
   --sem-accent: #2E4B3C;          --sem-accent-rgb: 46 75 60;
-  --sem-focus: rgba(46, 75, 60, 0.5); --sem-focus-rgb: 46 75 60;
+  --sem-focus: #2E4B3C;          --sem-focus-rgb: 46 75 60;
   --sem-accent-bg: rgba(46, 75, 60, 0.10);
   --sem-danger-bg: rgba(179, 38, 30, 0.10);
   --sem-success-bg: rgba(22, 163, 74, 0.12);
@@ -338,6 +338,26 @@
   outline-offset: 1px;
 }
 
+/* P0（2026-11-03）：表单控件的焦点环必须单独声明。
+   ─ 为什么 `:focus-visible` 不够：组件里普遍带 Tailwind 的 `outline-none`
+     （`.outline-none { outline: 2px solid transparent }`，特异性 0-1-0），
+     它与上面的 `:focus-visible`（同为 0-1-0）争的是同一条声明，靠书写顺序决胜；
+     一旦某个文件顺序变化，焦点环就静默消失——实测全站 68 处 `outline-none`，
+     用户看到的现象是「Tab 到输入框，只有 1px 边框变了点颜色」。
+   ─ 这里用「元素选择器 + 伪类」（0-1-1）稳压 utility 类（0-1-0），
+     不依赖顺序、不需要 !important，也不必去改那 68 处调用点。
+   ─ 颜色用 --sem-focus 的实色值：2px 半透明环压在深底上对比不足 3:1，
+     WCAG 2.4.11（焦点外观）要求指示区域与相邻色至少 3:1。 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[contenteditable="true"]:focus-visible,
+[role="textbox"]:focus-visible,
+[role="combobox"]:focus-visible {
+  outline: 2px solid var(--sem-focus);
+  outline-offset: 1px;
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
@@ -438,8 +458,9 @@ code { font-family: var(--font-mono); }
   color: var(--theme-text);
 }
 
-/* 输入框 */
-textarea:focus { outline: none; }
+/* 输入框
+   （2026-11-03 删除 `textarea:focus { outline: none }`：它会把键盘焦点的最后一道可视提示关掉，
+     焦点样式统一由上面的 :focus-visible 组承担。） */
 
 /* 启动页进度线：宽度 160px 的容器内从左生长（scaleX，不触发重排） */
 @keyframes splash-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
