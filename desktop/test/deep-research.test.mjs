@@ -109,7 +109,7 @@ const model = {
 // ── ② 引擎接线 ──
 {
   const byName = Object.fromEntries(BASE_TOOLS.map((t) => [t.function.name, t.function]));
-  const src = fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8');
+  const src = [fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8'), fs.readFileSync(path.join(ROOT, 'agent-core/index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   check('BASE_TOOLS 含 deep_research', !!byName.deep_research);
   check('deep_research schema required=[topic]',
     JSON.stringify(byName.deep_research?.parameters?.required) === '["topic"]');

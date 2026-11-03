@@ -99,42 +99,10 @@ const resolveApprovalOrigin = require('./approvalOrigin').createApprovalOriginRe
   getLocalStore: () => localStore,
 });
 
-function requestApproval(tool, args) {
-  const summary = approval.approvalSummary(tool, args);
-  const approvalId = approvalChannel.nextId();
-  // N5：审批挂到发起它的运行（AsyncLocalStorage 上下文由 agentRunner 的 handler 包装注入），
-  // 运行取消时 cancelApprovalsForRun 统一撤下（rootExecution 统一取消之「撤审批」）。
-  const waitP = approvalChannel.wait(approvalId, broadcastApprovalEnd, runScope.getStore()?.runId || null);
-  // P0-5：无可用窗口（启动早期 / 窗口已销毁）无法征求用户 → fail-closed 按 deny 收尾，
-  // 不再对 mainWindow.webContents 裸解引用（IPC rejection 会把工具循环打进不可诊断态）
-  const win = mainWindow && (typeof mainWindow.isDestroyed !== 'function' || !mainWindow.isDestroyed()) ? mainWindow : null;
-  if (!win) {
-    console.warn(`[approval] 无可用窗口，审批按 deny 收尾（tool=${tool}）`);
-    approvalChannel.dispatch(approvalId, 'deny');
-    return waitP;
-  }
-  // V21：审批卡需显示请求来源的工作根——cwd 随摘要下发（无 cwd 时不带该字段）
-  // P0-5：同时带上发起会话的归属（threadId/threadTitle），供审批卡标注「来自哪个会话」，
-  // 并让渲染层把 awaiting_approval 写到**那个**会话而不是当前正在看的会话。
-  win.webContents.send('tool:approval-request', {
-    approvalId, tool, rememberable: approval.isRememberable(tool),
-    ...(args?.cwd ? { cwd: args.cwd } : {}), ...summary,
-    ...resolveApprovalOrigin(runScope.getStore()?.runId || null),
-  });
-  return waitP;
-}
-
-// 全局唯一监听器：按 approvalId 分发（替代原先每次请求注册一次的 ipcMain.once）
-ipcMain.on('tool:approval-response', (_, payload) => {
-  const hasId = payload && typeof payload === 'object';
-  const approvalId = hasId ? payload.approvalId : null;
-  const decision = hasId ? payload.decision : payload;
-  // P1-4：用户可选的决策理由随决议回传（无理由时行为不变）
-  const reason = hasId ? payload.reason : undefined;
-  const dispatched = approvalId != null
-    ? approvalChannel.dispatch(approvalId, decision, reason)
-    : approvalChannel.dispatchLegacy(approvalId, decision); // P2-3：无 id 响应一律拒绝并告警
-  if (!dispatched) console.warn('[approval] 收到无法匹配的审批响应，已忽略（防串扰）');
+// P2（2026-11-03）：审批接线（发起 / 决策回传 / 批量决议）外置到 main/approvalWiring.js。
+// 外置理由不是「行数好看」，而是 main.js 已在天花板、而批量审批要多一条 IPC：先拆再合入。
+const { requestApproval } = require('./approvalWiring').initApprovalWiring({
+  approval, approvalChannel, getMainWindow: () => mainWindow, getRunId: () => runScope.getStore()?.runId || null, resolveOrigin: resolveApprovalOrigin, broadcastEnd: broadcastApprovalEnd,
 });
 
 function applyApprovalDecision(decision, tool, args, conversationId) {

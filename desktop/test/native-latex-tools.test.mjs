@@ -72,7 +72,7 @@ initDeps();
     && !!byName[TOOL]?.parameters?.properties?.probeOnly,
     `required=${JSON.stringify(byName[TOOL]?.parameters?.required)}`);
 
-  const src = fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8');
+  const src = [fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8'), fs.readFileSync(path.join(ROOT, 'agent-core/index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   check('TOOL_HANDLER_NAMES 映射 latex_compile → latexCompile',
     new RegExp(`\\b${TOOL}:\\s*'${HANDLER}'`).test(src));
   check('APPROVAL_TOOLS 纳入 latex_compile（透传 approvalMode/conversationId 进主进程审批闸）',
@@ -114,7 +114,7 @@ initDeps();
   check('实现侧 < 看门狗（LATEX_IMPL_TIMEOUT_MS < LATEX_WATCHDOG_TIMEOUT_MS）',
     t.LATEX_IMPL_TIMEOUT_MS < t.LATEX_WATCHDOG_TIMEOUT_MS,
     `impl=${t.LATEX_IMPL_TIMEOUT_MS} watchdog=${t.LATEX_WATCHDOG_TIMEOUT_MS}`);
-  const src = fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8');
+  const src = [fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8'), fs.readFileSync(path.join(ROOT, 'agent-core/index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   check('引擎看门狗数值与 timeouts.js 一致（均 360000）',
     t.LATEX_WATCHDOG_TIMEOUT_MS === 360000 && /latex_compile:\s*360000/.test(src));
 }

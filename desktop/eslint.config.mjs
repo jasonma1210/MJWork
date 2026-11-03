@@ -177,7 +177,8 @@ export default [
     // T2-3：max-lines 存量豁免清单（>1500 行，只减不增）。
     // 与 test/max-lines.test.js 是**双向绑定**，任一侧漏改都会红：
     //   · 本清单的文件名集合必须与该套件算出的 over1500 集合完全相等；
-    //   · agent-core/index.js 同时登记在 BASELINE_800 的 code 行数快照里（上限 2967）。
+    //   · agent-core/index.js 同时登记在 BASELINE_800 的 code 行数快照里（现值 2844；
+//     2026-11-03 把 TOOL_HANDLER_NAMES 外置到 agent-core/toolNames.js，2906 → 2844）。
     // 所以「豁免」不是无上限挡箭牌：它只能缩，涨 1 行就红。拆到 1500(code) 以下后
     // 必须从这两个地方一起删掉；禁止新增条目（新文件超线要先拆再合入）。
     files: [

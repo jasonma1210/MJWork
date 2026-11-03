@@ -114,8 +114,11 @@ function refsKey(src, mod, keys) {
     /onApprovalEnd: \(cb\) =>/.test(preloadSrc) && /removeListener\('tool:approval-end'/.test(preloadSrc));
   check('主进程广播 tool:approval-end', /send\('tool:approval-end'/.test(mainSrc));
   check('主进程把结束回调挂到 wait 上',
-    // N5：wait 增加第三参 runId（审批挂到发起运行，运行取消统一撤下）——断言容忍追加参数
-    /approvalChannel\.wait\(approvalId, broadcastApprovalEnd[,)]/.test(mainSrc));
+    // N5：wait 增加第三参 runId（审批挂到发起运行，运行取消统一撤下）——断言容忍追加参数。
+    // 2026-11-03：wait 调用随 requestApproval 外置到 approvalWiring.js（参数名改为注入的 broadcastEnd），
+    // 故两侧一起验：外置模块把回调挂上、main.js 把真实广播函数注进去。
+    /approvalChannel\.wait\(approvalId, broadcastEnd[,)]/.test(fs.readFileSync(path.join(__dirname, '..', 'main', 'approvalWiring.js'), 'utf8'))
+    && /broadcastEnd:\s*broadcastApprovalEnd/.test(mainSrc));
   check('决策回传仍携带 approvalId', /approvalId: pending\.approvalId/.test(cardSrc));
 
   // ── abort 监听器泄漏：一次运行连发 N 次 chat，监听器不得累加 ──
@@ -212,16 +215,20 @@ function refsKey(src, mod, keys) {
   // 只断言其中一段等于没测：本项目吃过的教训是「实现改了一处、测试只断言另一处」。
   {
     const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'main', 'main.js'), 'utf8');
+    // 2026-11-03：requestApproval 已外置到 main/approvalWiring.js（先拆再合入，为批量审批腾 IPC 位置）。
+    // 断言跟着实现走，但**两段都要验**：外置模块负责展开归属，main.js 负责把 runId 解析器注进去。
+    // 只验一侧会漏掉「注入了 null」这类装配错误。
+    const wiringSrc = fs.readFileSync(path.join(__dirname, '..', 'main', 'approvalWiring.js'), 'utf8');
     const appSrc = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'src', 'App.jsx'), 'utf8');
     const cardSrc = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'src', 'components', 'ApprovalCard.jsx'), 'utf8');
-    // 只截 requestApproval 函数体：全文 indexOf 会命中 resolveApprovalOrigin 的定义行而空过
-    const start = mainSrc.indexOf('function requestApproval(tool, args)');
-    const body = start < 0 ? '' : mainSrc.slice(start, mainSrc.indexOf('\n}', start));
+    const start = wiringSrc.indexOf('function requestApproval(tool, args)');
+    const body = start < 0 ? '' : wiringSrc.slice(start, wiringSrc.indexOf('\n  }', start));
     check('P0-5 requestApproval 函数体截取成功（空片段会让下面断言空过）', body.length > 200, `len=${body.length}`);
     check('P0-5 主进程：审批载荷展开发起会话归属',
-      /\.\.\.resolveApprovalOrigin\(/.test(body));
-    check('P0-5 主进程：归属经 runScope 的 runId 解析',
-      /runScope\.getStore\(\)\?\.runId/.test(body));
+      /\.\.\.resolveOrigin\(getRunId\(\)\)/.test(body));
+    check('P0-5 主进程：main.js 注入的归属解析器与 runId 来源都在位',
+      /resolveOrigin:\s*resolveApprovalOrigin/.test(mainSrc)
+      && /getRunId:\s*\(\)\s*=>\s*runScope\.getStore\(\)\?\.runId/.test(mainSrc));
     check('P0-5 渲染层：App 按来源会话写状态（不再写 activeThread）',
       /onPendingChange=\{\(pending, originThreadId\)/.test(appSrc)
       && /setThreadStatus\(originThreadId/.test(appSrc));
@@ -232,6 +239,58 @@ function refsKey(src, mod, keys) {
       /approval\.fromThread/.test(cardSrc));
     const zhApproval = JSON.parse(fs.readFileSync(path.join(ZH_DIR, 'approval.json'), 'utf8'));
     check('P0-5 审批来源文案已入 zh 语言包', !!zhApproval.fromThread, `got=${JSON.stringify(zhApproval.fromThread)}`);
+  }
+
+  // ── P2（2026-11-03）：批量决议 ──
+  // 三条安全底线逐条验：L1 恒逐条、跨工具不批、不可记忆不收规则。
+  {
+    const mk = (tool, level, rememberable = true) => ({ tool, level, rememberable });
+    // ① 同工具 L2×2 + L1×1
+    const c1 = new ApprovalChannel();
+    const p1 = c1.wait('x1', null, null, mk('write_file', 'L2'));
+    c1.wait('x2', null, null, mk('write_file', 'L2'));
+    c1.wait('x3', null, null, mk('shell', 'L1'));
+    const r1 = c1.resolveBatch({ approvalIds: ['x1', 'x2', 'x3'], decision: 'once' });
+    check('批量：同工具非 L1 的两条被放行', r1.ok === true && r1.applied === 2, JSON.stringify(r1));
+    check('批量：L1 被跳过且原因可读', r1.skipped.some((x) => x.approvalId === 'x3' && x.reason === 'L1'));
+    check('批量：被放行的等待真的以 once 收尾', (await p1) === 'once');
+    check('批量：L1 仍挂在 pending 上（没有被顺手放掉）', c1.size === 1, `size=${c1.size}`);
+
+    // ② 跨工具：只批第一条，其余跳过
+    const c2 = new ApprovalChannel();
+    c2.wait('y1', null, null, mk('write_file', 'L2'));
+    c2.wait('y2', null, null, mk('edit_file', 'L2'));
+    const r2 = c2.resolveBatch({ approvalIds: ['y1', 'y2'], decision: 'once' });
+    check('批量：跨工具只批第一条，另一条跳过',
+      r2.applied === 1 && r2.skipped.some((x) => x.reason === 'MIXED_TOOL'), JSON.stringify(r2));
+
+    // ③ 未知 id（已超时/伪造）
+    const c3 = new ApprovalChannel();
+    const r3 = c3.resolveBatch({ approvalIds: ['nope-1', 'nope-2'], decision: 'once' });
+    check('批量：未知 id 全部进 skipped，绝不猜测分发',
+      r3.ok === false && r3.code === 'NO_MATCH' && r3.skipped.length === 2, JSON.stringify(r3));
+
+    // ④ 不可记忆工具不接受 conversation/always（否则等于给了假按钮）
+    const c4 = new ApprovalChannel();
+    c4.wait('z1', null, null, mk('install_plugin', 'L3', false));
+    const r4 = c4.resolveBatch({ approvalIds: ['z1'], decision: 'always' });
+    check('批量：不可记忆工具拒绝「始终允许」', r4.ok === false && r4.skipped[0].reason === 'NOT_REMEMBERABLE', JSON.stringify(r4));
+    const r4b = new ApprovalChannel().resolveBatch({ approvalIds: [], decision: 'once' });
+    check('批量：空列表走 EMPTY（不返回成功）', r4b.ok === false && r4b.code === 'EMPTY');
+
+    // ⑤ 分级缺失（meta 未注入）→ 不可批量（fail-closed）
+    const c5 = new ApprovalChannel();
+    c5.wait('w1', null, null, null);
+    c5.wait('w2', null, null, null);
+    const r5 = c5.resolveBatch({ approvalIds: ['w1', 'w2'], decision: 'once' });
+    check('批量：分级不明一律不批（fail-closed）', r5.ok === false && r5.skipped.length === 2, JSON.stringify(r5));
+
+    // ⑥ 上限：超过 20 条被截断（防止一次点掉整队列）
+    const c6 = new ApprovalChannel();
+    const ids = [];
+    for (let i = 0; i < 25; i += 1) { const id = `q${i}`; ids.push(id); c6.wait(id, null, null, mk('write_file', 'L2')); }
+    const r6 = c6.resolveBatch({ approvalIds: ids, decision: 'once' });
+    check('批量：单次最多处理 20 条', r6.applied === 20, `applied=${r6.applied}`);
   }
 
   console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

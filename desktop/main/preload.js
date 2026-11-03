@@ -284,6 +284,9 @@ contextBridge.exposeInMainWorld('mjcode', {
   // P0-2：决策负载携带 approvalId 回传（payload: { approvalId, decision }），
   // 主进程按 id 精确分发，并发审批不再串扰
   resolveApproval: (payload) => ipcRenderer.send('tool:approval-response', payload),
+  // P2（2026-11-03）：批量决议（同类 N 项一并允许/拒绝）。
+  // 过滤规则（L1 恒逐条、跨工具不批）在主进程，UI 只传 id 列表与决策。
+  resolveApprovalBatch: (payload) => ipcRenderer.invoke('tool:approval-batch', payload),
   // 差集 A：Diff 行内评论 → 主进程按线程存储，返回包装好的回灌 user 消息
   diffComment: (payload) => ipcRenderer.invoke('diff:comment', payload),
   // 审批结束回执：已决策 / 超时 / 窗口销毁时主进程广播，渲染层据此撤下卡片

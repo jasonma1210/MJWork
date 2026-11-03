@@ -64,7 +64,11 @@ class ApprovalChannel {
   // （如「用 npm 别用 pnpm」）。settle 后立即可读；无理由 / 超时 / 取消时为 null。
   // 之所以挂在 Promise 上而不是改决议值形状：全部调用点都在比较 decision === 'deny'，
   // 改形状会炸掉约 15 处消费方（exec/main/mcp/plugins/chrome/browser/cua…）。
-  wait(approvalId, onSettle, runId = null) {
+  // P2（2026-11-03）：新增第 4 参 meta —— 批量审批需要知道「这条挂起是哪个工具、什么级别、
+  // 能不能被记住」。**只在这里存一份**，不让渲染层自己判级别：等级判据在本进程（approval.toolLevel），
+  // 渲染层一旦复制一份，就会出现「UI 认为可批量、主进程认为 L1」的分歧。
+  // 缺省 meta 时退化为「未知级别」——批量判定会把未知级别当作不可批量（fail-closed）。
+  wait(approvalId, onSettle, runId = null, meta = null) {
     const reasonBox = { value: null };
     const promise = new Promise((resolve) => {
       let settled = false;
@@ -80,7 +84,12 @@ class ApprovalChannel {
       const timer = setTimeout(() => finish('deny', 'timeout'), this.timeoutMs);
       // unref：测试/纯 Node 环境下不阻止进程退出
       if (typeof timer.unref === 'function') timer.unref();
-      this.pending.set(approvalId, { finish, timer, runId: runId || null });
+      this.pending.set(approvalId, {
+        finish, timer, runId: runId || null,
+        tool: meta && meta.tool ? String(meta.tool) : '',
+        level: meta && meta.level ? String(meta.level) : '',
+        rememberable: !(meta && meta.rememberable === false),
+      });
     });
     Object.defineProperty(promise, 'reason', {
       get: () => reasonBox.value,
@@ -100,6 +109,54 @@ class ApprovalChannel {
     if (!entry) return false;
     entry.finish(normalizeDecision(decision), 'decided', reason);
     return true;
+  }
+
+  /**
+   * 批量决议（2026-11-03）：把同一条决策应用到多条**同工具、非 L1** 的挂起审批上。
+   *
+   * 为什么限制这么死（三条都是安全底线，不是保守）：
+   *   ① **L1 永不批量**：L1 的语义就是「逐次人工确认不可豁免」，批量等于把硬地板打开；
+   *   ② **同工具**：跨工具批量＝用户在看 A 的时候顺手批了 B，属于「没看清就放行」；
+   *   ③ 不可记忆工具不接受 conversation/always：主进程不会为它落规则，给了也是骗人，
+   *      这类逐条决（返回 skipped 让 UI 说明，而不是静默降级成 once）。
+   *
+   * 返回 { ok, applied, skipped:[{approvalId, reason}] }：**部分成功也算成功**，
+   * 但必须把没批的条数和原因交回 UI——「3 条批了、1 条要你看」与「4 条全批了」是两件事。
+   *
+   * 未知 id（已超时 / 已决策 / 伪造）一律进 skipped，不做任何猜测分发。
+   */
+  resolveBatch({ approvalIds, decision, reason } = {}) {
+    const ids = Array.isArray(approvalIds) ? approvalIds.slice(0, 20) : [];
+    const decided = normalizeDecision(decision);
+    const out = { ok: false, applied: 0, skipped: [] };
+    if (ids.length === 0) return { ...out, code: 'EMPTY' };
+    // 决策值非法时 normalizeDecision 会收敛成 deny——批量「全部拒绝」是安全方向，允许；
+    // 但必须让调用方知道它传的值没被采信。
+    const entries = [];
+    for (const id of ids) {
+      const e = id != null ? this.pending.get(id) : null;
+      if (!e) { out.skipped.push({ approvalId: id, reason: 'UNKNOWN' }); continue; }
+      entries.push({ id, e });
+    }
+    if (entries.length === 0) return { ...out, code: 'NO_MATCH' };
+    const tool = entries[0].e.tool;
+    for (const { id, e } of entries) {
+      // 顺序有意义：**先判级别，再判工具**。反过来的话，一条 L1 的危险命令会以
+      // 「跨工具」为由被跳过——跳过是对的，但理由错了，UI 就没法告诉用户
+      // 「这条是高危、必须你亲手点」。分级不明同理归到 UNKNOWN_LEVEL 而不是 MIXED_TOOL。
+      if (e.level === 'L1') { out.skipped.push({ approvalId: id, reason: 'L1' }); continue; }
+      if (e.level !== 'L2' && e.level !== 'L3') { out.skipped.push({ approvalId: id, reason: 'UNKNOWN_LEVEL' }); continue; }
+      if (!tool || !e.tool || e.tool !== tool) { out.skipped.push({ approvalId: id, reason: 'MIXED_TOOL' }); continue; }
+      if (!e.rememberable && (decided === 'conversation' || decided === 'always')) {
+        out.skipped.push({ approvalId: id, reason: 'NOT_REMEMBERABLE' });
+        continue;
+      }
+      e.finish(decided, 'decided_batch', reason);
+      out.applied += 1;
+    }
+    out.ok = out.applied > 0;
+    if (!out.ok) out.code = 'ALL_SKIPPED';
+    return out;
   }
 
   // 旧渲染层兼容通道（deprecated）。

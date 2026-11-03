@@ -272,7 +272,7 @@ const prStub = { prView() {}, prDiff() {}, prReview() {}, prComment() {} };
 
 // ── ⑦ 装配静态断言：范围（只接协作层）、门控、登记 ──
 {
-  const coreSrc = fs.readFileSync(path.join(DESKTOP, 'agent-core/index.js'), 'utf8');
+  const coreSrc = [fs.readFileSync(path.join(DESKTOP, 'agent-core/index.js'), 'utf8'), fs.readFileSync(path.join(DESKTOP, 'agent-core/index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   const statusSrc = fs.readFileSync(path.join(DESKTOP, 'main/approval.js'), 'utf8');
 
   check('TEAM_TOOLS 只含 4 个协作工具',

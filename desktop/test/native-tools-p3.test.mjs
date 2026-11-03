@@ -45,7 +45,7 @@ function check(name, ok, detail = '') {
   check('sandbox_code_run schema required=[code]',
     JSON.stringify(byName.sandbox_code_run?.parameters?.required) === '["code"]');
 
-  const src = fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8');
+  const src = [fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8'), fs.readFileSync(path.join(ROOT, 'agent-core/index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   check('TOOL_HANDLER_NAMES 映射 5 工具到 camelCase handler',
     /clipboard:\s*'clipboard'/.test(src) && /notify:\s*'notify'/.test(src)
     && /http_request:\s*'httpRequest'/.test(src) && /sqlite:\s*'sqlite'/.test(src)

@@ -87,7 +87,7 @@ function initDeps({ gov = { profile: 'normal', fsMode: 'read-write', sandboxNetw
   check('pdf_generate schema required=[path,html]',
     JSON.stringify(byName.pdf_generate?.parameters?.required) === '["path","html"]');
 
-  const src = fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8');
+  const src = [fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8'), fs.readFileSync(path.join(ROOT, 'agent-core/index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   check('TOOL_HANDLER_NAMES 映射 4 工具到 camelCase handler',
     DOC.every((n) => new RegExp(`\\b${n}:\\s*'${HANDLERS[n]}'`).test(src)));
   check('APPROVAL_TOOLS 纳入 4 工具（透传 approvalMode/conversationId 进主进程审批闸）',
@@ -136,7 +136,7 @@ function initDeps({ gov = { profile: 'normal', fsMode: 'read-write', sandboxNetw
   check('实现侧 < 看门狗（DOC_GEN_IMPL_TIMEOUT_MS < DOC_GEN_WATCHDOG_TIMEOUT_MS）',
     t.DOC_GEN_IMPL_TIMEOUT_MS < t.DOC_GEN_WATCHDOG_TIMEOUT_MS,
     `impl=${t.DOC_GEN_IMPL_TIMEOUT_MS} watchdog=${t.DOC_GEN_WATCHDOG_TIMEOUT_MS}`);
-  const src = fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8');
+  const src = [fs.readFileSync(path.join(ROOT, 'agent-core/index.js'), 'utf8'), fs.readFileSync(path.join(ROOT, 'agent-core/index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   check('引擎看门狗数值与 timeouts.js 一致（均 60000）',
     t.DOC_GEN_WATCHDOG_TIMEOUT_MS === 60000 && /pptx_create:\s*60000/.test(src));
 }

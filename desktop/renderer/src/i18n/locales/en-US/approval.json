@@ -30,5 +30,10 @@
   "workingRoot": "Working root",
   "fromThread": "From session",
   "attachReason": "Attach reason",
-  "reasonPlaceholder": "Optional: explain why or what you expect (e.g. \"use npm, not pnpm\"). On denial the agent sees the reason and adjusts."
+  "reasonPlaceholder": "Optional: explain why or what you expect (e.g. \"use npm, not pnpm\"). On denial the agent sees the reason and adjusts.",
+  "batchSameTool": "{n} more pending approvals for the same tool ({tool})",
+  "batchAllowOnce": "Allow these {n}",
+  "batchDeny": "Deny these {n}",
+  "batchPartial": "Handled {ok}; {skipped} still need individual review",
+  "batchNone": "Nothing can be batched here: high-risk actions require individual confirmation"
 }

@@ -30,5 +30,10 @@
   "hotkeyTitle": "键盘快捷键",
   "hotkeyHint": "1 拒绝 · 2 允许一次 · 3 本对话 · 4 始终允许",
   "attachReason": "附加理由",
-  "reasonPlaceholder": "可选：说明原因或期望（如「用 npm 不要用 pnpm」）。拒绝时 Agent 会看到理由并调整做法。"
+  "reasonPlaceholder": "可选：说明原因或期望（如「用 npm 不要用 pnpm」）。拒绝时 Agent 会看到理由并调整做法。",
+  "batchSameTool": "队列中还有 {n} 条同类审批（{tool}）",
+  "batchAllowOnce": "一并允许 {n} 项",
+  "batchDeny": "一并拒绝 {n} 项",
+  "batchPartial": "已处理 {ok} 项，{skipped} 项需逐条确认",
+  "batchNone": "没有可批量处理的审批：高危操作必须逐条确认"
 }

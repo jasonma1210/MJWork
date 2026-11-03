@@ -255,7 +255,7 @@ await check('approval：普通代码 L3 可豁免 / 危险代码 L1 不可豁免
 
 // ── 12. 接线静态断言（agent-core 三表 / main.js / ToolTrace / i18n）──
 await check('agent-core：BASE_TOOLS schema + 映射表 + 审批透传', () => {
-  const src = fs.readFileSync(path.join(DESKTOP, 'agent-core', 'index.js'), 'utf8');
+  const src = [fs.readFileSync(path.join(DESKTOP, 'agent-core', 'index.js'), 'utf8'), fs.readFileSync(path.join(DESKTOP, 'agent-core', 'index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   assert.match(src, /name: 'code_exec'/);
   assert.match(src, /code_exec: 'codeExec'/);
   // 期 3：APPROVAL_TOOLS 末尾追加了 5 个原生工具，'code_exec' 后不再是数组收尾

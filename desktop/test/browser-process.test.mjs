@@ -224,7 +224,7 @@ await check('通道登记表与主进程/引擎接线完整', () => {
   assert.match(mainSrc, /browserNavigate: browserTools\.toolBrowserNavigate/);
   assert.match(mainSrc, /browserExtract: browserTools\.toolBrowserExtract/);
   assert.match(mainSrc, /browserTools'\)\.disposeAll\(\)/);
-  const coreSrc = fs.readFileSync(path.join(DESKTOP, 'agent-core', 'index.js'), 'utf8');
+  const coreSrc = [fs.readFileSync(path.join(DESKTOP, 'agent-core', 'index.js'), 'utf8'), fs.readFileSync(path.join(DESKTOP, 'agent-core', 'index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   for (const n of ['browser_navigate', 'browser_click', 'browser_fill', 'browser_select', 'browser_screenshot', 'browser_extract']) {
     assert.ok(coreSrc.includes(`name: '${n}'`), `agent-core 缺工具定义 ${n}`);
   }

@@ -351,7 +351,7 @@ await check('协议/扩展/主进程/引擎接线完整', () => {
   assert.match(mainSrc, /chromeRelay\.start\(\)/);
   assert.match(mainSrc, /chromeStatus: chromeTools\.toolChromeStatus/);
   assert.match(mainSrc, /chromeRelay\/server'\)\.close\(\)/);
-  const core = fs.readFileSync(path.join(DESKTOP, 'agent-core', 'index.js'), 'utf8');
+  const core = [fs.readFileSync(path.join(DESKTOP, 'agent-core', 'index.js'), 'utf8'), fs.readFileSync(path.join(DESKTOP, 'agent-core', 'index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   for (const t of ['chrome_status', 'chrome_tabs', 'chrome_navigate', 'chrome_click', 'chrome_fill', 'chrome_screenshot', 'chrome_extract']) {
     assert.ok(core.includes(`name: '${t}'`), `BASE_TOOLS 缺 ${t}`);
   }

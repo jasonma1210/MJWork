@@ -46,8 +46,8 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', 'assets']);
 // 必须在提交信息里写明理由。
 const BASELINE_800 = {
   'main/computerUse.js': 1002,
-  'main/main.js': 1178,
-  'agent-core/index.js': 2906,
+  'main/main.js': 1154,
+  'agent-core/index.js': 2844,
 };
 
 function walk(dir, out) {

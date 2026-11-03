@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import { useI18n, tGlobal } from '../i18n'; // T3-2：i18n
 import { IconFile, IconPlug, IconTerminal } from './icons';
 import Button from './ui/Button';
@@ -126,6 +126,40 @@ export default function ApprovalCard({ onPendingChange }) {
     setQueue((q) => q.filter((r) => r.approvalId !== pending.approvalId));
   }, [pending]);
 
+  // P2（2026-11-03）：批量决议。只对**队首同工具**的挂起生效，且只提供「允许一次 / 拒绝」两档：
+  // 不给 conversation/always——那两条会把规则按各自 target 落库，批量点等于替用户看都没看就
+  // 改了规则库；「一次」不落规则，安全边界不动。
+  // 过滤（L1 恒逐条、跨工具不批、不可记忆不收规则）全部在主进程 resolveBatch 里，
+  // 这里只传 id，不复制判据——避免 UI 与主进程两套分级分叉。
+  const batchIds = useMemo(
+    () => queue.filter((r) => r.tool && r.tool === pending?.tool).map((r) => r.approvalId).slice(0, 20),
+    [queue, pending],
+  );
+  const resolveBatch = useCallback(async (decision) => {
+    if (!window.mjcode?.resolveApprovalBatch) return;
+    const ids = queue.filter((r) => r.tool && r.tool === pending?.tool).map((r) => r.approvalId).slice(0, 20);
+    if (ids.length < 2) return;
+    let res;
+    try {
+      res = await window.mjcode.resolveApprovalBatch({ approvalIds: ids, decision });
+    } catch (err) {
+      console.warn('[approval] batch resolve failed:', err);
+      toast({ message: tGlobal('approval.resolveFailed') });
+      return;
+    }
+    if (!res?.ok) {
+      // 全部被跳过（例如都是 L1）：明确告诉用户为什么，而不是静默不动
+      toast({ message: tGlobal('approval.batchNone') });
+      return;
+    }
+    // 只出队**已生效**的：被跳过的仍挂在主进程 pending 上，出队会让用户以为已经处理
+    const skippedIds = new Set((res.skipped || []).map((x) => x.approvalId));
+    setQueue((q) => q.filter((r) => !ids.includes(r.approvalId) || skippedIds.has(r.approvalId)));
+    if (Array.isArray(res.skipped) && res.skipped.length > 0) {
+      toast({ message: tGlobal('approval.batchPartial', { ok: res.applied, skipped: res.skipped.length }) });
+    }
+  }, [queue, pending]);
+
   // 键盘 1-4 快捷决策（仅审批卡非折叠时生效）
   useEffect(() => {
     if (!pending || collapsed) return undefined;
@@ -222,6 +256,19 @@ export default function ApprovalCard({ onPendingChange }) {
                   rows={2}
                   className="w-full px-2 py-2 rounded-lg bg-bg border border-border text-xs outline-none focus:border-accent resize-none"
                 />
+              </div>
+            )}
+            {batchIds.length >= 2 && pending.level !== 'L1' && (
+              <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+                <span className="text-caption text-text2">
+                  {t('approval.batchSameTool', { n: batchIds.length - 1, tool: pending.tool || '' })}
+                </span>
+                <Button variant="secondary" size="sm" onClick={() => resolveBatch('once')}>
+                  {t('approval.batchAllowOnce', { n: batchIds.length })}
+                </Button>
+                <Button variant="danger-ghost" size="sm" onClick={() => resolveBatch('deny')}>
+                  {t('approval.batchDeny', { n: batchIds.length })}
+                </Button>
               </div>
             )}
             <div className="flex flex-wrap gap-2 px-4 pb-4">

@@ -8,6 +8,7 @@
 // 可被渲染层 Vite 打包与引擎子进程共同消费）——本文件不写任何阈值数字。
 // B3 #10：同时取强制档判定（toolTableEnforcement，缺省 'warn' = 改前行为，见该函数注释）。
 import { inspectToolTableBudget, toolTableEnforcement, TOOL_TABLE_ENFORCE_ENV } from '../shared/contextBudget.mjs';
+import { TOOL_HANDLER_NAMES } from './toolNames.js';
 import { parseSlashSkill, matchSkillsByQuery } from '../shared/skillTrigger.mjs';
 // P1-4：成员级 MCP 粒度（服务器名 / 完整工具名白名单）——引擎侧唯一匹配实现
 import { narrowToolsByMcpAllow, mcpAllowMatches } from '../shared/mcpAllow.mjs';
@@ -1149,82 +1150,9 @@ const APPROVAL_TOOLS = new Set(['shell', 'write_file', 'edit_file', 'apply_patch
 // 只能由宿主（runAgent 参数）注入，模型工具参数里出现即剥离（见工具执行循环）。
 const GOVERNANCE_FIELDS = ['cwd', 'approvalMode', 'sandboxPolicy', 'conversationId', 'requireApproval', 'signal', 'unattended'];
 
-// 工具名 → toolHandlers / window.mjcode 上的方法名（camelCase）
-const TOOL_HANDLER_NAMES = {
-  shell: 'shell',
-  read_file: 'readFile',
-  write_file: 'writeFile',
-  edit_file: 'editFile',
-  apply_patch: 'applyPatch',
-  list_dir: 'listDir',
-  grep: 'grep',
-  glob: 'glob',
-  git_status: 'gitStatus',
-  git_diff: 'gitDiff',
-  git_log: 'gitLog',
-  git_commit: 'gitCommit',
-  git_add: 'gitAdd',
-  git_branch: 'gitBranch',
-  orchestrate_task: 'orchestrateTask',
-  search_plugins: 'searchPlugins',
-  install_plugin: 'installPlugin',
-  web_search: 'webSearch',
-  web_fetch: 'webFetch',
-  scheduled_create: 'scheduledCreate', // 2026-10-17：漏了这一行工具就"有声明无通道"
-  pr_list: 'prList',
-  pr_view: 'prView',
-  pr_diff: 'prDiff',
-  pr_review: 'prReview',
-  pr_comment: 'prComment',
-  todo_write: 'todoWrite',
-  browser_navigate: 'browserNavigate',
-  browser_click: 'browserClick',
-  browser_fill: 'browserFill',
-  browser_select: 'browserSelect',
-  browser_screenshot: 'browserScreenshot',
-  browser_extract: 'browserExtract',
-  chrome_status: 'chromeStatus',
-  chrome_tabs: 'chromeTabs',
-  chrome_navigate: 'chromeNavigate',
-  chrome_click: 'chromeClick',
-  chrome_fill: 'chromeFill',
-  chrome_screenshot: 'chromeScreenshot',
-  chrome_extract: 'chromeExtract',
-  code_exec: 'codeExec',
-  // 期 3：原生内置工具通道（主进程 createToolHandlers / 渲染层 window.mjcode 同名方法）
-  clipboard: 'clipboard',
-  notify: 'notify',
-  http_request: 'httpRequest',
-  sqlite: 'sqlite',
-  sandbox_code_run: 'sandboxCodeRun',
-  // G-doc：文档生成原生工具通道
-  doc_create: 'docCreate',
-  xlsx_create: 'xlsxCreate',
-  pptx_create: 'pptxCreate',
-  pdf_generate: 'pdfGenerate',
-  // G-CUA：桌面自动化（opt-in，主进程 createToolHandlers 注入；同时须在 engineProcess/registry.js
-  // 的 TOOL_CHANNELS 登记，否则子进程路径会报「未知工具」）
-  computer_use: 'computerUse',
-  // G-latex：LaTeX 编译原生工具通道
-  latex_compile: 'latexCompile', device_flash: 'deviceFlash',
-  // 2026-10-31：设备探测（只读）——通道实现落在 main/scheduledTools.js（交互式/定时/Worker 同源），
-  // 且须同步登记到 engineProcess/registry.js 的 TOOL_CHANNELS，否则子进程路径报「未知工具」
-  device_probe: 'deviceProbe',
-  // M5 / T5-8：军团协同工具（成员任务才注入；通道名须同步登记到 engineProcess/registry.js，
-  // 否则子进程路径会报「未知工具: team_*」）
-  team_list_members: 'teamListMembers',
-  team_send_message: 'teamSendMessage',
-  team_board: 'teamBoard',
-  team_wait: 'teamWait',
-  // B-04（2026-10-21）：模型侧读消息——补上总线的「读」半边，question/handoff 才不是死语义
-  team_read_messages: 'teamReadMessages',
-  // DS Bots / T6-6：工件协同四工具（通道名须同步登记到 engineProcess/registry.js，
-  // 否则子进程路径会报「未知工具: artifact_*」）
-  artifact_index: 'artifactIndex',
-  artifact_get_section: 'artifactGetSection',
-  artifact_patch_section: 'artifactPatchSection',
-  artifact_get_diff: 'artifactGetDiff',
-};
+// TOOL_HANDLER_NAMES 已外置到 ./toolNames.js（纯数据、零依赖）：本文件只保留导入与 re-export，
+// 宿主侧引用点不变；外置理由见该文件头注释与 test/max-lines.test.js 的棘轮说明。
+
 
 // 粗略 token 估算：中日韩字符约 1 token/字，其余约 1 token/4 字符
 export function estimateTokens(text) {

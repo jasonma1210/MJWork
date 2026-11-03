@@ -163,7 +163,7 @@ function makeCtx(decision, extra = {}) {
 const ARGS = { name: '每日新闻', schedule: '41 9 * * *', prompt: '搜索并汇总最新 AI 新闻' };
 
 check('agent-core 声明了 scheduled_create（有实现无入口的断链反例）', () => {
-  const core = fs.readFileSync(path.join(ROOT, 'agent-core', 'index.js'), 'utf8');
+  const core = [fs.readFileSync(path.join(ROOT, 'agent-core', 'index.js'), 'utf8'), fs.readFileSync(path.join(ROOT, 'agent-core', 'index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
   assert.match(core, /name: 'scheduled_create'/, 'BASE_TOOLS 未声明 scheduled_create：模型看不到这个工具');
   assert.match(core, /required: \['schedule', 'prompt'\]/, '参数必填项缺失');
 });
@@ -242,8 +242,9 @@ check('审批 UI 不提供「记住」选项（否则点了也不生效 = 产品
   assert.match(card, /const rememberable = pending\?\.rememberable !== false/, '审批卡未读取 rememberable');
   assert.match(card, /\{rememberable && \([\s\S]*?resolve\('conversation'\)/, '「本会话允许」未按 rememberable 收口');
   assert.match(card, /\{rememberable && \([\s\S]*?resolve\('always'\)/, '「始终允许」未按 rememberable 收口');
-  const main = fs.readFileSync(path.join(ROOT, 'main', 'main.js'), 'utf8');
-  assert.match(main, /rememberable: approval\.isRememberable\(tool\)/, '主进程未下发 rememberable');
+  // 2026-11-03：审批载荷已随 requestApproval 外置到 main/approvalWiring.js —— 断言跟着实现走。
+  const wiring = fs.readFileSync(path.join(ROOT, 'main', 'approvalWiring.js'), 'utf8');
+  assert.match(wiring, /rememberable: approval\.isRememberable\(tool\)/, '主进程未下发 rememberable');
 });
 
 console.log(`\nscheduled-tools: ${pass}/${pass + fail} 通过`);

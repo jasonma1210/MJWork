@@ -69,7 +69,7 @@ import('../agent-core/index.js').then(async (m) => {
   // （下一个人会以它为准）。所以这里直接扫源码：**任何**「钉死为 <数字>」形态的注释一律判红。
   // 正确写法是引用本测试（「条数由 test/web-todo-tools.test.js 的工具总数断言钉死」），不写数字。
   await check('B2-B-12 源码不得出现「钉死为 <数字>」这类会过期的写死注释', () => {
-    const src = fs.readFileSync(path.join(__dirname, '../agent-core/index.js'), 'utf8');
+    const src = [fs.readFileSync(path.join(__dirname, '../agent-core/index.js'), 'utf8'), fs.readFileSync(path.join(__dirname, '../agent-core/index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
     const hits = [];
     const re = /钉死(?:为|成|=)\s*\d+/g;
     let m;
@@ -91,7 +91,7 @@ import('../agent-core/index.js').then(async (m) => {
     const t = BASE_TOOLS.find((x) => x.function.name === 'git_branch');
     assert.ok(t, 'git_branch 未在 BASE_TOOLS 中声明');
   });
-  const coreSrc = fs.readFileSync(path.join(__dirname, '../agent-core/index.js'), 'utf8');
+  const coreSrc = [fs.readFileSync(path.join(__dirname, '../agent-core/index.js'), 'utf8'), fs.readFileSync(path.join(__dirname, '../agent-core/index.js').replace('index.js', 'toolNames.js'), 'utf8')].join('\n'); // 2026-11-03：TOOL_HANDLER_NAMES 已外置到 toolNames.js，两条路径一起读
 
   await check('P1-5 每个需主进程的工具都有 handler 映射（防有实现无入口）', () => {
     // 引擎内置工具（不依赖主进程 handler）：todo_write 是纯状态工具；
