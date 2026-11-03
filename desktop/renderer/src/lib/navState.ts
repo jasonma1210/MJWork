@@ -28,11 +28,18 @@
 //   本文件保留的原因：Sidebar / TopBarTitle 的签名尚未改，且既有门禁套件
 //   `nav-state-dual-entry` 的 128 组穷举断言仍以布尔 view 为输入。
 //   按设计文档 §4.3 的【迁移期兼容】，此期间优先级顺序**必须显式固化**为：
-//       desk > studio > ledger > scheduled > assistant > ecosystem > dashboard/thread > new
-//   新增一级入口「账本」（ledger）即按此序插在 studio 之后、scheduled 之前。
+//       desk > ledger > scheduled > assistant > ecosystem > dashboard/thread > new
+//   新增一级入口「账本」（ledger）即按此序插在 desk 之后、scheduled 之前。
 //   新代码请直接消费 navRoute；本文件不新增语义，只在过渡期保持行为一致。
+//
+// ══ 2026-11-03 第七次调整：撤销「工作室」一级入口 ══
+//   用户原话：「工作室这个按钮存在的意义在哪里？！我觉得没有必要，不如把工作室中的编制功能
+//   页面移动到助手中」。判断：成立 —— 工作室的两个 Tab 里，「编制」是「谁能接活」、
+//   「空间」是项目资产面，二者都以「派活」为上游；单独一级入口只会让「编制在哪」有两个答案。
+//   处置：编制（TeamsPage）与空间（TeamSpace）并入助理 Tab，侧栏不再有工作室，
+//   合法返回值里也随之去掉 'studio'（门禁 nav-state-dual-entry 同步改写）。
 export type NavKey =
-  | 'desk' | 'studio' | 'assistant' | 'scheduled' | 'ledger' | 'ecosystem' | '' | 'teams';
+  | 'desk' | 'assistant' | 'scheduled' | 'ledger' | 'ecosystem' | '' | 'teams';
 
 // 助理子 Tab 的类型**必须转发自 assistantTabs.ts**，不能在这里再写一遍字面量。
 // 2026-10-27 实测：此处曾写死 `'publish' | 'teams' | 'aiTeam'`，而真实 Tab 集早已是
@@ -64,13 +71,14 @@ export interface NavViewState {
    */
   showDesk?: boolean;
   /**
-   * 工作室是否在前台 —— 一级入口（2026-10-26 新增，对齐原型 studio.js）。
-   * 与 showDesk 不同：desk 是「开工前一屏」概览，studio 是「项目空间 + 工件」的常驻管理面。
+   * 兼容输入（**恒为 false**）：工作室一级入口已于 2026-11-03 撤销（用户裁决）。
+   * 编制与项目空间并入助理 Tab。保留字段只为旧调用方按字面量比较时仍能编译；
+   * `activeNavOf` 不再读它 —— 传 true 也不会点亮任何入口。
    */
   showStudio?: boolean;
   /**
    * 账本是否在前台 —— **一级入口**（2026-10-27 新增，设计文档 §4.1）。
-   * 优先级：低于 desk/studio，高于 scheduled（见文件头第五次调整的固化顺序）。
+   * 优先级：低于 desk，高于 scheduled（见文件头第七次调整后的固化顺序）。
    */
   showLedger?: boolean;
   /**
@@ -85,9 +93,7 @@ export interface NavViewState {
 export function activeNavOf(view: NavViewState): NavKey {
   // 接单台（desk）优先级最高：它是用户主动点开的一屏，在场时其它入口一律不亮。
   if (view.showDesk) return 'desk';
-  // 工作室是一级入口（2026-10-26）：优先级仅次于接单台，保证「点了工作室就一定点亮它」。
-  if (view.showStudio) return 'studio';
-  // 账本是一级入口（2026-10-27）：完整 Token 用量的唯一面。序在 studio 之后、
+  // 账本是一级入口（2026-10-27）：完整 Token 用量的唯一面。序在 desk 之后、
   // scheduled 之前 —— 固化顺序见文件头，改序必须同步改 nav-state-dual-entry 门禁。
   if (view.showLedger) return 'ledger';
   // 定时任务是一级入口：排在最前，保证「点了定时任务就一定点亮它」。

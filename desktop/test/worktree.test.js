@@ -450,6 +450,45 @@ function sh(cwd, args) {
     assert.equal(gone.exists, false);
   });
 
+  // ── 2026-11-03（用户反馈 5「git 应该是你帮我主动创建」）：仓库初始化 ──
+  // 这组用**独立临时目录**，不碰上面那个已备好身份的 repo —— initRepo 会在目录里写 .git 与一条提交。
+  await check('initRepo：全新目录一次性 init + 首个空提交，落地即有 main 分支', async () => {
+    const fresh = path.join(tmp, 'fresh-init');
+    fs.mkdirSync(fresh);
+    const r = await worktree.initRepo(fresh);
+    assert.equal(r.created, true, '应回报 created（之前不是仓库）');
+    assert.equal(r.committed, true, `首个空提交未成功：${JSON.stringify(r)}`);
+    assert.equal(r.branch, 'main', `主分支应统一为 main，实际 ${r.branch}`);
+    const list = await worktree.listBranches(fresh);
+    assert.equal(list.isRepo, true);
+    assert.equal(list.unborn, false, '有首个提交后不应再是空仓库');
+    assert.ok(list.local.some((b) => b.name === 'main' && b.current), 'main 应存在且为当前分支');
+  });
+
+  await check('initRepo：幂等（已是仓库且有提交时什么都不做，不产生第二条提交）', async () => {
+    const fresh = path.join(tmp, 'fresh-init');
+    const count = () => Number(sh(fresh, ['rev-list', '--count', 'HEAD']).trim());
+    const before = count();
+    const r = await worktree.initRepo(fresh);
+    assert.equal(r.created, false, '不应重新 init');
+    assert.equal(r.committed, false, '不应再提交');
+    assert.equal(count(), before, '提交数必须不变（幂等）');
+  });
+
+  await check('initRepo：暂存区非空时不替用户提交（空提交并不空）', async () => {
+    const staged = path.join(tmp, 'init-staged');
+    fs.mkdirSync(staged);
+    sh(staged, ['init', '-q']);
+    fs.writeFileSync(path.join(staged, 'wip.txt'), 'work in progress\n');
+    sh(staged, ['add', 'wip.txt']);
+    const r = await worktree.initRepo(staged);
+    assert.equal(r.stagedPending, true, '应识别出暂存区非空');
+    assert.equal(r.committed, false, '不得替用户提交已暂存的内容');
+    assert.equal(r.unborn, true, '没有提交 ⇒ 仍是空仓库');
+    // 暂存内容必须原样留在暂存区
+    assert.match(sh(staged, ['diff', '--cached', '--name-only']), /wip\.txt/);
+  });
+
   fs.rmSync(tmp, { recursive: true, force: true });
   // 清掉本轮创建的 worktree 残留
   try {

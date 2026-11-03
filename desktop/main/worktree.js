@@ -53,6 +53,88 @@ async function currentBranch(cwd) {
   return r.ok ? r.stdout.trim() : '';
 }
 
+/**
+ * HEAD 的符号引用名（`main` / `master` …），不依赖「有没有提交」。
+ *
+ * 为什么不能只靠 currentBranch：**空仓库（git init 后还没有首个提交）**时
+ * `git rev-parse --abbrev-ref HEAD` 直接 fatal（ambiguous argument 'HEAD'），
+ * 于是「刚初始化好的仓库」会被读成「没有当前分支」，界面又回到「选不到分支」。
+ * 本地 git 2.55 实测：`symbolic-ref --short HEAD` 在空仓库返回 `master`/`main`，可用。
+ */
+async function headSymbolicName(cwd) {
+  const r = await git(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  return r.ok ? r.stdout.trim() : '';
+}
+
+/** 空仓库：HEAD 指向一个还不存在的分支（有 symbolic-ref，但 refs/heads 里没有任何 ref） */
+async function isUnbornHead(cwd) {
+  const sym = await headSymbolicName(cwd);
+  if (!sym) return false; // detached 或不是仓库 —— 那不是一个「待提交」的空仓库
+  const refs = await git(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']);
+  return refs.ok && refs.stdout.trim() === '';
+}
+
+/** 首个提交的说明：出现在用户仓库的 git log 里，用英文（与仓库日志纪律一致） */
+const INIT_COMMIT_MESSAGE = 'chore: initialize repository';
+
+/**
+ * 初始化 Git 仓库（新建项目自动执行 / 用户在分支面板里显式点击）。
+ *
+ * 为什么需要它（2026-11-03 用户反馈 5「初始化 git 失败，卡死在选择分支上」）：
+ * 本产品在 `~/Documents/.MJCoder` 下建的项目目录**只有 mkdir，没有 git init**，
+ * 于是输入框的分支选择器永远拿不到分支，Worktree 也不可用 —— 而用户不知道要自己去终端补一步。
+ *
+ * 三条边界（都会踩到用户数据，缺一条就会出事故）：
+ *   ① **不替用户暂存**：目录里已有 `git add` 过的内容时，`commit --allow-empty` 会把暂存区
+ *      一起提交（"空提交"并不空）。所以先查 `diff --cached`，非空就只 return，不动。
+ *   ② **身份缺失不算失败**：没有 user.name/email 时 commit 会失败，但仓库已经 init 好了；
+ *      这里回报 `identityMissing` 让界面给出「去配身份」的指引，而不是整条动作失败。
+ *   ③ **幂等**：已经是仓库（且已有提交）时什么都不做，只回报当前分支。
+ *
+ * @returns {{created:boolean, branch:string, committed:boolean, identityMissing:boolean,
+ *            stagedPending:boolean, unborn:boolean}}
+ */
+async function initRepo(cwd, { initialCommit = true } = {}) {
+  if (!cwd) throw new Error('缺少目录');
+  const inside = await git(cwd, ['rev-parse', '--is-inside-work-tree']);
+  let created = false;
+  if (!(inside.ok && inside.stdout.trim() === 'true')) {
+    const r = await git(cwd, ['init'], 30000);
+    if (!r.ok) throw new Error(`git init 失败：${(r.stderr || r.error || '').trim()}`);
+    created = true;
+    // 统一主分支名为 main：老版本 git 默认 master，而新仓库还没有提交，
+    // 改 symbolic-ref 不会动任何已有引用（有提交的仓库不会走到这里）。
+    const sym = await headSymbolicName(cwd);
+    if (sym === 'master') await git(cwd, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  }
+
+  let unborn = await isUnbornHead(cwd);
+  let committed = false;
+  let identityMissing = false;
+  let stagedPending = false;
+
+  if (initialCommit && unborn) {
+    // 边界①：暂存区非空 ⇒ 不提交（否则等于替用户把内容提交了）
+    const staged = await git(cwd, ['diff', '--cached', '--name-only']);
+    stagedPending = staged.ok && staged.stdout.trim() !== '';
+    if (!stagedPending) {
+      const ident = await git(cwd, ['var', 'GIT_AUTHOR_IDENT']);
+      if (!ident.ok) {
+        // 边界②：身份缺失是**可预期状态**，不是异常 —— 仓库已建好，只是还没有分支
+        identityMissing = true;
+      } else {
+        const c = await git(cwd, ['commit', '--allow-empty', '-m', INIT_COMMIT_MESSAGE], 30000);
+        committed = c.ok;
+        if (!c.ok) console.warn('[worktree] 首个空提交失败（仓库已初始化）：', (c.stderr || '').trim());
+      }
+    }
+    unborn = await isUnbornHead(cwd);
+  }
+
+  const branch = (await currentBranch(cwd)) || (await headSymbolicName(cwd));
+  return { created, branch, committed, identityMissing, stagedPending, unborn };
+}
+
 /** 列出已有 worktree（mainPath 对应主检出目录） */
 async function listWorktrees(cwd, mainPath) {
   const r = await git(cwd, ['worktree', 'list', '--porcelain']);
@@ -149,6 +231,10 @@ async function listBranches(cwd) {
   const detached = cur === 'HEAD';
   const current = detached ? '' : cur;
   const names = r.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  // 空仓库（已 git init、还没有任何提交）：refs/heads 为空但 HEAD 有符号引用。
+  // 这一档必须与「没有分支」分开报，否则界面只能显示「未找到分支」——
+  // 用户会以为自己初始化失败（真实原因是没有首个提交）。
+  const unborn = names.length === 0 && (await isUnbornHead(cwd));
   // 当前分支置顶，其余保持 git 的字母序：用户最常点的就是「我当前在哪」
   names.sort((a, b) => (a === current ? -1 : b === current ? 1 : a.localeCompare(b)));
   const rr = await git(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes']);
@@ -160,6 +246,9 @@ async function listBranches(cwd) {
     isRepo: true,
     current,
     detached,
+    // 空仓库时 current 一定是空串（rev-parse 在无提交时不可用），分支名在 headSymbolicName 里
+    unborn,
+    unbornBranch: unborn ? await headSymbolicName(cwd) : '',
     local: names.map((n) => ({ name: n, current: n === current })),
     remote: remote.map((n) => ({ name: n, short: stripRemotePrefix(n) })),
   };
@@ -402,6 +491,9 @@ module.exports = {
   isGitRepo,
   repoRoot,
   currentBranch,
+  // 2026-11-03：初始化仓库（新建项目自动执行 / 分支面板一键初始化）
+  isUnbornHead,
+  initRepo,
   listWorktrees,
   countWorktrees,
   cleanupWorktrees,

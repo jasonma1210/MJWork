@@ -25,8 +25,15 @@ import BrowserPanel from './components/BrowserPanel';
 import SideChatPanel from './components/SideChatPanel';
 // 设备面板（2026-10-31）：硬件探测结果的人读入口。只读——烧写仍走对话里的 device_flash。
 import ArtifactPanel from './components/ArtifactPanel';
-import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions'; import TopBarTitle from './components/TopBarTitle'; import DeskPage from './components/DeskPage'; import StudioPage from './components/StudioPage'; import LedgerPage from './components/LedgerPage';
+import ArchiveModal from './components/ArchiveModal'; import TopBarActions from './components/TopBarActions'; import DeskPage from './components/DeskPage'; import LedgerPage from './components/LedgerPage';
+// 2026-11-03（用户反馈 7）：顶栏不再显示「工作台」标题文字（TopBarTitle 随之退役）——
+// 对齐 WorkBuddy 的顶栏形态：交通灯之外整条只有图标，标题语义由侧栏一级入口承担。
+// 2026-11-03（用户反馈 2）：工作室一级页面下线 —— 编制与空间已并入助理 Tab，不再有 StudioPage。
 import { api, setLocalMode, isLocalMode } from './lib/api';
+// 2026-11-03（用户反馈 3）：删除会话 = 立即停止该会话在跑的任务（前台 abort 本地、后台通知主进程）
+import { stopThreadRuns } from './lib/stopThreadWork';
+// 2026-11-03：会话被删时一并清掉它的任务组快照（localStorage 不留孤儿数据）
+import { clearTodoGroups } from './lib/todoGroups';
 import { restoreMcpTools } from './lib/mcpTools';
 import { loadAgentsMd } from './lib/agentsMd';
 import ipc from './lib/ipc';
@@ -72,7 +79,7 @@ export default function App() {
   // 一级导航单一事实来源（设计文档 §4.3）：route 一个 page 字段 + reducer，非法组合不可表示；布尔视图由 routeToLegacyView 派生，旧组件签名不动；ecosystem/settings 由独立弹层/命令驱动，保留各自布尔开关。
   const [route, setRoute] = useState(INITIAL_ROUTE);
   const navDispatch = useCallback((action) => setRoute((s) => navReducer(s, action)), []);
-  const { showDashboard, showDesk, showAssistant, showScheduled, showStudio, showLedger } = routeToLegacyView(route, !!activeThread);
+  const { showDashboard, showDesk, showAssistant, showScheduled, showLedger } = routeToLegacyView(route, !!activeThread);
   const assistantTab = route.assistantTab;
   const [showEcosystem, setShowEcosystem] = useState(false); // 生态中心（D8：降级为弹层，入口在侧栏底部次级区）
   const [showProjectPicker, setShowProjectPicker] = useState(false);
@@ -201,19 +208,32 @@ export default function App() {
     setPaneTab, setPaneOpen, openFile: openFileInPane, getThreads: () => threads, selectThread,
   }));
 
+  // 派单 effect 只注册一次，闭包会捕获**首次渲染**的 newThreadInProject（它内部读 activeProject），
+  // 项目切过之后就成了旧值 —— 故经 latest-ref 取最新实现（与 activeThreadRef 同一条纪律）。
+  const newThreadInProjectRef = useRef(null);
   // 招募/派助手：**落点统一到当前会话**（2026-10-27）。enable-expert 是覆盖写 sessionExtras.expert，
   // 有会话就地换助手，没有才新建 —— 原来第一句 setActiveThread(null) 让"派给助手"必然多开一个会话。
   // setTimeout(0) 是宏任务，保证在 React 提交渲染+effect 之后注入，否则会被清空 extras 覆盖。
+  // 2026-11-03（用户反馈 1「助理页发任务还要再点一次发送」）：无会话时**一次成型**——
+  //   原路径 setActiveThread(null) + setInitialPrompt，ChatArea 落到「无会话」分支只能预填输入框
+  //   （见 ChatArea 的 initialPrompt effect：没有会话就只能 setInput），用户被迫在对话页再点一次发送。
+  //   现在无会话就直接建会话，目标与助手一起随 extras 落档，ChatArea 进入后按派单自动执行。
   useEffect(() => {
     const recruit = (e) => {
       if (!e.detail) return;
       const detail = e.detail;
-      if (detail.newThread || !activeThreadRef.current) setActiveThread(null);
-      goConversation();
+      const goal = String(detail.goal || '');
+      const needThread = !!detail.newThread || !activeThreadRef.current;
       setShowSettings(false);
       setShowEcosystem(false);
+      if (needThread && goal) {
+        newThreadInProjectRef.current?.(null, goal, detail);
+        return;
+      }
+      if (needThread) setActiveThread(null);
+      goConversation();
       // 助手目录派单（2026-10-27）：detail.goal 存在时一并预填首条提示，于是「选助手 → 填目标 → 提交」落到带着目标的会话；先切会话再在宏任务里注入 expert（同步连发会被清空 extras 覆盖）。
-      if (detail?.goal) setInitialPrompt(String(detail.goal));
+      if (goal) setInitialPrompt(goal);
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('mjcode:enable-expert', { detail }));
       }, 0);
@@ -430,6 +450,9 @@ export default function App() {
     }
   }
 
+  // 派单链路（recruit effect）经 latest-ref 取本函数：它闭包里有 activeProject，项目切换后必须是最新的那一份
+  newThreadInProjectRef.current = newThreadInProject;
+
   // 本机数据层就绪探测（离线模式下项目落本机持久化；在线时保持 localStorage 快照）
   function localStoreReady() {
     return typeof window !== 'undefined' && typeof window.mjcode?.localProjects === 'function';
@@ -446,9 +469,11 @@ export default function App() {
         {tr('app.skipToMain')}
       </a>
       {splash}
-      <header className="flex items-center gap-2 pl-[var(--titlebar-inset)] pr-3 h-11 shrink-0 border-b border-border">
+      {/* 顶栏与左侧栏同色（bg-sidebar）且不再有底部分割线 —— 用户要求「左侧和上面是一体」
+          （对齐 WorkBuddy：交通灯之外整条只有图标，侧栏从品牌名直接开始）。
+          pl-[var(--titlebar-inset)] 仍为 macOS 交通灯预留；侧栏收起后它不消失（窗口层绘制）。 */}
+      <header className="flex items-center pl-[var(--titlebar-inset)] pr-3 h-11 shrink-0 bg-sidebar">
         <TopBarActions onToggleSidebar={() => setSidebarOpen((v) => !v)} onOpenSearch={() => setPaletteOpen(true)} paneOpen={paneOpen} onTogglePane={() => { if (activeThreadRef.current) setPaneOpen((v) => !v); }} hasActiveThread={!!activeThread} onCycleTheme={cycleTheme} themeLabel={themeLabel()}         localMode={localMode} showDashboard={showDashboard} onOpenDashboard={() => navDispatch({ type: 'page', page: 'dashboard' })}
-        leadingTitle={<TopBarTitle view={{ showDesk, showDashboard, showEcosystem, showScheduled, showAssistant, showStudio, showLedger }} projectName={activeProject?.name} />}
       />
       </header>
       <div className="flex flex-1 min-h-0 relative">
@@ -458,7 +483,7 @@ export default function App() {
       <ErrorBoundary compact><Sidebar
         threads={threads}
         activeThread={activeThread}
-        view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, showDesk, showStudio, showLedger }}
+        view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, showDesk, showLedger }}
         onSelect={selectThread}
         onNewThread={newThreadInProject}
         onDelete={async (t) => {
@@ -473,6 +498,10 @@ export default function App() {
             confirmLabel: tr('app.delete'),
           });
           if (!ok) return;
+          // 先停再删：删除语义包含「别再跑了」。主进程侧还有一道按 threadId 的兜底
+          // （local:threads/delete 会中止该会话名下所有 run），这里负责让本窗口立刻收尾。
+          stopThreadRuns(t.id, activeThread?.id === t.id);
+          clearTodoGroups(t.id);
           try {
             await api.deleteThread(t.id);
           } catch (err) {
@@ -506,7 +535,7 @@ export default function App() {
           if (r?.ok) loadData();
         }}
         onOpenArchive={localMode ? () => setArchiveOpen(true) : undefined}
-        onOpenAssistant={() => navDispatch({ type: 'page', page: 'assistant' })} onOpenScheduled={() => navDispatch({ type: 'page', page: 'scheduled' })} onOpenDesk={() => navDispatch({ type: 'page', page: 'desk' })} onOpenStudio={() => navDispatch({ type: 'page', page: 'studio' })} onOpenLedger={() => navDispatch({ type: 'page', page: 'ledger' })} onOpenEcosystem={() => setShowEcosystem(true)}
+        onOpenAssistant={() => navDispatch({ type: 'page', page: 'assistant' })} onOpenScheduled={() => navDispatch({ type: 'page', page: 'scheduled' })} onOpenDesk={() => navDispatch({ type: 'page', page: 'desk' })} onOpenLedger={() => navDispatch({ type: 'page', page: 'ledger' })} onOpenEcosystem={() => setShowEcosystem(true)}
         onOpenProjectPicker={() => setShowProjectPicker(true)}
         onOpenSettings={() => setShowSettings(true)}
         projects={projects}
@@ -528,7 +557,7 @@ export default function App() {
         <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => navDispatch({ type: 'page', page: 'assistant', tab: a === 'open_assistant_scheduled' ? 'scheduled' : undefined })} />
         {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}
         {showAssistant && <ErrorBoundary compact><AssistantPage
-  tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path} onOpenFile={openFileInPane}
+  tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path} projectId={activeProject?.id || null} onOpenFile={openFileInPane} onPickProject={() => setShowProjectPicker(true)}
   onAutoRun={(goal) => { newThreadInProject(null, goal); }}
   onDispatchEmployee={({ employee, goal }) => {
     // 复用生态中心「用此角色开会话」的既有链路（mjcode:recruit-expert），
@@ -538,8 +567,7 @@ export default function App() {
   onDispatchTeam={async ({ teamId, goal }) => window.mjcode?.teamsDispatch?.({
     teamId, goal, threadId: activeThreadId, projectPath: activeProject?.path || '' })}
 /></ErrorBoundary>}
-        {showScheduled && <ErrorBoundary compact><ScheduledTasks /></ErrorBoundary>}{showStudio && <ErrorBoundary compact><StudioPage
-  threadId={activeThreadId} projectId={activeProject?.id || null} projectPath={activeProject?.path || null} projectName={activeProject?.name || null} onOpenFile={openFileInPane} onPickProject={() => setShowProjectPicker(true)} /></ErrorBoundary>}
+        {showScheduled && <ErrorBoundary compact><ScheduledTasks /></ErrorBoundary>}
         {showLedger && <ErrorBoundary compact><LedgerPage projectId={activeProject?.id || null} /></ErrorBoundary>}
         {/* 接单台（desk）：默认不落地（showDesk 初值 false），仅由侧栏入口/命令面板进入。
             派单与 AssistantPage.onAutoRun 完全同构 —— 只把目标交回主链路（setInitialPrompt），
@@ -556,7 +584,7 @@ export default function App() {
         {/* 任务编排已并入对话流（orchestrate_task 工具 + AgentDock 胶囊），不再有独立面板入口 */}
         {/* E4：ChatArea 常驻挂载（数据/助理视图下用 hidden 隐藏而非卸载）——
             条件渲染会卸载 ChatArea，导致生态中心「在当前会话启用」事件静默丢失，也避免重挂载带来的消息重拉。 */}
-        <div className={showDashboard || showAssistant || showScheduled || showDesk || showStudio || showLedger ? 'hidden' : 'contents'}>
+        <div className={showDashboard || showAssistant || showScheduled || showDesk || showLedger ? 'hidden' : 'contents'}>
           {/* B-P0-1：会话区独立边界（ChatArea 状态最重：消息流 + 流式文本 + 审批），此前一抛错整棵 App 被替换 */}
           <ErrorBoundary compact><ChatArea
             thread={activeThread}

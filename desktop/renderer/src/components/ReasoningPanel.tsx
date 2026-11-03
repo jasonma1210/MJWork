@@ -12,13 +12,26 @@
 // 折叠行 12px 灰字（text-code + text-text2）、行首大脑图标、行尾 chevron；
 // 展开后的思考正文用 .msg-prose-quiet（13px + 次要文字色），必须比正式答复的
 // 15px 主文字色明显弱一档。零硬编码色值（全部走 theme.css 的 Design Token）、无 emoji。
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+// 2026-11-03（反馈 6）：思考过程里的公式与表格同样要渲染 —— 推理链里出现 `$O(n\log n)$`
+// 却显示成美元符号，读起来是断的；能力面与正式答复保持一致。
+import remarkMath from 'remark-math';
+import MathSpan, { isMathClass, isDisplayMath } from './MathSpan';
 import { useI18n } from '../i18n';
 // P1（S-005）：markdown 链接协议白名单——渲染面新增一处也必须接，否则门禁按计数不相等判红
 import { safeUrlTransform } from '../lib/safeUrl';
 import { IconBrain, IconChevronDown, IconChevronRight, IconSpinner } from './icons';
+
+/** 思考正文的 markdown 组件：只换掉公式节点，其余保持默认语义 */
+const MD_COMPONENTS = {
+  code: ({ className, children }: { className?: string; children?: ReactNode }) => (
+    isMathClass(className)
+      ? <MathSpan tex={String(children ?? '')} display={isDisplayMath(className)} />
+      : <code className={`${className || ''} font-mono`}>{children}</code>
+  ),
+};
 
 export interface ReasoningPanelProps {
   /** 思考正文（流式累积）；为空表示还没有任何思考内容 */
@@ -66,7 +79,11 @@ export default function ReasoningPanel({ text = '', loading = false, elapsedSec 
         // 思考是「过程性内容」，必须比正式答复（15px + 主文字色）弱，否则一段长思考会和答复混成同一层。
         <div className="mt-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-surface px-3 py-2 text-xs text-text2">
           <div className="msg-prose msg-prose-quiet">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={safeUrlTransform}>{body}</ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkMath]}
+              components={MD_COMPONENTS}
+              urlTransform={safeUrlTransform}
+            >{body}</ReactMarkdown>
           </div>
         </div>
       )}

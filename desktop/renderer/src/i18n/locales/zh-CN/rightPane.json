@@ -59,5 +59,13 @@
   "terminalExit": "退出码 {code} · {ms}ms",
   "terminalPlaceholder": "输入命令…",
   "hideTree": "收起文件树（预览占满）",
-  "showTree": "展开文件树"
+  "showTree": "展开文件树",
+  "todoGroupDone": "已完成",
+  "todoGroupRunning": "进行中",
+  "todoGroupPartial": "未完成",
+  "todoGroupError": "有失败",
+  "todoGroupExpand": "展开该任务组",
+  "todoGroupCollapse": "折叠该任务组",
+  "orchestrationBadge": "编排",
+  "noTodoGroupHint": "模型用 todo_write 维护清单、或大任务被自动拆分后，这里按会话汇总每一组任务（倒序，可展开）"
 }

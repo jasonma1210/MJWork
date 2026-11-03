@@ -866,6 +866,24 @@ function abortRun(runId) {
   return true;
 }
 
+// 中止某会话名下**所有**运行（删会话/归档时用）。
+// 2026-11-03（用户反馈 3「会话被删除后任务还在偷偷执行」）：
+// 此前只有渲染层的 AbortController 能停 —— 后台会话（用户已切走、甚至已经删掉）
+// 的主进程 run 没有任何上游会去 abort 它，于是它继续调模型、写文件、烧 token。
+// 这里以 runConversations（runId → 会话 id）为准做反向索引；归属为空的 run（无人值守/定时）
+// 一律不认领 —— 宁可少停，也不误杀别的会话的后台任务。
+function abortRunsForThread(threadId) {
+  const t = String(threadId ?? '');
+  if (!t) return 0;
+  let n = 0;
+  for (const runId of [...runs.keys()]) {
+    if (String(runConversations.get(runId) || '') !== t) continue;
+    if (abortRun(runId)) n += 1;
+  }
+  if (n > 0) console.warn(`[agentRun] 会话 ${t} 已删除，中止 ${n} 个在跑运行`);
+  return n;
+}
+
 // 中止全部运行（model:abort 停止按钮联动）
 function abortAllRuns() {
   const n = runs.size;
@@ -889,7 +907,7 @@ function getActiveRunIds() {
 }
 
 module.exports = {
-  initAgentRunner, startAgentRun, abortRun, abortAllRuns,
+  initAgentRunner, startAgentRun, abortRun, abortAllRuns, abortRunsForThread,
   getTokenState, getActiveRunIds, agentRunnerReady,
   // 2026-10-16：重导出纪律函数与当前审批档 getter。
   // 实际实现已抽到 approvalPolicy.js（唯一事实源），此处重导出只为兼容既有引用方。

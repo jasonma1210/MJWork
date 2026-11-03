@@ -40,6 +40,9 @@ const HOOKS = new Set([
 const ALLOW_HTML = new Map([
   ['components/KnowledgePanel.tsx', '片段由主进程 knowledgeBaseQuery.makeSnippet 走 escapeHtml 后再下发'],
   ['components/MermaidDiagram.tsx', 'mermaid 固定 securityLevel:strict，产出已净化的 SVG'],
+  // 2026-11-03：公式渲染。注入体是 katex.renderToString 的输出（trust:false ⇒ \href/\htmlClass 等
+  // 危险命令被丢弃，输出由 KaTeX 自行转义），模型原文只作为**数学表达式**入参，不拼进标签。
+  ['components/MathSpan.tsx', 'katex.renderToString(trust:false) 产出，输入只进数学解析器'],
 ]);
 
 function usage() {

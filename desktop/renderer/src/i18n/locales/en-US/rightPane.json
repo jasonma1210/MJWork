@@ -59,5 +59,13 @@
   "terminalExit": "exit {code} · {ms}ms",
   "terminalPlaceholder": "Type a command…",
   "hideTree": "Hide file tree (full-width preview)",
-  "showTree": "Show file tree"
+  "showTree": "Show file tree",
+  "todoGroupDone": "Done",
+  "todoGroupRunning": "Running",
+  "todoGroupPartial": "Incomplete",
+  "todoGroupError": "Has failures",
+  "todoGroupExpand": "Expand this task group",
+  "todoGroupCollapse": "Collapse this task group",
+  "orchestrationBadge": "Orchestrated",
+  "noTodoGroupHint": "Once the model keeps a todo_write checklist — or a big task is split up — every group in this conversation is listed here (newest first, expandable)"
 }

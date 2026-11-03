@@ -167,5 +167,10 @@
     "hintPickAssistant": "Pick an assistant above first"
   },
   "tabDispatch": "Dispatch",
-  "tabBoard": "Board"
+  "tabBoard": "Board",
+  "tabRoster": "Roster",
+  "tabSpace": "Space",
+  "spaceNoProjectTitle": "No project selected",
+  "spaceNoProjectDesc": "The project space (collaboration board, shared approvals, knowledge grants) is scoped to one project. Pick a project first so assets do not land in the wrong place.",
+  "spacePickProject": "Choose project"
 }

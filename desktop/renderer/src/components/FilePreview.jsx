@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+// 2026-11-03（反馈 6）：预览里的 md 也要认公式，否则同一份文档在对话里能读、在预览里变成源码
+import remarkMath from 'remark-math';
+import MathSpan, { isMathClass, isDisplayMath } from './MathSpan';
 import { highlightLine } from './CodeView';
 import { openLinkByMode, isHttpUrl } from '../lib/linkOpen';
 // S-005：markdown 链接协议白名单（与 MessageStream 同一份判据，见 lib/safeUrl.ts）
@@ -44,8 +47,13 @@ function baseName(p) {
 
 // Markdown 内的链接：默认行为在 Electron 里会「用链接导航当前窗口」——文档一点就白屏。
 // 统一改走链接打开策略（设置页「浏览器与链接」），本地路径交给系统默认应用。
-function MarkdownLink({ node: _node, href, children, ..._rest }) {
-  const { t } = useI18n();
+/** md 预览里的公式节点：与对话正文共用同一套 KaTeX 渲染（MathSpan） */
+function MathCode({ className, children }) {
+  if (isMathClass(className)) return <MathSpan tex={String(children ?? '')} display={isDisplayMath(className)} />;
+  return <code className={`${className || ''} font-mono`}>{children}</code>;
+}
+
+function MarkdownLink({ node: _node, href, children, ..._rest }) {  const { t } = useI18n();
   async function onClick(e) {
     e.preventDefault();
     const url = String(href || '');
@@ -260,9 +268,9 @@ export default function FilePreview({ filePath, projectPath }) {
         )}
 
         {!meta.loading && meta.kind === 'text' && (isMd ? (
-          // Markdown 渲染（与对话气泡同一套 react-markdown + GFM，表格/任务列表/代码块均支持）
+          // Markdown 渲染（与对话气泡同一套 react-markdown + GFM + KaTeX，表格/任务列表/代码块/公式均支持）
           <div className="p-5 markdown-body text-sm leading-6">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: MarkdownLink }} urlTransform={safeUrlTransform}>{text.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} components={{ a: MarkdownLink, code: MathCode }} urlTransform={safeUrlTransform}>{text.content}</ReactMarkdown>
           </div>
         ) : isHtml && htmlMode === 'render' && text.totalLines <= TEXT_MAX_LINES ? (
           // 沙箱渲染：allow-scripts 让内联图表脚本可跑；不给 allow-same-origin，

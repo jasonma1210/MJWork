@@ -151,8 +151,11 @@ const sidebar = blankComments(SIDEBAR);
       '缺少 view={{ showAssistant, assistantTab, showScheduled, showDashboard, showEcosystem, … }}');
     // 第四版（2026-10-26）：工作室标志也必须喂进判定，故末尾字段变为 showDesk, showStudio；
     // 第五版（2026-10-27，M2）：新增一级入口「用量账本」，末尾字段再追加 showLedger。
+    // 第七版（2026-11-03）：工作室下线 ⇒ showStudio 从 view 里移除，末尾回到 showDesk, showLedger。
     // 断言必须随 view 对象形状演进——若有人把 showLedger 从 view 里删掉，本条应当转红。
-    assert.match(app, /showEcosystem,\s*showDesk,\s*showStudio,\s*showLedger\s*\}\}/, 'view 未把 showDesk/showStudio/showLedger 传给 Sidebar');
+    assert.match(app, /showEcosystem,\s*showDesk,\s*showLedger\s*\}\}/, 'view 未把 showDesk/showLedger 传给 Sidebar');
+    // 反向：已下线的入口不得再被喂进去（留着就是「投影一个不存在的页面」）
+    assert.ok(!app.includes('showStudio'), 'App 仍在投影 showStudio（工作室已下线）');
   });
 
   await check('Sidebar 用 activeNavOf 计算，且入口各自绑定字面量', () => {
@@ -166,10 +169,12 @@ const sidebar = blankComments(SIDEBAR);
     // 第二版：一级导航三项都必须是真实绑定（scheduled 已升回入口）
     // 第三版（2026-10-25）：新增「工作台」一级入口，同样必须有真实绑定
     // 0.8.6-beta：移除「账本（账单）」一级入口（改由工作台深链进入），故不再要求 ledger 绑定
-    for (const key of ['desk', 'assistant', 'scheduled', 'studio']) {
+    // 第七版（2026-11-03）：工作室下线 ⇒ 'studio' 不在一级绑定清单里，且必须没有残留绑定
+    for (const key of ['desk', 'assistant', 'scheduled']) {
       assert.match(sidebar, new RegExp(`active=\\{activeNav === '${key}'\\}`),
         `NavItem「${key}」缺少 active={activeNav === '${key}'}`);
     }
+    assert.ok(!/active=\{activeNav === 'studio'\}/.test(sidebar), '侧栏仍有「工作室」入口（已于 2026-11-03 下线）');
     // 团队编制仍在助理内 ⇒ 一级导航不得给它单独的 active 绑定
     assert.ok(!/active=\{activeNav === 'teams'\}/.test(sidebar),
       '一级导航仍绑定「teams」（它应留在助理里）');

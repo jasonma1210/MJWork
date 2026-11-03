@@ -32,6 +32,27 @@ function fail(scope, e) {
   return { ok: false, error: e && e.message };
 }
 
+/**
+ * 给项目目录初始化 Git（2026-11-03，用户反馈 5）。
+ *
+ * 为什么由产品来做：这些目录是**我们**在 `~/Documents/.MJCoder` 下建的，
+ * 「建目录」只做了一半 —— 用户落到输入框时看到「未初始化 Git」，分支与 Worktree 全不可用，
+ * 而他并不知道要自己去终端敲 `git init`。
+ *
+ * fail-open 的边界：初始化失败**不影响项目已创建**这个事实（目录本来就能用），
+ * 只把原因带回渲染层。反过来（回滚删目录）会把用户刚起的名字一起丢掉，代价更大。
+ */
+async function initProjectRepo(dir) {
+  try {
+    return { ok: true, ...(await worktree.initRepo(dir)) };
+  } catch (e) {
+    logger.warn('[project] 新项目自动初始化 Git 失败（项目仍可用）：', e && e.message);
+    // 形状与成功分支保持一致：调用方（渲染层）不必为失败单独写一套兜底字段
+    return { ok: false, error: e && e.message, created: false, branch: '', committed: false,
+      identityMissing: false, stagedPending: false, unborn: true };
+  }
+}
+
 // ── 项目探测（git 分支/远端/文件数/技术栈标记）──
 const LANG_MARKERS = {
   'package.json': 'Node.js', 'Cargo.toml': 'Rust', 'pom.xml': 'Java', 'build.gradle': 'Java',
@@ -76,7 +97,9 @@ function register() {
       const proj = await workspace.createProject({
         docsDir: app.getPath('documents'), homeDir: app.getPath('home'), name,
       });
-      return { ok: true, ...proj };
+      // 建目录 + git init 一次做完（用户不必再去终端补一步）；失败不阻断创建
+      const git = await initProjectRepo(proj.path);
+      return { ok: true, ...proj, git };
     } catch (e) {
       return fail('project:create', e);
     }
@@ -132,6 +155,25 @@ function register() {
   //   git:checkoutBranch  真切换（带 dirtyPolicy，破坏性动作，必须留痕）
   // 切换不弹审批卡：它是用户在确认卡上刚点过「确认」的动作，再问一遍＝同一动作两次打扰；
   // 但必须写审计——这是本仓唯一能改主检出目录 HEAD 的入口。
+  // git:init —— 在**已有目录**上初始化仓库（新建项目那条路已在 project:create 里自动做完）。
+  // 语义上它是用户的显式动作（分支面板里点「初始化 Git」），与 checkoutBranch 同口径：
+  // 不弹审批卡（用户刚点的就是它），但必须写审计 —— 这是本仓唯一会往用户目录写 .git 的入口。
+  ipcMain.handle('git:init', async (_, { cwd } = {}) => {
+    try {
+      guard.assertStrings({ cwd }, { cwd: 4096 });
+      const r = await worktree.initRepo(cwd);
+      audit('git_init', String(cwd), r.created
+        ? `created${r.committed ? '+initial-commit' : ''}`
+        : `existing${r.unborn ? '(unborn)' : ''}`, 'auto');
+      return { ok: true, ...r };
+    } catch (e) {
+      // 统一落点必须写在 catch 第一行（ipc-write-guard-coverage 按首句判「是否落日志」）：
+      // 「先审计后 fail」会被判成裸 return，等于这类失败在日志里查不到。
+      const r = fail('git:init', e);
+      audit('git_init', String(cwd || ''), `失败：${e && e.message}`, 'blocked');
+      return r;
+    }
+  });
   ipcMain.handle('git:branches', async (_, { cwd } = {}) => {
     try {
       guard.assertStrings({ cwd }, { cwd: 4096 });

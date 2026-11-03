@@ -128,6 +128,37 @@ check('meta：无任何元信息的消息不渲染空行', () => {
   assert.ok(!html.includes('共消耗'), '不应出现空 meta');
 });
 
+// ── Markdown 能力面（2026-11-03，用户反馈 6）──
+// 用户要求「AI 回复务必遵循最新 md 规范：逻辑图、公式、表格都要真的渲染」。
+// 这里断的是**渲染结果**（HTML 里有没有 KaTeX / <table>），不是源码里有没有 import ——
+// 「装了插件但没接上」正是这类需求最常见的假完成。
+check('markdown：公式渲染成 KaTeX（$E=mc^2$ 不得原样显示成美元符号）', () => {
+  const html = htmlOf(() => renderMessages([
+    { role: 'assistant', content: '行内 $E=mc^2$ 结束\n\n$$\n\\sum_{i=1}^{n} i\n$$' },
+  ]));
+  assert.ok(!html.includes('$E=mc^2$'), '行内公式仍原样显示（remark-math 未生效）');
+  assert.ok(html.includes('katex'), '未产出 KaTeX 结构（MathSpan 未接管 language-math）');
+  assert.ok(html.includes('md-math-block'), '块级公式未走独占一行的容器');
+});
+
+check('markdown：GFM 表格渲染成 <table> 并包在横向滚动容器里', () => {
+  const html = htmlOf(() => renderMessages([
+    { role: 'assistant', content: '| 项 | 值 |\n| --- | --- |\n| A | 1 |' },
+  ]));
+  assert.ok(html.includes('<table'), '表格未渲染');
+  assert.ok(html.includes('md-table-wrap'), '表格缺横向滚动容器（宽表会撑破消息列）');
+  assert.ok(html.includes('<th'), '表头未渲染（GFM 未生效）');
+});
+
+check('mermaid：渲染失败时必须放出源码（不能只显示一句「渲染失败」）', () => {
+  const src = fs.readFileSync(path.join(SRC, 'components/MermaidDiagram.tsx'), 'utf8');
+  const at = src.indexOf("if (error)");
+  assert.ok(at > 0, '未找到渲染失败分支');
+  const block = src.slice(at, at + 900);
+  assert.ok(block.includes('message.diagramShowSource'), '失败分支缺「查看图表源码」入口');
+  assert.ok(block.includes('{code}'), '失败分支未输出图表源码（内容被吞掉）');
+});
+
 check('RunFooter：正常结束态展示 状态/耗时/共消耗/模型/时间', () => {
   const html = htmlOf(React.createElement(RunFooter, {
     summary: { status: 'done', durationMs: 660000, tokensIn: 626627, tokensOut: 10946, model: 'mimo-v2.6-flash', endedAt: T },

@@ -1,5 +1,5 @@
 import ThreadList from './ThreadList';
-import { IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock, IconList, IconFolder } from './icons';
+import { IconPlus, IconPuzzle, IconSettings, IconArchive, IconUsers, IconClock, IconList } from './icons';
 import { activeNavOf } from '../lib/navState';
 import logo from '../assets/logo.png';
 import { useI18n } from '../i18n';
@@ -20,7 +20,7 @@ import { useI18n } from '../i18n';
 //     删掉就断了「招募数字员工 → 组成军团」这条主链路。
 export default function Sidebar({
   threads, activeThread, onSelect, onDelete, onRenameThread, onAssignThread, onOpenArchive,
-  onOpenAssistant, onOpenScheduled, onOpenDesk, onOpenStudio, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
+  onOpenAssistant, onOpenScheduled, onOpenDesk, onOpenEcosystem, onOpenProjectPicker, onOpenSettings,
   projects, activeProject, onSelectProject, onRemoveProject, onRenameProject,
   onNewThread, filter, view,
 }) {
@@ -35,8 +35,6 @@ export default function Sidebar({
     showDesk: !!view?.showDesk,
     // 定时任务：一级入口（2026-10-24 第二次调整恢复）
     showScheduled: !!view?.showScheduled,
-    // 工作室：一级入口（2026-10-26 新增，对齐原型 studio.js：项目空间 + 工件）
-    showStudio: !!view?.showStudio,
     // 兼容输入：团队编制仍是助理的子 Tab
     showTeams: !!view?.showTeams,
     hasActiveThread: !!activeThread,
@@ -65,11 +63,11 @@ export default function Sidebar({
           少了这两个类，会话多了会把页脚挤出视口。布局类名与包裹前等价。 */}
       <nav aria-label={t('sidebar.navAria')} className="flex flex-col flex-1 min-h-0">
       <div className="px-2 space-y-1">
-        <div className="px-3 pb-1 text-caption text-text2">{t('sidebar.groupOperations')}</div>
+        {/* 2026-11-03（用户反馈 7）：删掉「经营」分组标题 —— 一级入口就三项，配分组标题
+            反而多一层视觉噪音（对齐 WorkBuddy：品牌名下面直接是菜单项）。 */}
         <NavItem icon={<IconList size={16} />} label={t('sidebar.desk')} onClick={onOpenDesk} active={activeNav === 'desk'} />
         <NavItem icon={<IconUsers size={16} />} label={t('sidebar.assistant')} onClick={onOpenAssistant} active={activeNav === 'assistant'} />
         <NavItem icon={<IconClock size={16} />} label={t('sidebar.scheduled')} onClick={onOpenScheduled} active={activeNav === 'scheduled'} />
-        <NavItem icon={<IconFolder size={16} />} label={t('sidebar.studio')} onClick={onOpenStudio} active={activeNav === 'studio'} />
       </div>
 
       {/* 会话（项目 → 会话 二级结构） */}

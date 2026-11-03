@@ -70,6 +70,25 @@ export function describeAcceptance(ac) {
   return `must=${(ac.must || []).length} must_not=${(ac.must_not || []).length}`;
 }
 
+// 本机推理端点（ollama 等）上 AC 提取的**快速失败**上限。
+//
+// 2026-11-03 实证（trace run-mw0avr8b-1i5hpv）：model=flint（localhost:11434，29GB），
+// AC 提取吃满 20001ms 后超时失败，随后主 run 第一轮又在 90014ms 被首字节守卫杀掉。
+// 也就是说：本地模型上这 20 秒是**必然浪费**——AC 只是可选的验收基线（没有它任务照跑），
+// 却排在主任务之前白等一轮。这里给本地端点 8s：够快模型出结果，慢模型尽快放弃。
+const LOCAL_AC_TIMEOUT_MS = 8000;
+const LOCAL_HOST_RE = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1|\[::1\])$/i;
+
+/** 该 base_url 是否本机推理端点（判定失败按云端处理，保守） */
+function isLocalBaseUrl(baseUrl) {
+  try {
+    return LOCAL_HOST_RE.test(new URL(String(baseUrl || '')).hostname);
+  } catch {
+    // 空/非法 URL：无法判定 ⇒ 非本地（云端 20s 档）
+    return false;
+  }
+}
+
 /**
  * 决定本轮 run 的 AC：「外部给定」优先，其次「本次提取」，都没有就是「无」。
  *
@@ -88,6 +107,10 @@ export async function resolveAcceptance({
   }
   const text = String(goal || '').trim();
   if (!text) return { ac: null, source: 'none', usage: null };
+  // 本机端点用更短的超时（理由见文件头的 LOCAL_AC_TIMEOUT_MS）
+  const effTimeout = isLocalBaseUrl(model.provider.base_url)
+    ? Math.min(Number(timeoutMs) || LOCAL_AC_TIMEOUT_MS, LOCAL_AC_TIMEOUT_MS)
+    : timeoutMs;
   try {
     // 与「上下文压缩救援」同构：独立 messages、不带工具、带看门狗超时。
     // 失败一律 null——AC 提取失败绝不能让任务发不出去。
@@ -102,7 +125,7 @@ export async function resolveAcceptance({
       // 宿主据此换一个渲染层不认识的 stream tag —— 否则这段 JSON 会经 model:delta
       // 串进对话窗口（用户会在任务中途看到一段生 JSON，还以为模型答歪了）。
       quiet: true,
-    }), timeoutMs, '验收标准提取');
+    }), effTimeout, '验收标准提取');
     const ac = parseAcceptance(r?.content);
     // 用量照实回给调用方累加：提取也是这次 run 花的钱，不记账等于成本失真。
     return { ac, source: hasAcceptance(ac) ? 'extracted' : 'none', usage: r?.usage || null };

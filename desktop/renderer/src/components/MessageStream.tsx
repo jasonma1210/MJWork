@@ -1,7 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Options as ReactMarkdownOptions } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+// 2026-11-03（用户反馈 6）：公式渲染。markdown 里 `$...$` / `$$...$$` 此前原样显示成美元符号，
+// 模型写公式（成本核算、算法复杂度、统计口径）时完全不可读。
+// remark-math 把 `$` 语法解析成 math 节点（输出 <code class="language-math …">），
+// 真正的 KaTeX 渲染由 MathSpan 在 code 渲染器里完成 —— 不用 rehype-katex：
+// 它在 Node 侧首帧渲染会因 DOMParser 缺失直接抛错（详见 MathSpan 文件头）。
+import remarkMath from 'remark-math';
+import MathSpan, { isMathClass, isDisplayMath } from './MathSpan';
 // S-005：markdown 链接协议白名单（不依赖 react-markdown 的上游默认值，判据在本仓 lib/safeUrl.ts）
 import { safeUrlTransform, toExternalHref } from '../lib/safeUrl';
 import { MermaidDiagram } from './MermaidDiagram';
@@ -283,7 +291,7 @@ export default function MessageStream({
         {streamingText && (
           <div className="mb-4 max-w-3xl">
             <div className="text-xs text-text2 mb-1">MJ Nexus <span className="animate-pulse">▋</span></div>
-            <div className="msg-prose"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={safeUrlTransform}>{streamingText}</ReactMarkdown></div>
+            <div className="msg-prose"><ReactMarkdown {...MD_PROPS} urlTransform={safeUrlTransform}>{streamingText}</ReactMarkdown></div>
           </div>
         )}
         </div>
@@ -679,14 +687,30 @@ function FileRefChip({ text, onOpenFile, cwd }: { text: string; onOpenFile?: (p:
   );
 }
 
+// 会话正文的 markdown 能力面（2026-11-03，用户反馈 6）：
+//   · remark-gfm —— 表格 / 任务列表 / 删除线（GFM 扩展）
+//   · remark-math + rehype-katex —— `$x$` 行内公式与 `$$...$$` 块级公式
+// 约束取 react-markdown 自己的 Options 类型，避免手写插件列表时把元组写错还静默通过。
+const MD_PROPS: Pick<ReactMarkdownOptions, 'remarkPlugins'> = {
+  remarkPlugins: [remarkGfm, remarkMath],
+};
+
 /** markdown 渲染器的自定义节点：只改「行内代码」与「本地链接」，其余保持默认语义 */
 function markdownComponents(onOpenFile?: (p: string) => void, cwd?: string) {
   return {
+    // 2026-11-03（用户反馈 6）：GFM 表格此前套的是浏览器默认样式（没边框、没内边距、
+    // 列宽随内容乱挤），模型给的对照表几乎读不出来。这里只包一层横向滚动容器，
+    // 视觉规则统一在 theme.css 的 .msg-prose table 上（避免同一份样式散在两个地方）。
+    table: ({ children, ...rest }: { children?: ReactNode }) => (
+      <div className="md-table-wrap"><table {...rest}>{children}</table></div>
+    ),
     // G-visualize：```mermaid 围栏块由 code 渲染器出图，外层 <pre> 必须一并旁路，
     // 否则图表会被套进等宽预格式块（背景、滚动、等宽字体都不对）
     pre: ({ children, ...rest }: { children?: ReactNode }) => {
       const first: any = Array.isArray(children) ? children[0] : children;
-      if (/language-mermaid/i.test(String(first?.props?.className || ''))) return <>{children}</>;
+      const cls = String(first?.props?.className || '');
+      // 块级公式同样由 code 渲染器直出（<pre> 会把公式套进等宽块，且撑出横向滚动）
+      if (/language-mermaid/i.test(cls) || isMathClass(cls)) return <>{children}</>;
       return <pre {...rest}>{children}</pre>;
     },
     // 代码块（带 language-* className）与多行代码不处理，仅处理行内代码
@@ -694,6 +718,8 @@ function markdownComponents(onOpenFile?: (p: string) => void, cwd?: string) {
       const cls = String(className || '');
       // G-visualize：```mermaid → 渲染成图（其余 language-* 代码块保持原样）
       if (/language-mermaid/i.test(cls)) return <MermaidDiagram code={String(children ?? '')} />;
+      // 2026-11-03：`$x$` / `$$…$$` → KaTeX（display 由 remark-math 的 math-display 标记）
+      if (isMathClass(cls)) return <MathSpan tex={String(children ?? '')} display={isDisplayMath(cls)} />;
       const raw = String(children ?? '').replace(/\n$/, '');
       if (className || raw.includes('\n')) {
         return (
@@ -814,7 +840,7 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
           {user && (
             <div className="mb-4 flex justify-end group">
               <div className="msg-prose bg-surface rounded-2xl px-4 py-2 max-w-2xl">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={md} urlTransform={safeUrlTransform}>{user.content}</ReactMarkdown>
+                <ReactMarkdown {...MD_PROPS} components={md} urlTransform={safeUrlTransform}>{user.content}</ReactMarkdown>
               </div>
               <div className="self-center ml-2 flex"><CopyButton text={user.content} /><ForkButton messageId={user.id} /></div>
             </div>
@@ -843,7 +869,7 @@ function RoundBlock({ round, user, assistants, toolResults, isLast, running = fa
                   <ToolTraceGroup calls={calls} toolResults={toolResults} label={t('toolTrace.roundExecTrace')} defaultOpen={running && isLast} />
                 )}
                 {m.content && (
-                  <div className="msg-prose"><ReactMarkdown remarkPlugins={[remarkGfm]} components={md} urlTransform={safeUrlTransform}>{m.content}</ReactMarkdown></div>
+                  <div className="msg-prose"><ReactMarkdown {...MD_PROPS} components={md} urlTransform={safeUrlTransform}>{m.content}</ReactMarkdown></div>
                 )}
                 {/* 底部明细：模型 + token 消耗 + 时间。
                     条件放宽：任一信息存在即展示——此前 modelName 为空时整行隐藏，

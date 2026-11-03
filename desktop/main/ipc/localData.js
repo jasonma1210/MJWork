@@ -26,6 +26,22 @@ const { audit } = require('../audit/auditLog');
 let deps = null;
 
 /**
+ * 停止某会话名下所有在跑运行（删会话的前置动作）。
+ *
+ * 为什么不在这里直接 require(agentRunner)：本文件是纯 IPC 层，宿主（main.js）才是运行时的
+ * 装配者；注入缺失时降级为 0 —— 「停不下来」不该阻断删除（用户点删除的意图明确），
+ * 但必须留痕，否则「为什么删了还在跑」查不到。
+ */
+function stopThreadRuns(threadId) {
+  try {
+    return deps && typeof deps.abortRunsForThread === 'function' ? deps.abortRunsForThread(threadId) : 0;
+  } catch (e) {
+    console.warn('[localData] 会话删除：中止在跑任务失败（删除继续）:', e.message);
+    return 0;
+  }
+}
+
+/**
  * 彻底删除会话的跨库级联（RQ-02）。
  *
  * 为什么不能只删 localStore：会话本体（threads/messages）在 JSON 里，但它派生出的
@@ -338,7 +354,12 @@ function register() {
   });
   ipcMain.handle('local:threads/delete', async (_, payload) => {
     guard.assertIds(payload, ['threadId']);
-    return deps.getLocalStore() ? deps.getLocalStore().archiveThread(payload.threadId) : { ok: false };
+    // 2026-11-03（用户反馈 3）：删除会话 = **立即停止**该会话名下所有在跑任务。
+    // 顺序必须是「先停再删」：反过来的话，主进程收尾会把最后一条消息写进一个已归档会话，
+    // 用户在归档里又能看到它继续产出内容 —— 也就是「删了还在偷偷执行」。
+    const abortedRuns = stopThreadRuns(payload.threadId);
+    const r = deps.getLocalStore() ? deps.getLocalStore().archiveThread(payload.threadId) : { ok: false };
+    return r && typeof r === 'object' ? { ...r, abortedRuns } : r;
   });
   // A1：会话重命名
   ipcMain.handle('local:threads/rename', async (_, payload) => {

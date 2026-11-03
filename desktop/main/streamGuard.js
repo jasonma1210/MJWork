@@ -26,12 +26,57 @@ const DEFAULTS = {
   totalMs: 900000,      // 15min：只做无限流兜底，正常永远碰不到
 };
 
+// 本机推理端点（ollama 等）的独立档位。
+//
+// 为什么必须分开（2026-11-03 实证，trace `run-mw0avr8b-1i5hpv`）：
+//   model=flint（`localhost:11434` = Ollama，29GB 本地模型），prompt ≈ 7.7 万 token，
+//   round 1 在 **90014ms** 被首字节守卫杀掉，`prompt_tokens=0` —— 模型连 prefill 都没跑完。
+//   用户看到的是「（本次请求失败，未产生回复）」，而他自己的诊断是「超过 ollama 输出限制」。
+//   实测 `GET /api/show` 该模型 `num_ctx=262144`：既不是输出限制，也不是窗口不足，
+//   就是**本地 prefill 的时间尺度**与云端（排队 1~30s）差一个数量级。
+//
+// 三档取值依据：
+//   · firstByte 300s：29GB / 25 万上下文模型在 48GB 机器上 prefill 数万 token，分钟级是常态；
+//   · idle 600s：流式出字期间若 10 分钟没有任何字节，才真的是挂死；
+//   · total 30min：本地 offload 到 CPU 时整轮可能接近半小时，超过就属于病态。
+// 用户显式设置仍然优先（streamSettings）：这里是**默认档**，不是上限。
+const LOCAL_DEFAULTS = {
+  firstByteMs: 300000,
+  idleMs: 600000,
+  totalMs: 1800000,
+};
+
+// 回环地址才算「本机端点」。局域网/内网服务器（10.x / 192.168.x）不算：
+// 它们通常是一台独立机器，prefill 行为更接近云端，误判成 300s 会让真正的挂死晚 3 分钟才被看见。
+const LOCAL_HOST_RE = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1|\[::1\])$/i;
+
+/**
+ * 是否本机推理端点（决定用哪一档默认超时）。
+ * 解析失败/空值一律按「非本地」处理 —— 宁可少给 3 分钟，也不要把云端请求挂到 5 分钟。
+ */
+function isLocalEndpoint(baseUrl) {
+  try {
+    return LOCAL_HOST_RE.test(new URL(String(baseUrl || '')).hostname);
+  } catch {
+    // 非法/相对 URL：无法判定，按云端档处理（保守）
+    return false;
+  }
+}
+
 const TICK_MS = 5000;
 
 // P2-2b：首字节延迟目标（只做**告警阈值**，绝不参与任何闸门判定）。
 // 把可观测指标做成闸门会引入新的误杀——推理模型首字节本来就慢（见文件头 2026-10-17 的踩坑记录）。
 // 3s 是交互式 AI 产品的常见 SLO 基线。
 const TTFB_TARGET_MS = 3000;
+// 本机模型的首字节目标：29GB 级模型冷启动 + prefill 十几秒是正常的，用 3s 去衡量只会每轮刷一条
+// 「超过目标」的噪音日志（用户实测正是这样误判成"对接不上大模型"）。
+const TTFB_TARGET_LOCAL_MS = 15000;
+
+/** 该端点的首字节告警目标（只影响日志，不影响任何闸门） */
+function ttfbTargetFor(baseUrl) {
+  return isLocalEndpoint(baseUrl) ? TTFB_TARGET_LOCAL_MS : TTFB_TARGET_MS;
+}
 
 const ENV_KEYS = {
   firstByteMs: 'MJ_STREAM_FIRST_BYTE_MS',
@@ -47,11 +92,13 @@ function readEnvMs(env, key, fallback) {
 }
 
 // 环境变量覆盖（不引入 UI 设置项前的临时旋钮；<=0 或非法值回落默认）
-function resolveDefaults(env = process.env) {
+// local=true 时基准换成 LOCAL_DEFAULTS（本机推理端点），环境变量仍然可以覆盖。
+function resolveDefaults(env = process.env, { local = false } = {}) {
+  const base = local ? LOCAL_DEFAULTS : DEFAULTS;
   return {
-    firstByteMs: readEnvMs(env, ENV_KEYS.firstByteMs, DEFAULTS.firstByteMs),
-    idleMs: readEnvMs(env, ENV_KEYS.idleMs, DEFAULTS.idleMs),
-    totalMs: readEnvMs(env, ENV_KEYS.totalMs, DEFAULTS.totalMs),
+    firstByteMs: readEnvMs(env, ENV_KEYS.firstByteMs, base.firstByteMs),
+    idleMs: readEnvMs(env, ENV_KEYS.idleMs, base.idleMs),
+    totalMs: readEnvMs(env, ENV_KEYS.totalMs, base.totalMs),
   };
 }
 
@@ -170,11 +217,13 @@ function createStreamGuard(opts = {}) {
  * 与「超时判死」严格分离：这里绝不 abort 连接，否则会把「推理模型想得久」误杀成失败。
  * @param {number|null} ttfbMs
  * @param {string} [label] 通道标识（如 'scheduled'），便于日志定位
+ * @param {number} [targetMs] 告警目标（本机端点用 ttfbTargetFor(baseUrl)，缺省 3s）
  */
-function reportSlowTtfb(ttfbMs, label = '') {
+function reportSlowTtfb(ttfbMs, label = '', targetMs = TTFB_TARGET_MS) {
   if (ttfbMs === null || ttfbMs === undefined) return;
-  if (ttfbMs <= TTFB_TARGET_MS) return;
-  console.warn(`[ttfb] 首字节 ${Math.round(ttfbMs)}ms 超过目标 ${TTFB_TARGET_MS}ms${label ? `（通道：${label}）` : ''}——仅告警，不参与任何闸门判定`);
+  const target = Number(targetMs) > 0 ? Number(targetMs) : TTFB_TARGET_MS;
+  if (ttfbMs <= target) return;
+  console.warn(`[ttfb] 首字节 ${Math.round(ttfbMs)}ms 超过目标 ${target}ms${label ? `（通道：${label}）` : ''}——仅告警，不参与任何闸门判定`);
 }
 
 // 超时错误文案：三种原因各说人话，别把「模型在想」说成「无响应」
@@ -194,5 +243,6 @@ function streamTimeoutMessage(reason, cfg = {}) {
 
 module.exports = {
   createStreamGuard, streamTimeoutMessage, resolveDefaults, reportSlowTtfb,
-  DEFAULTS, ENV_KEYS, TTFB_TARGET_MS,
+  DEFAULTS, LOCAL_DEFAULTS, ENV_KEYS, TTFB_TARGET_MS, TTFB_TARGET_LOCAL_MS,
+  isLocalEndpoint, ttfbTargetFor,
 };

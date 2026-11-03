@@ -57,7 +57,13 @@ async function check(name, fn) {
 }
 const ok = (v, m) => { if (!v) throw new Error(m || '断言为假'); };
 
-initLocalDataIpc({ getLocalStore: () => store, getCredentialCrypto: () => null, localVault: new Map(), getMemoryManager: () => null, getMemoryScheduler: () => null, serverBase: () => '', MJ: {} });
+// 2026-11-03（用户反馈 3）：删除会话必须先停掉该会话名下的在跑任务。
+// 这里注入一个记录型实现，让「先停后删」的顺序本身可被断言（顺序错了就等于没停）。
+initLocalDataIpc({
+  getLocalStore: () => store, getCredentialCrypto: () => null, localVault: new Map(),
+  getMemoryManager: () => null, getMemoryScheduler: () => null, serverBase: () => '', MJ: {},
+  abortRunsForThread: (tid) => { calls.push(['abortRunsForThread', tid]); return 1; },
+});
 
 const call = (ch, payload) => {
   const fn = handlers.get(ch);
@@ -106,6 +112,33 @@ await check('local:threads/rename 接受数字 threadId', async () => {
 await check('local:threads/delete 接受数字 threadId', async () => {
   await call('local:threads/delete', { threadId: 8 });
   ok(calls.some((c) => c[0] === 'archiveThread' && c[1] === 8), '未落到 store');
+});
+
+// ── 删除即停止（2026-11-03，用户反馈 3）──
+await check('local:threads/delete 先中止该会话的在跑任务，再归档（顺序错了等于没停）', async () => {
+  calls.length = 0;
+  const r = await call('local:threads/delete', { threadId: 8 });
+  const abortAt = calls.findIndex((c) => c[0] === 'abortRunsForThread' && c[1] === 8);
+  const archAt = calls.findIndex((c) => c[0] === 'archiveThread' && c[1] === 8);
+  ok(abortAt >= 0, '未调用 abortRunsForThread（删掉后任务还会继续跑）');
+  ok(archAt >= 0, '未归档会话');
+  ok(abortAt < archAt, `顺序错误：abort@${abortAt} 必须在 archive@${archAt} 之前`);
+  ok(r && r.abortedRuns === 1, `返回值未回报中止数：${JSON.stringify(r)}`);
+  ok(r && r.ok === true, '删除结果被中止逻辑吃掉（ok 字段丢失）');
+});
+
+await check('local:threads/delete 在中止实现缺失时仍能删除（降级不阻断用户意图）', async () => {
+  // 真正的缺失场景：重新装配 deps（同名通道会被 Map 覆盖，不影响后续用例），不带 abortRunsForThread。
+  // 「停不下来」不该把用户点删除的意图一起废掉，但必须回报 0 —— 不是假装停过了。
+  initLocalDataIpc({
+    getLocalStore: () => store, getCredentialCrypto: () => null, localVault: new Map(),
+    getMemoryManager: () => null, getMemoryScheduler: () => null, serverBase: () => '', MJ: {},
+  });
+  calls.length = 0;
+  const r = await call('local:threads/delete', { threadId: 8 });
+  ok(r && r.ok === true, '中止实现缺失时删除失败（应当降级放行）');
+  ok(r.abortedRuns === 0, `中止实现缺失时应回报 0，实际 ${r.abortedRuns}`);
+  ok(calls.some((c) => c[0] === 'archiveThread' && c[1] === 8), '未归档会话');
 });
 
 await check('local:threads/restore 与 purge 接受数字 threadId', async () => {

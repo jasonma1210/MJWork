@@ -970,7 +970,15 @@ export default function ChatArea({
             P0-6（2026-10-22）：此前两处挂载都是「裸挂载」（组件标签不传任何 props），
             而 TodoPanel 首行是 `if (!runId) return undefined` ⇒ 订阅根本不建立、组件恒返回 null
             ⇒ 这套能力等于没上线。这里按会话 key 强制重挂：切会话时清掉上一轮的清单。 */}
-        <TodoPanel key={thread?.id != null ? String(thread.id) : 'no-thread'} runId={activeRunId} />
+        {/* 2026-11-03：把会话 id 与运行态一并传下去 —— 前者让 todo 快照能落到该会话名下
+            （右侧「任务摘要」按会话读），后者决定「还有 pending 项」算进行中还是未完成。
+            key 仍按会话：会话切换时重挂，用户对折叠的手动选择不会串到另一个会话。 */}
+        <TodoPanel
+          key={thread?.id != null ? String(thread.id) : 'no-thread'}
+          runId={activeRunId}
+          threadId={thread?.id != null ? String(thread.id) : null}
+          running={loading}
+        />
         {/* WorkBuddy 式 Agent 运行胶囊：在役数字员工一览（点击展开流程与强制关闭）；
             R6.1：任务组绑定会话——threadId/cwd 作为坞归属上下文传入 */}
         <AgentDock threadId={thread?.id != null ? String(thread.id) : null} cwd={cwd} />

@@ -1,7 +1,7 @@
 {
   "name": "mj-code-renderer",
   "private": true,
-  "version": "0.8.7-beta",
+  "version": "0.8.8-beta",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,11 +10,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "katex": "^0.16.47",
     "mermaid": "^12.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
     "remark-gfm": "^4.0.0",
+    "remark-math": "^6.0.0",
     "yjs": "^13.6.33",
     "zod": "^4.6.7"
   },

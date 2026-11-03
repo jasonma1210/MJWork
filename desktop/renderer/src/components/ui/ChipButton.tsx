@@ -12,11 +12,13 @@ export interface ChipButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonEle
   icon?: ReactNode;
   /** 风险警示态：warn 边框 + warn 底色 + warn 文字（与默认 border-border 互斥拼接） */
   warn?: boolean;
+  /** 无边框形态：只表达「当前值 + 可展开」，悬停才现底色（2026-11-03 分支触发器按设计稿改为这种） */
+  bare?: boolean;
   /** 当前值（触发器上显示的文字，超长截断） */
   children?: ReactNode;
 }
 
-export default function ChipButton({ icon, warn = false, className = '', onClick, children, ...rest }: ChipButtonProps) {
+export default function ChipButton({ icon, warn = false, bare = false, className = '', onClick, children, ...rest }: ChipButtonProps) {
   // onClick 必须显式落 attribute（不藏进 ...rest）：「无装饰性死按钮」断言静态扫描 open tag，
   // spread 里的 onClick 对它不可见 —— ui/Button 同款写法。
   return (
@@ -25,9 +27,10 @@ export default function ChipButton({ icon, warn = false, className = '', onClick
       onClick={onClick}
       aria-haspopup="listbox"
       className={[
-        'h-7 inline-flex items-center gap-2 rounded-lg border px-2 text-xs bg-transparent',
+        'h-7 inline-flex items-center gap-2 rounded-lg px-2 text-xs bg-transparent',
         'hover:bg-hover cursor-pointer transition-colors max-w-[220px]',
-        warn ? 'border-warn bg-warn-bg text-warn' : 'border-border text-text',
+        // 边框三态互斥：bare 无边框 / warn / 默认。拼在一起靠样式表顺序决胜不可靠，故用三元一次决定。
+        bare ? 'border-0 text-text' : (warn ? 'border border-warn bg-warn-bg text-warn' : 'border border-border text-text'),
         className,
       ].filter(Boolean).join(' ')}
       {...rest}

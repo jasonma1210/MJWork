@@ -191,6 +191,22 @@ await check('D3 定时计划预览的文案键存在（双侧）——「下次�
   }
 });
 
+await check('D4 派单必须一次成型：无会话时直接建会话并自动执行（不再「预填输入框让用户再点一次发送」）', () => {
+  const app = stripComments(read('App.jsx'));
+  const at = app.indexOf('const recruit = (e) =>');
+  assert.ok(at > 0, '未找到 recruit 分支（派单落点会退回到某处私活）');
+  const body = app.slice(at, at + 1200);
+  // 2026-11-03（用户反馈 1）：旧路径是 setActiveThread(null) + setInitialPrompt(goal)，
+  // 而 ChatArea 在「无会话」时只能把目标预填进输入框 —— 用户落到对话页后必须再点一次发送。
+  // 新路径：无会话且有目标 ⇒ 直接建会话，目标与助手随 extras 落档，进页即自动执行。
+  assert.match(body, /newThreadInProjectRef\.current\?\.\(null,\s*goal,\s*detail\)/,
+    '无会话派单未一次成型（会退化成「预填 + 再点一次发送」）');
+  assert.match(body, /if \(needThread && goal\)/, '缺少「无会话且有目标」的分支判定');
+  // 有会话时不得为了派单另开一个会话（原地换助手是 2026-10-27 定下的落点语义）
+  assert.match(body, /if \(needThread\) setActiveThread\(null\)/, '有会话时应原地注入，不得清空会话');
+  assert.match(body, /setTimeout\(/, '有会话时仍应在宏任务里注入 expert（避免被 extras 恢复覆盖）');
+});
+
 // ── E. validateCron 的失败路径（提交用它把关，不能只测成功路径）──
 await check('E1 非法 cron 逐类给出可读错误（字段数 / 字符合法性 / 数值越界）', () => {
   assert.ok(validateCron('0 9 * *', t), '字段数不足应报错');

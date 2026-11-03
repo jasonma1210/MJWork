@@ -1,4 +1,6 @@
 {
   "listLabel": "任务清单",
-  "progress": "任务进度"
+  "progress": "任务进度",
+  "collapse": "收起任务清单",
+  "expand": "展开任务清单"
 }

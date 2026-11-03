@@ -73,10 +73,17 @@ export function MermaidDiagram({ code }: { code: string }) {
   }, [code, theme]);
 
   if (error) {
+    // 渲染失败时**必须**把源码放出来（2026-11-03 用户反馈 6「识别逻辑图」）：
+    // 模型写的图语法不合规是常态，只给一句「渲染失败」等于把内容彻底吞掉；
+    // 用户可以自己复制去修，也能看出这张图想表达什么。原文默认折叠，不抢正文注意力。
     return (
       <div className="my-2 rounded-lg border border-border bg-raise px-3 py-2 text-xs text-text2">
         <div className="mb-1">{t('message.diagramRenderFailed')}</div>
-        <pre className="whitespace-pre-wrap font-mono text-[11px] text-text2/80">{error}</pre>
+        <details>
+          <summary className="cursor-pointer select-none">{t('message.diagramShowSource')}</summary>
+          <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px] text-text2/80">{code}</pre>
+          <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px] text-danger/80">{error}</pre>
+        </details>
       </div>
     );
   }

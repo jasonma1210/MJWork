@@ -10,7 +10,6 @@
 // 交通灯位（darwin 80px / 其余 12px），顶栏常驻全宽、不随左右栏开合移动。
 import { IconChart, IconPalette, IconPanelRight, IconSearch, IconSidebar } from './icons';
 import { useI18n } from '../i18n';
-import type { ReactNode } from 'react';
 
 export interface TopBarActionsProps {
   onToggleSidebar: () => void;   // 左栏开关（⌘B 同落点）
@@ -23,36 +22,41 @@ export interface TopBarActionsProps {
   localMode: boolean;            // 是否展示「本机模式」标记
   showDashboard: boolean;        // 「用量」页是否在当前视图（决定按钮选中态）
   onOpenDashboard: () => void;   // 互斥视图：调用方先 resetView 再落该视图
-  /** 顶栏左侧标题区（衬线 h1 + 面包屑），由调用方注入；原型 tb-left 签名 */
-  leadingTitle?: ReactNode;
 }
 
 export default function TopBarActions({
   onToggleSidebar, onOpenSearch, paneOpen, onTogglePane, hasActiveThread,
-  onCycleTheme, themeLabel, localMode, showDashboard, onOpenDashboard, leadingTitle,
+  onCycleTheme, themeLabel, localMode, showDashboard, onOpenDashboard,
 }: TopBarActionsProps) {
   const { t } = useI18n();
+  // 2026-11-03（用户反馈 7 → 修订）：侧栏开关 + 搜索属**左侧导航语义**，固定在顶栏**左端**
+  // （紧贴 macOS 交通灯 inset），不再随上次改动漂到右端；其余动作（右栏开关 / 主题 / 用量）
+  // 留在**右端**。标题文字已退役（App 不再传 leadingTitle）；交通灯由系统绘制
+  // （titleBarStyle: hiddenInset），不随侧栏开合消失。
   return (
     <>
-      <button
-        onClick={onToggleSidebar}
-        className="text-text2 hover:text-text p-1 rounded-lg"
-        title={t('app.toggleSidebarTitle')}
-        aria-label={t('app.toggleSidebar')}
-      >
-        <IconSidebar size={16} />
-      </button>
-      <button
-        onClick={onOpenSearch}
-        className="text-text2 hover:text-text p-1 rounded-lg"
-        title={t('app.searchTitle')}
-        aria-label={t('app.search')}
-      >
-        <IconSearch size={16} />
-      </button>
-      {leadingTitle}
+      {/* 左组：侧栏开关（⌘B 同落点）+ 搜索（⌘K），控制左侧导航，紧贴交通灯 */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onToggleSidebar}
+          className="text-text2 hover:text-text p-1 rounded-lg"
+          title={t('app.toggleSidebarTitle')}
+          aria-label={t('app.toggleSidebar')}
+        >
+          <IconSidebar size={16} />
+        </button>
+        <button
+          onClick={onOpenSearch}
+          className="text-text2 hover:text-text p-1 rounded-lg"
+          title={t('app.searchTitle')}
+          aria-label={t('app.search')}
+        >
+          <IconSearch size={16} />
+        </button>
+      </div>
+      {/* 右组：右栏开关 / 主题 / 本机模式 / 用量，靠右对齐 */}
       <div className="ml-auto flex items-center gap-2">
-        {/* 右栏开关常驻（与左栏开关对称）：开/关都在，状态用高亮区分 */}
+        {/* 右栏开关常驻：开/关都在，状态用高亮区分 */}
         <button
           onClick={onTogglePane}
           disabled={!hasActiveThread}

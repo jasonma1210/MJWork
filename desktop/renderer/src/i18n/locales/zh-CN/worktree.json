@@ -85,5 +85,17 @@
   "useProjectDir": "改用项目目录",
   "useProjectDirDone": "已把会话执行目录改为 {path}",
   "useProjectDirFailed": "切换执行目录失败",
-  "useProjectDirNoProject": "当前没有可用的项目目录"
+  "useProjectDirNoProject": "当前没有可用的项目目录",
+  "notRepo": "未初始化 Git",
+  "notRepoTitle": "这个目录还不是 Git 仓库",
+  "notRepoHint": "分支与 Worktree 都依赖 Git。点下面的按钮即可初始化（它会在当前目录执行 git init 并创建一条空提交）；你也可以自己在终端初始化后点「重新检测」。",
+  "reprobe": "重新检测",
+  "noCurrentBranch": "无当前分支",
+  "initRepo": "初始化 Git 仓库",
+  "initFailed": "初始化 Git 失败",
+  "initNeedIdentity": "仓库已初始化，但缺少 Git 提交身份（user.name / user.email），首个提交没有创建。配置身份后再点一次即可。",
+  "initStagedPending": "仓库已初始化；检测到已有暂存内容，为避免把你的改动一起提交，首个提交没有创建。",
+  "unbornTitle": "仓库还没有首个提交（分支 {branch} 待创建）",
+  "unbornHint": "分支要等第一次提交之后才存在。可以创建一条空提交 —— 不包含任何文件改动。",
+  "createInitialCommit": "创建首个空提交"
 }

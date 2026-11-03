@@ -217,7 +217,8 @@ localDataIpc.initLocalDataIpc({
   //（取不到时级联降级为「只清断点」）。写在同一行是行数门禁所致——本文件已在 code 行天花板，
   // BASELINE_800 只减不增，新增一行就必须并进既有行。
   getMemoryFileSync: () => memoryFileSync, getTaskStore: () => taskStore,
-});
+  // 删会话即停运行（2026-11-03）：agentRunner 在本文件后段声明，故经箭头延迟求值（同 getActiveRunIds）。
+  abortRunsForThread: (tid) => agentRunner.abortRunsForThread(tid), });
 const { syncModelsFile, migrateLocalModelsToFile } = localDataIpc;
 
 // 差集 A：diff 行内评论存储——评论挂到 localStore 的线程对象（t.diffComments）随
@@ -281,10 +282,11 @@ const toolOutputs = require('./toolOutputs');
 // T1（2026-10-17）：流式三层守卫（首字节 / 空闲 / 单轮总时长）。
 // 替代原来的 AbortSignal.timeout(125000)——那是「总时长」语义，会把推理模型
 // （mimo 等思考阶段长时间无正文）误判成「无响应」并整轮杀掉。
-const { createStreamGuard, streamTimeoutMessage, reportSlowTtfb } = require('./streamGuard');
+const { createStreamGuard, streamTimeoutMessage, reportSlowTtfb, ttfbTargetFor } = require('./streamGuard');
 // T6：三层超时可在设置页调整（用户设置 > 环境变量 > 默认），每次请求现读，改完立即生效
 const streamSettings = require('./streamSettings');
-const resolveStreamTimeouts = () => streamSettings.getStreamTimeouts();
+// 传 baseUrl：本机推理端点走 LOCAL 档（默认首字节 3 分钟，见 streamGuard.LOCAL_DEFAULTS）
+const resolveStreamTimeouts = (opts) => streamSettings.getStreamTimeouts(opts);
 // T6：注入 localStore getter（此时 localStore 变量已声明，whenReady 后才赋值）
 streamSettings.initStreamSettings({ getLocalStore: () => localStore });
 const { createScheduledChannels } = require('./scheduledChannels');
@@ -682,7 +684,7 @@ async function chatStreamOnce({ providerId, isGlobal = false, baseUrl, messages,
   // 语义是「多久没有动静」而不是「总共花了多久」——只要还有数据在动就一直等，
   // 真正的挂起才断。直连路径（无 externalSignal，用户手动对话）不设总时长上限：
   // 那边可能本来就是正当的长回答，硬切会把文章砍半。
-  const streamTimeouts = resolveStreamTimeouts();
+  const streamTimeouts = resolveStreamTimeouts({ baseUrl: root });
   const streamGuard = createStreamGuard({
     firstByteMs: streamTimeouts.firstByteMs,
     idleMs: streamTimeouts.idleMs,
@@ -777,7 +779,7 @@ async function chatStreamOnce({ providerId, isGlobal = false, baseUrl, messages,
     // P2-2：主对话通道的 TTFB 告警接线——此前只有 scheduled 通道接了 reportSlowTtfb，
     // 用户手动对话（最高频路径）测到了首字节却不告警，SLO 只覆盖了次要通道。
     // 放 finally：成功/失败路径都报（未达成首字节时 ttfbMs() 为 null，reportSlowTtfb 自然跳过）。
-    reportSlowTtfb(streamGuard.ttfbMs(), 'chat');
+    reportSlowTtfb(streamGuard.ttfbMs(), 'chat', ttfbTargetFor(root));
     streamGuard.stop();
     if (onExternalAbort && externalSignal?.removeEventListener) {
       externalSignal.removeEventListener('abort', onExternalAbort);

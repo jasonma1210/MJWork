@@ -82,14 +82,17 @@ check('TeamSpace 在 projectId 存在时才挂载 KnowledgePanel，并把 projec
 });
 
 // ── 3) 上层把两个键分别传对：spaceId=项目目录，projectId=授权主体（§4.2.1 不是同义词）──
-check('StudioPage 把 projectId 与 spaceId 分别传给 TeamSpace', () => {
-  const { sf } = parse(path.join(SRC, 'components/StudioPage.tsx'));
+// 2026-11-03：工作室下线后 TeamSpace 的宿主改为助理的「空间」Tab。
+// 判据不变（两个键必须分别传对），只是被检文件跟着搬家 —— 不改成「随便哪个文件都行」，
+// 那会让「谁负责传这两个键」失去唯一定位。
+check('助理页把 projectId 与 spaceId 分别传给 TeamSpace', () => {
+  const { sf } = parse(path.join(SRC, 'components/AssistantPage.tsx'));
   const el = jsxElements(sf).find((e) => e.name === 'TeamSpace');
-  assert.ok(el, 'StudioPage 没有渲染 TeamSpace');
+  assert.ok(el, 'AssistantPage 没有渲染 TeamSpace');
   const pid = el.attrs.get('projectId');
   const sid = el.attrs.get('spaceId');
-  assert.ok(pid, 'StudioPage 未把 projectId 传给 TeamSpace（知识库授权主体会丢）');
-  assert.ok(sid, 'StudioPage 未把 spaceId 传给 TeamSpace');
+  assert.ok(pid, 'AssistantPage 未把 projectId 传给 TeamSpace（知识库授权主体会丢）');
+  assert.ok(sid, 'AssistantPage 未把 spaceId 传给 TeamSpace');
   const pidText = pid.initializer && ts.isJsxExpression(pid.initializer) ? pid.initializer.expression.getText(sf) : '';
   const sidText = sid.initializer && ts.isJsxExpression(sid.initializer) ? sid.initializer.expression.getText(sf) : '';
   assert.equal(pidText, 'projectId', `projectId 应为项目 id，实际：${pidText}`);

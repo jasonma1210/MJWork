@@ -88,6 +88,9 @@ contextBridge.exposeInMainWorld('mjcode', {
   // 与上面 tool:gitBranch（给模型用的 `git branch -a` 原文）分开：渲染层要的是结构化数据，
   // 解析「给人看的」文本在 detached HEAD、pager、颜色下都会错。
   // 语义对齐 WorkBuddy：选分支（纯状态）与切分支（checkoutBranch，带 dirtyPolicy）是两个动作。
+  // 2026-11-03：初始化 Git 仓库（已有目录的一键初始化 + 空仓库补首个提交）。
+  // 新建项目在 project:create 里已自动做完，这里服务「打开别人的目录」那条路。
+  initRepo: (payload) => ipcRenderer.invoke('git:init', payload),
   listBranches: (payload) => ipcRenderer.invoke('git:branches', payload),
   refreshBranches: (payload) => ipcRenderer.invoke('git:refreshBranches', payload),
   worktreeStatus: (payload) => ipcRenderer.invoke('git:worktreeStatus', payload),

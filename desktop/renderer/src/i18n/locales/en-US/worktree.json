@@ -85,5 +85,17 @@
   "useProjectDir": "Use project folder",
   "useProjectDirDone": "Working directory switched to {path}",
   "useProjectDirFailed": "Failed to switch working directory",
-  "useProjectDirNoProject": "No project folder available"
+  "useProjectDirNoProject": "No project folder available",
+  "notRepo": "No Git repo",
+  "notRepoTitle": "This folder is not a Git repository yet",
+  "notRepoHint": "Branches and Worktree both need Git. Use the button below to initialize (it runs git init here and creates an empty commit); if you initialized it in a terminal yourself, hit “Re-check”.",
+  "reprobe": "Re-check",
+  "noCurrentBranch": "No current branch",
+  "initRepo": "Initialize Git repository",
+  "initFailed": "Failed to initialize Git",
+  "initNeedIdentity": "Repository initialized, but Git author identity (user.name / user.email) is missing, so no initial commit was created. Set it and try again.",
+  "initStagedPending": "Repository initialized. Staged content was detected, so no initial commit was created (your changes stay uncommitted).",
+  "unbornTitle": "No initial commit yet (branch {branch} pending)",
+  "unbornHint": "A branch only exists after the first commit. You can create an empty commit — it contains no file changes.",
+  "createInitialCommit": "Create initial empty commit"
 }

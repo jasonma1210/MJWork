@@ -608,6 +608,9 @@ export default function Composer({
               ? t('composer.dispatchPlaceholder')
               : (loading ? t('composer.placeholderRunning') : t('composer.placeholderIdle')))}
           className="w-full bg-transparent outline-none text-sm resize-none"
+          // 焦点由外层卡片承担（focus-within:border-accent + ring）：本元素再画一圈
+          // 就是用户截图里「输入框里套了个黑框」的那道线（2026-11-03 反馈 4）。
+          data-focus-ring="container"
           rows={1}
         />
 

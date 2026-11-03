@@ -10,18 +10,18 @@
 // 所以这里只启用「首字节 + 单轮总时长」两层；拿"空闲"判断会把"正在生成"当成"挂死"。
 // 要享受空闲语义，就得把这两条也改成流式（留作后续）。
 
-const { createStreamGuard, streamTimeoutMessage, reportSlowTtfb } = require('./streamGuard');
+const { createStreamGuard, streamTimeoutMessage, reportSlowTtfb, ttfbTargetFor } = require('./streamGuard');
 const streamSettings = require('./streamSettings');
 
 function createScheduledChannels({ resolveSecret, quota } = {}) {
   if (typeof resolveSecret !== 'function') throw new Error('createScheduledChannels: 缺少 resolveSecret');
   if (!quota) throw new Error('createScheduledChannels: 缺少 quota');
 
-  /** 三层超时（用户设置 > 环境变量 > 默认），每次请求现读 */
-  const resolveStreamTimeouts = () => streamSettings.getStreamTimeouts();
+  /** 三层超时（用户设置 > 环境变量 > 默认），每次请求现读；本机端点自动换 LOCAL 档 */
+  const resolveStreamTimeouts = (opts) => streamSettings.getStreamTimeouts(opts);
 
-  function guardFor() {
-    const t = resolveStreamTimeouts();
+  function guardFor(baseUrl) {
+    const t = resolveStreamTimeouts({ baseUrl });
     const controller = new AbortController();
     const guard = createStreamGuard({
       firstByteMs: t.firstByteMs,
@@ -49,7 +49,7 @@ function createScheduledChannels({ resolveSecret, quota } = {}) {
     }
     const root = (model.baseUrl || secret.base_url || '').replace(/\/+$/, '');
     if (!root) throw new Error('BASE_URL_MISSING: 模型服务地址为空');
-    const { guard, controller } = guardFor();
+    const { guard, controller } = guardFor(root);
     try {
       const res = await fetch(`${root}/chat/completions`, {
         method: 'POST',
@@ -60,7 +60,7 @@ function createScheduledChannels({ resolveSecret, quota } = {}) {
       });
       guard.firstByte();
       // P2-2b：仅测量 + 超目标告警（返回值是纯文本，无处挂字段，故只留日志）
-      reportSlowTtfb(guard.ttfbMs(), 'scheduledChatOnce');
+      reportSlowTtfb(guard.ttfbMs(), 'scheduledChatOnce', ttfbTargetFor(root));
       if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 300)}`);
       const j = await res.json();
       return j.choices?.[0]?.message?.content || '';
@@ -101,7 +101,7 @@ function createScheduledChannels({ resolveSecret, quota } = {}) {
       body.tools = payload.tools;
       body.tool_choice = 'auto';
     }
-    const { guard, controller } = guardFor();
+    const { guard, controller } = guardFor(root);
     // 合并「外部取消」与「内部超时」：任一触发即中止在途 fetch。
     // AbortSignal.any 需 Node 20.3+（本仓库 Electron 主进程满足）；老运行时不支持则退回内部信号，
     // 此时外部取消退化为「拿到结果后丢弃」，不会误报成功。
@@ -135,7 +135,7 @@ function createScheduledChannels({ resolveSecret, quota } = {}) {
       guard.firstByte();
       // P2-2b：首字节延迟只测量、只告警（缺字段时容忍为 null）
       const ttfbMs = guard.ttfbMs();
-      reportSlowTtfb(ttfbMs, 'scheduledAgentChat');
+      reportSlowTtfb(ttfbMs, 'scheduledAgentChat', ttfbTargetFor(root));
       if (!res.ok) {
         quota.reportError(payload.providerId || 'default');
         const detail = firstDetail || (await res.text().catch(() => ''));

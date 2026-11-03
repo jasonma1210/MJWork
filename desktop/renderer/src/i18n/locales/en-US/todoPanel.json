@@ -1,4 +1,6 @@
 {
   "listLabel": "Task list",
-  "progress": "Task progress"
+  "progress": "Task progress",
+  "collapse": "Collapse task list",
+  "expand": "Expand task list"
 }

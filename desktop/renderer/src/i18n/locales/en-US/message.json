@@ -77,5 +77,6 @@
   "revertConfirm": "Revert",
   "reverted": "Reverted changes in {n} file(s)",
   "revertFailed": "Revert failed: {error}",
-  "logAria": "Conversation"
+  "logAria": "Conversation",
+  "diagramShowSource": "Show diagram source"
 }

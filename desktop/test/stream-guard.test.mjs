@@ -16,7 +16,10 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(import.meta.dirname, '..');
-const { createStreamGuard, streamTimeoutMessage, resolveDefaults, DEFAULTS } = require(path.join(ROOT, 'main/streamGuard.js'));
+const {
+  createStreamGuard, streamTimeoutMessage, resolveDefaults, DEFAULTS, LOCAL_DEFAULTS,
+  isLocalEndpoint, ttfbTargetFor, TTFB_TARGET_MS, TTFB_TARGET_LOCAL_MS,
+} = require(path.join(ROOT, 'main/streamGuard.js'));
 
 let pass = 0;
 let total = 0;
@@ -188,6 +191,53 @@ check('源码：引擎级兜底必须晚于主进程守卫（否则报不出具�
   assert(m, '未找到 DEFAULT_MODEL_TIMEOUT_MS');
   const engineMs = Number(m[1]);
   assert(engineMs > DEFAULTS.totalMs, `引擎兜底 ${engineMs}ms 必须大于主进程总上限 ${DEFAULTS.totalMs}ms`);
+});
+
+// ── 2026-11-03：本机推理端点（ollama）的超时档位 ──
+// 事故实证：model=flint（localhost:11434，29GB）在 7.7 万 token prompt 上 prefill 未完成，
+// 90014ms 被首字节守卫杀掉（prompt_tokens=0），用户看到「本次请求失败」并误判成"输出限制"。
+await checkAsync('本地端点判定：只认回环地址，局域网/云端/非法一律按云端', async () => {
+  assert(isLocalEndpoint('http://localhost:11434/v1') === true, 'localhost 应判本地');
+  assert(isLocalEndpoint('http://127.0.0.1:8000/v1') === true, '127.0.0.1 应判本地');
+  assert(isLocalEndpoint('http://[::1]:11434/v1') === true, '[::1] 应判本地');
+  assert(isLocalEndpoint('https://api.deepseek.com') === false, '云端应判非本地');
+  assert(isLocalEndpoint('http://192.168.1.5:11434/v1') === false, '局域网服务器不算本机端点');
+  assert(isLocalEndpoint('') === false && isLocalEndpoint(null) === false, '空值不得判本地');
+  assert(isLocalEndpoint('not-a-url') === false, '非法 URL 不得判本地（保守）');
+});
+
+await checkAsync('本地档位显著大于云端档位（否则 90s 误杀会复发）', async () => {
+  assert(LOCAL_DEFAULTS.firstByteMs === 300000, `本地 firstByte=${LOCAL_DEFAULTS.firstByteMs}`);
+  assert(LOCAL_DEFAULTS.firstByteMs > DEFAULTS.firstByteMs * 3, '本地首字节必须至少是云端的 3 倍');
+  assert(LOCAL_DEFAULTS.idleMs > DEFAULTS.idleMs, '本地空闲上限应更宽');
+  assert(LOCAL_DEFAULTS.totalMs > DEFAULTS.totalMs, '本地总上限应更宽');
+});
+
+await checkAsync('resolveDefaults 按 local 切换基准，环境变量仍可覆盖', async () => {
+  const cloud = resolveDefaults({});
+  const local = resolveDefaults({}, { local: true });
+  assert(cloud.firstByteMs === DEFAULTS.firstByteMs, '云端默认不应被改动');
+  assert(local.firstByteMs === LOCAL_DEFAULTS.firstByteMs, `本地默认未生效：${local.firstByteMs}`);
+  const overridden = resolveDefaults({ MJ_STREAM_FIRST_BYTE_MS: '45000' }, { local: true });
+  assert(overridden.firstByteMs === 45000, `环境变量必须优先于本地默认，实际 ${overridden.firstByteMs}`);
+});
+
+await checkAsync('首字节告警目标分档：本地 15s / 云端 3s（只影响日志）', async () => {
+  assert(TTFB_TARGET_MS === 3000 && TTFB_TARGET_LOCAL_MS === 15000, '目标档位被改动');
+  assert(ttfbTargetFor('http://localhost:11434/v1') === 15000, '本地端点应放宽到 15s');
+  assert(ttfbTargetFor('https://api.deepseek.com') === 3000, '云端应维持 3s');
+});
+
+await checkAsync('streamSettings 按 baseUrl 选档（本机端点拿 300s，云端拿 90s）', async () => {
+  const streamSettings = require(path.join(ROOT, 'main/streamSettings.js'));
+  // 测试环境没有 localStore（未初始化）⇒ 读不到用户设置，走默认档
+  const local = streamSettings.getStreamTimeouts({ baseUrl: 'http://localhost:11434/v1' });
+  const cloud = streamSettings.getStreamTimeouts({ baseUrl: 'https://api.deepseek.com' });
+  assert(local.firstByteMs === LOCAL_DEFAULTS.firstByteMs, `本机端点应拿 ${LOCAL_DEFAULTS.firstByteMs}，实际 ${local.firstByteMs}`);
+  assert(cloud.firstByteMs === DEFAULTS.firstByteMs, `云端应拿 ${DEFAULTS.firstByteMs}，实际 ${cloud.firstByteMs}`);
+  // 视图里要能说清两档默认值（否则设置页只显示 90s，用户以为本地也是 90s）
+  const view = streamSettings.getStreamSettingsView();
+  assert(view.localDefaults && view.localDefaults.firstByteMs === LOCAL_DEFAULTS.firstByteMs, '视图缺 localDefaults');
 });
 
 console.log(`\n结果：${pass}/${total} 通过`);

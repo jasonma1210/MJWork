@@ -21,11 +21,10 @@
 import {
   ASSISTANT_TABS, DEFAULT_ASSISTANT_TAB, isAssistantTab, type AssistantTab,
 } from './assistantTabs.ts';
-import { DEFAULT_STUDIO_TAB, isStudioTab, type StudioTab } from './studioTabs.ts';
 
 /** 一级主页面。`thread` = 对话/运行（不点亮任何一级入口，属设计：§4.3 的 dashboard/thread） */
 export type NavPage =
-  | 'desk' | 'assistant' | 'studio' | 'scheduled' | 'ledger' | 'dashboard' | 'thread';
+  | 'desk' | 'assistant' | 'scheduled' | 'ledger' | 'dashboard' | 'thread';
 
 /** 覆盖层：与主页面正交，关闭后回到原页面（§4.4） */
 export type NavOverlay = 'none' | 'ecosystem' | 'settings';
@@ -33,7 +32,6 @@ export type NavOverlay = 'none' | 'ecosystem' | 'settings';
 export interface NavRoute {
   page: NavPage;
   assistantTab: AssistantTab;
-  studioTab: StudioTab;
   /** 需要项目上下文时显式存在；不使用 projectPath 充当身份（§4.2.1） */
   projectId?: string | null;
   /** 仅对话/运行上下文使用 */
@@ -44,18 +42,17 @@ export interface NavRoute {
 }
 
 export const NAV_PAGES: readonly NavPage[] = [
-  'desk', 'assistant', 'studio', 'scheduled', 'ledger', 'dashboard', 'thread',
+  'desk', 'assistant', 'scheduled', 'ledger', 'dashboard', 'thread',
 ];
 
 /** 会点亮一级导航的页面（`dashboard`/`thread` 不点亮，与 activeNavOf 返回 '' 同义） */
 export const HIGHLIGHTABLE_PAGES: readonly NavPage[] = [
-  'desk', 'assistant', 'studio', 'scheduled', 'ledger',
+  'desk', 'assistant', 'scheduled', 'ledger',
 ];
 
 export const INITIAL_ROUTE: NavRoute = {
   page: 'desk',
   assistantTab: DEFAULT_ASSISTANT_TAB,
-  studioTab: DEFAULT_STUDIO_TAB,
   projectId: null,
   threadId: null,
   overlay: 'none',
@@ -67,9 +64,8 @@ export function isNavPage(v: unknown): v is NavPage {
 }
 
 export type NavAction =
-  | { type: 'page'; page: NavPage; tab?: AssistantTab | StudioTab }
+  | { type: 'page'; page: NavPage; tab?: AssistantTab }
   | { type: 'assistantTab'; tab: AssistantTab }
-  | { type: 'studioTab'; tab: StudioTab }
   | { type: 'overlay'; overlay: NavOverlay; payload?: Record<string, unknown> | null }
   | { type: 'closeOverlay' }
   | { type: 'projectId'; projectId: string | null }
@@ -94,8 +90,6 @@ export function navReducer(state: NavRoute, action: NavAction): NavRoute {
       // 避免「从助理的 aiTeam 切到工作室，工作室 tab 还停在别处」这类串台。
       if (action.page === 'assistant') {
         next.assistantTab = isAssistantTab(tab) ? tab : DEFAULT_ASSISTANT_TAB;
-      } else if (action.page === 'studio') {
-        next.studioTab = isStudioTab(tab) ? tab : DEFAULT_STUDIO_TAB;
       }
       return next;
     }
@@ -103,11 +97,6 @@ export function navReducer(state: NavRoute, action: NavAction): NavRoute {
       if (!isAssistantTab(action.tab)) return state;
       if (state.page !== 'assistant') return { ...state, page: 'assistant', assistantTab: action.tab };
       return { ...state, assistantTab: action.tab };
-    }
-    case 'studioTab': {
-      if (!isStudioTab(action.tab)) return state;
-      if (state.page !== 'studio') return { ...state, page: 'studio', studioTab: action.tab };
-      return { ...state, studioTab: action.tab };
     }
     case 'overlay':
       return { ...state, overlay: action.overlay, overlayPayload: action.payload ?? null };
@@ -143,7 +132,6 @@ export function routeToLegacyView(route: NavRoute, hasActiveThread = false): Rec
     showDashboard: route.page === 'dashboard',
     showEcosystem: route.overlay === 'ecosystem',
     showDesk: route.page === 'desk',
-    showStudio: route.page === 'studio',
     showLedger: route.page === 'ledger',
     showTeams: false,
     hasActiveThread: !!hasActiveThread,
@@ -153,12 +141,11 @@ export function routeToLegacyView(route: NavRoute, hasActiveThread = false): Rec
 /** 反向适配器：旧布尔 view → route（仅用于历史入口/深链的兼容解析） */
 export function legacyViewToRoute(view: Record<string, unknown> = {}): NavRoute {
   const page: NavPage = view.showDesk ? 'desk'
-    : view.showStudio ? 'studio'
-      : view.showLedger ? 'ledger'
-        : view.showScheduled ? 'scheduled'
-          : view.showAssistant || view.showTeams ? 'assistant'
-            : view.showDashboard ? 'dashboard'
-              : 'thread';
+    : view.showLedger ? 'ledger'
+      : view.showScheduled ? 'scheduled'
+        : view.showAssistant || view.showTeams ? 'assistant'
+          : view.showDashboard ? 'dashboard'
+            : 'thread';
   return {
     ...INITIAL_ROUTE,
     page,

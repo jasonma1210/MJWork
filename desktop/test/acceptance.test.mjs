@@ -90,6 +90,26 @@ check('提示词要求「只输出 JSON」且不带上文（提取器独立于�
   });
   check('⑭ 空目标不发起调用（闲聊不该为「验收标准」付一次模型钱）', r.ac === null && calls === 0);
 }
+// ── C2（2026-11-03）：本机推理端点用更短的 AC 提取超时 ──
+// 实证：model=flint（localhost:11434，29GB）AC 提取吃满 20001ms 才失败，随后主 run 又被 90s 首字节杀掉。
+// 本地模型上这 20 秒是必然浪费（AC 只是可选基线），故本机端点压到 8s 快速失败，云端维持 20s。
+{
+  const seen = [];
+  const captureTimeout = (p, ms) => { seen.push(ms); return Promise.resolve({ content: '{"must":["x"]}' }); };
+  await resolveAcceptance({
+    enabled: true, chatFn: async () => ({ content: '{"must":["x"]}' }),
+    model: { provider: { id: 1, base_url: 'http://localhost:11434/v1' }, model: { model_id: 'm' } },
+    goal: '本机任务', withTimeout: captureTimeout, timeoutMs: 20000,
+  });
+  await resolveAcceptance({
+    enabled: true, chatFn: async () => ({ content: '{"must":["x"]}' }),
+    model: { provider: { id: 1, base_url: 'https://api.deepseek.com' }, model: { model_id: 'm' } },
+    goal: '云端任务', withTimeout: captureTimeout, timeoutMs: 20000,
+  });
+  check('⑯ 本机端点 AC 提取超时压到 8s，云端仍是 20s（省下的时间还给主任务）',
+    seen[0] === 8000 && seen[1] === 20000, `seen=${JSON.stringify(seen)}`);
+}
+
 // ── D. 复用优先 ──
 {
   let calls = 0;

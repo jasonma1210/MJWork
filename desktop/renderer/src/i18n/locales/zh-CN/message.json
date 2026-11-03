@@ -77,5 +77,6 @@
   "revertConfirm": "撤回",
   "reverted": "已撤回 {n} 个文件的改动",
   "revertFailed": "撤回失败：{error}",
-  "logAria": "对话内容"
+  "logAria": "对话内容",
+  "diagramShowSource": "查看图表源码"
 }

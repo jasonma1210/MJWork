@@ -307,10 +307,16 @@ check('副本分支：显示去前缀、复制完整名', () => {
   assert.match(bar, /worktree\.branchLabel\.copy/, '复制按钮要有可访问名');
 });
 
-check('非 Git 仓库：分支 chip 置灰并给「初始化 Git 仓库」提示（不弹空列表）', () => {
+check('非 Git 仓库：分支 chip 不伪装成可选，给出「初始化 Git」可执行面板（不弹空列表）', () => {
   const picker = read('components/GitBranchPicker.tsx');
-  assert.match(picker, /disabled=\{locked \|\| !isRepo\}/);
-  assert.match(picker, /worktree\.initGitHint/);
+  // 2026-11-03（用户反馈 5「初始化 git 失败，卡死在选择分支上」）：
+  // 旧判据是 `disabled={locked || !isRepo}` —— 那会把整颗 chip 变成**点不动的死按钮**，
+  // 用户既看不到原因也没有出口。新语义：只有「副本已建」（locked）才禁用；
+  // 非仓库仍可点开，但走专门面板（说明 + git init 命令 + 重新检测）。
+  assert.match(picker, /disabled=\{locked\}/, '非 Git 仓库时不应把 chip 变成死按钮（用户点不动也看不到原因）');
+  assert.match(picker, /isRepo === false \?/, '缺少「非仓库」专用分支（会回落到空列表）');
+  assert.match(picker, /worktree\.notRepoHint/, '缺少「未初始化 Git」的说明文案');
+  assert.match(picker, /void probe\(\)/, '「重新检测」必须复用同一条探测路径（否则状态仍会卡住）');
   // 挂载即探测：否则用户要先点开才知道「这里不是仓库」，chip 会先显示成可用
   assert.match(picker, /probedRef\.current === cwd/);
 });

@@ -7,6 +7,12 @@
 //   本套件随之改写为第二版的判据 —— 这正是它存在的意义：语义变了，门禁必须先红，
 //   然后**显式**改成新语义，而不是让旧断言在一片红里被顺手删掉。
 //
+//   2026-11-03 第七版（用户反馈 2「工作室这个按钮存在的意义在哪里」）：撤销「工作室」一级入口，
+//   编制（TeamsPage）与项目空间（TeamSpace）并入助理 Tab。于是：
+//     · FLAGS 里去掉 showStudio（8 个标志 ⇒ 256 组组合）；
+//     · 'studio' 从合法返回值集合移除，并新增一条「任何组合都不得再返回 studio」的反向断言；
+//     · 助理 Tab 集合扩为 6 个（+roster/+space），C 段整体改写为「助理挂载编制/空间」。
+//
 // 断言范式纪律：
 //   · **必须用行为断言**——直接 import `renderer/src/lib/navState.ts` 与
 //     `renderer/src/lib/assistantTabs.ts`，穷举视图组合、实调纯函数，断言返回值；
@@ -35,14 +41,16 @@ const check = async (name, fn) => {
 
 const { activeNavOf } = await import('../renderer/src/lib/navState.ts');
 const { ASSISTANT_TABS, DEFAULT_ASSISTANT_TAB, isAssistantTab } = await import('../renderer/src/lib/assistantTabs.ts');
-const { STUDIO_TABS, DEFAULT_STUDIO_TAB, isStudioTab } = await import('../renderer/src/lib/studioTabs.ts');
 
 // ── 视图组合穷举器：9 个布尔标志（含两个兼容输入 + 接单台 + 账本）⇒ 512 组 ──
 // 第三版（2026-10-25）：新增一级入口「工作台」⇒ 标志从 6 个变 7 个，组合数 64→128。
 // 第四版（2026-10-26）：新增一级入口「工作室」⇒ 8 个标志，组合数 128→256。
 // 第五版（2026-10-27）：新增一级入口「账本」⇒ 9 个标志，组合数 256→512。
+// 第七版（2026-11-03）：撤销「工作室」⇒ 8 个标志，组合数 512→256。
 // 语义变了就先让旧断言红，再显式改成新语义 —— 这是本套件存在的意义（见文件头）。
-const FLAGS = ['showAssistant', 'showScheduled', 'showDashboard', 'showEcosystem', 'showTeams', 'showDesk', 'showStudio', 'showLedger', 'hasActiveThread'];
+// showStudio 仍留在签名里（兼容旧调用方），但**不再作为组合维度**：它对判定已无影响，
+// 继续穷举它只会让「组合数 x2」变成纯噪音。
+const FLAGS = ['showAssistant', 'showScheduled', 'showDashboard', 'showEcosystem', 'showTeams', 'showDesk', 'showLedger', 'hasActiveThread'];
 function allCombos() {
   const out = [];
   for (let mask = 0; mask < (1 << FLAGS.length); mask++) {
@@ -58,12 +66,13 @@ const COMBOS = allCombos();
 // 第四版（2026-10-26）：新增一级入口「工作室」⇒ 'studio' 也是合法返回值
 // 第五版（2026-10-27）：新增一级入口「账本」⇒ 'ledger' 也是合法返回值
 // 第六版（2026-10-27）：'new' 下线（落地页改为 desk），故不再是合法返回值
-const ALLOWED = new Set(['assistant', 'scheduled', 'ecosystem', 'desk', 'studio', 'ledger', '']);
+// 第七版（2026-11-03）：'studio' 随工作室下线移除 —— 返回它意味着侧栏要亮一个不存在的入口
+const ALLOWED = new Set(['assistant', 'scheduled', 'ecosystem', 'desk', 'ledger', '']);
 
 // ── A. 一级选中态：行为断言 ──
 
-await check('A1 穷举 512 种视图组合：返回值域收敛为 8 个字面量（穷尽）', () => {
-  assert.equal(COMBOS.length, 512, `组合数应为 512，实际 ${COMBOS.length}`);
+await check('A1 穷举 256 种视图组合：返回值域收敛为 6 个字面量（穷尽）', () => {
+  assert.equal(COMBOS.length, 256, `组合数应为 256，实际 ${COMBOS.length}`);
   for (const c of COMBOS) {
     const got = activeNavOf(c);
     assert.ok(ALLOWED.has(got), `未定义返回值：${JSON.stringify(c)} → ${got}`);
@@ -111,7 +120,6 @@ await check('A4 助理及团队编制收敛到 assistant；定时任务**不**�
     const shouldAssistant = c.showAssistant || c.showTeams;
     if (!shouldAssistant) continue;
     if (c.showDesk) continue;      // 接单台优先级最高，见 A9
-    if (c.showStudio) continue;    // 工作室优先（一级入口），见 A10
     if (c.showLedger) continue;    // 账本优先（一级入口），见 A11
     if (c.showScheduled) continue; // 定时任务优先，见 A8
     assert.equal(activeNavOf(c), 'assistant', `助理子态未收敛：${JSON.stringify(c)}`);
@@ -155,24 +163,22 @@ await check('A9 接单台（desk）优先于一切：showDesk 为真时恒返回
   }
 });
 
-await check('A10 工作室（studio）优先于定时任务/助理/生态中心，但低于接单台（desk）', () => {
-  for (const c of COMBOS.filter((x) => x.showStudio && !x.showDesk)) {
-    assert.equal(activeNavOf(c), 'studio', `studio 未优先：${JSON.stringify(c)}`);
+await check('A10 工作室已下线：任何视图组合都不得再返回 studio（含显式传 showStudio）', () => {
+  // 第七版（2026-11-03）：旧断言是「studio 优先于 X」——页面没了，优先级自然也不存在了。
+  // 这里改成反向断言：**所有**组合（以及强制 showStudio=true 的组合）都不能返回 'studio'，
+  // 否则侧栏会点亮一个已经不存在的入口（表现是「点了没反应」或「高亮错位」）。
+  for (const c of COMBOS) {
+    assert.notEqual(activeNavOf(c), 'studio', `仍返回已下线的 studio：${JSON.stringify(c)}`);
+    assert.notEqual(activeNavOf({ ...c, showStudio: true }), 'studio', `showStudio=true 又把 studio 点亮了：${JSON.stringify(c)}`);
   }
-  // 反向：studio 不在场时永不返回 studio（否则「什么都没开」会莫名点亮工作室）
-  for (const c of COMBOS.filter((x) => !x.showStudio)) {
-    assert.notEqual(activeNavOf(c), 'studio', `未开工作室却返回 studio：${JSON.stringify(c)}`);
-  }
-  // desk 仍压过 studio（接单台优先级最高的语义不能被新入口破坏）
+  // desk 仍压过一切（接单台优先级最高的语义不能被入口下线破坏）
   assert.equal(
-    activeNavOf({ showDesk: true, showStudio: true, showScheduled: true, showAssistant: true }),
+    activeNavOf({ showDesk: true, showScheduled: true, showAssistant: true }),
     'desk',
   );
-  // studio 压过 ledger（固化顺序 desk > studio > ledger > scheduled > assistant > ecosystem）
-  assert.equal(activeNavOf({ showStudio: true, showLedger: true, showScheduled: true }), 'studio');
 });
 
-await check('A11 账本（ledger）优先于定时任务/助理/生态中心，但低于 desk 与 studio', () => {
+await check('A11 账本（ledger）优先于定时任务/助理/生态中心，但低于 desk', () => {
   for (const c of COMBOS.filter((x) => x.showLedger && !x.showDesk && !x.showStudio)) {
     assert.equal(activeNavOf(c), 'ledger', `ledger 未优先：${JSON.stringify(c)}`);
   }
@@ -182,24 +188,23 @@ await check('A11 账本（ledger）优先于定时任务/助理/生态中心，�
   }
   // 只开账本 ⇒ ledger（单独生效，不依赖其它标志）
   assert.equal(activeNavOf({ showLedger: true }), 'ledger');
-  // desk / studio 都压过 ledger
+  // desk 压过 ledger（studio 已下线，不再参与比较）
   assert.equal(activeNavOf({ showDesk: true, showLedger: true }), 'desk');
-  assert.equal(activeNavOf({ showStudio: true, showLedger: true }), 'studio');
 });
 
 // ── B. 助理子页目录与挂载方式 ──
 
-await check('B1 助理子页目录恰为四个 Tab：派活（默认）/ 助手目录 / AI 建团 / 项目看板', () => {
+await check('B1 助理子页目录恰为六个 Tab：派活（默认）/ 目录 / AI 建团 / 编制 / 看板 / 空间', () => {
   const ids = ASSISTANT_TABS.map((x) => x.id);
   // 第六版（2026-10-27）：'publish'（发布任务）下线 —— 它只能派给军团或自动，与助手毫无关系，
   // 且与目录/建团各自都有一套提交。改为 'dispatch'（派活面板，唯一提交出口）。
-  assert.deepEqual(ids, ['dispatch', 'directory', 'aiTeam', 'board']);
+  // 第七版（2026-11-03）：工作室下线 ⇒ 'roster'（编制）与 'space'（项目空间）并入，
+  // 顺序固定为「建团 → 编制」（建团产出编制，相邻才连贯）与「看板 → 空间」（跟进 → 资产）。
+  assert.deepEqual(ids, ['dispatch', 'directory', 'aiTeam', 'roster', 'board', 'space']);
   assert.ok(!ids.includes('publish'), 'publish（发布任务）已下线，不应再出现');
-  assert.ok(!ids.includes('teams'), '军团编制不应再是助理子 Tab（已迁入工作室）');
+  assert.ok(!ids.includes('teams'), '旧 id teams 已由 roster 取代（编制仍是助理 Tab，但只有一种叫法）');
   // 定时任务已升回一级入口 ⇒ 不得再作为助理 Tab
   assert.ok(!ids.includes('scheduled'), '定时任务不应再是助理子 Tab');
-  // 2026-10-28：board（项目任务看板）自工作室迁入 —— 派完活在哪跟进，看板就跟人走到哪；
-  // 而 artifacts **不**迁入：会话右栏已挂同一 ArtifactPanel（threadId 维度），再加 Tab 是第三个重复入口
   assert.ok(!ids.includes('artifacts'), '工件不应是助理子 Tab（右栏已有同一面板）');
 });
 
@@ -216,9 +221,9 @@ await check('B3 默认 Tab 是「派活」；isAssistantTab 对非法输入返�
   // 目录作为资源面退到第二个 Tab。
   assert.equal(DEFAULT_ASSISTANT_TAB, 'dispatch', `默认 Tab 应为 dispatch，实际 ${DEFAULT_ASSISTANT_TAB}`);
   assert.ok(isAssistantTab(DEFAULT_ASSISTANT_TAB), `默认 Tab 非法：${DEFAULT_ASSISTANT_TAB}`);
-  for (const ok of ['dispatch', 'directory', 'aiTeam', 'board']) assert.ok(isAssistantTab(ok), ok);
+  for (const ok of ['dispatch', 'directory', 'aiTeam', 'roster', 'board', 'space']) assert.ok(isAssistantTab(ok), ok);
   assert.equal(isAssistantTab('publish'), false, 'publish 已下线，必须判为非法');
-  // 'teams' 现已**不是**助理 Tab（迁去工作室）⇒ 必须判为非法，防止脏值把编制塞回助理
+  // 'teams' 是旧 id（现名 roster）⇒ 必须判为非法，防止历史存档把界面切到一个不存在的 Tab
   for (const bad of ['', null, undefined, 'teams', 'teams ', 'Teams', 'unknown', 'scheduled', 'complex', 0]) {
     assert.equal(isAssistantTab(bad), false, String(bad));
   }
@@ -244,6 +249,9 @@ await check('B5 App 把视图标志（含 showScheduled）传给 Sidebar，并�
   // 助理页仍按 tab 挂载，且 onTab 走 navDispatch 单一来源（2026-10-27：page 态迁 route）
   assert.match(app, /<AssistantPage[^>]*tab=\{assistantTab\}[^>]*onTab=\{\(t\)\s*=>\s*navDispatch/, 'App 未按 tab 挂载 AssistantPage（且 onTab 应走 navDispatch 单一来源）');
   assert.ok(!/<TeamsPage\s*\/>/.test(app), 'App 仍直接挂载 <TeamsPage/>（应留在助理 Tab）');
+  // 第七版：工作室页面已删除，App 不得再 import/挂载它（否则是死代码 + 双入口）
+  assert.ok(!app.includes('StudioPage'), 'App 仍引用 StudioPage（工作室已下线）');
+  assert.ok(!app.includes('onOpenStudio'), 'App 仍传 onOpenStudio（侧栏已无工作室入口）');
 });
 
 await check('B6 AssistantPage 按 tab 条件挂载各子视图，且不再有 scheduled/complex/teams 分支', () => {
@@ -253,6 +261,8 @@ await check('B6 AssistantPage 按 tab 条件挂载各子视图，且不再有 sc
     ["tab === 'directory'", '<AssistantDirectory'],
     ["tab === 'aiTeam'", '<AiTeamBuilder'],
     ["tab === 'board'", '<StudioBoard'],
+    ["tab === 'roster'", '<TeamsPage'],
+    ["tab === 'space'", '<TeamSpace'],
   ]) {
     const i = page.indexOf(pair[0]);
     assert.ok(i > 0, `AssistantPage 缺分支 ${pair[0]}`);
@@ -262,37 +272,27 @@ await check('B6 AssistantPage 按 tab 条件挂载各子视图，且不再有 sc
   assert.ok(!page.includes('<ScheduledTasks'), 'AssistantPage 不应再挂 ScheduledTasks');
   // 第六版：发布任务页已删。若这里又出现 PublishTaskPage，说明三处各自提交的形态回来了。
   assert.ok(!page.includes('PublishTaskPage'), 'AssistantPage 仍引用 PublishTaskPage（发布任务已下线）');
-  // 第四版（2026-10-27）：编制迁入工作室 ⇒ AssistantPage 不得再挂 TeamsPage（否则双入口）
-  assert.ok(!page.includes('<TeamsPage'), 'AssistantPage 仍挂 TeamsPage（编制已迁工作室，会形成双入口）');
+  // 第七版（2026-11-03）：编制**回到**助理（工作室下线）⇒ 必须挂载。
+  // 方向翻转是显式记录过的语义变更（第四版曾是反面断言），不是把红断言删掉了事。
+  assert.ok(page.includes('<TeamsPage'), 'AssistantPage 未挂 TeamsPage（编制已随工作室下线，必须由助理承接）');
 });
 
 // ── C. 工作室（Studio）子页目录与挂载方式 ──
 
-await check('C1 工作室子页目录恰为两个 Tab：项目空间（默认）/ 编制', () => {
-  const ids = STUDIO_TABS.map((x) => x.id);
-  // 2026-10-28：board 迁入助理（派活与跟进同处一页）；artifacts Tab 下线
-  //（与会话右栏 ArtifactPanel 纯重复，D-03「消除重复而非造空壳」同一纪律）。
-  // 工作室收敛为纯「项目资产 + 编制」两Tab。
-  assert.deepEqual(ids, ['space', 'roster']);
-  assert.equal(DEFAULT_STUDIO_TAB, 'space');
-  for (const ok of ['space', 'roster']) assert.ok(isStudioTab(ok), ok);
-  for (const bad of ['', null, undefined, 'teams', 'board', 'artifacts', 'unknown', 0]) {
-    assert.equal(isStudioTab(bad), false, String(bad));
-  }
-});
-
-await check('C4 项目上下文（IA-02）：StudioPage 不再写死 spaceId="default"，且按 tab 挂载看板', () => {
-  // 用 stripComments：注释里会**复述**这次修掉的缺陷（"此前写死 spaceId="default""），
-  // 不剥离注释的话，断言会命中注释而永远为真 —— 那正是「注释当成代码证据」的空转。
-  const page = stripComments(read('components/StudioPage.tsx'));
-  // 串项目缺陷的**形态判据**：写死 default 会让切项目后资产不变。
-  // 断言锚定「没有把字面量 default 当空间键传下去」这一事实，而不是匹配某一行注释。
-  assert.ok(!/spaceId\s*=\s*["']default["']/.test(page), 'StudioPage 仍写死 spaceId="default"（串项目）');
-  // 空间键必须来自 props（projectPath），且无项目时不挂载任何数据面
-  assert.match(page, /spaceId=\{projectPath\}/, 'StudioPage 未把 projectPath 作为空间键传给 TeamSpace');
-  assert.match(page, /if\s*\(!projectPath\)/, 'StudioPage 缺少「无项目空态」分支（会静默读写 default）');
-  // 2026-10-28：看板已迁助理（AssistantPage 挂 StudioBoard），StudioPage 不再含看板分支
-  assert.ok(!page.includes('<StudioBoard'), 'StudioPage 仍挂看板（已迁助理，会成双入口）');
+await check('C1 编制与空间只有助理一个入口：助理挂载 TeamsPage / TeamSpace，且无项目时不挂空间数据面', () => {
+  // 第七版（2026-11-03）：工作室下线，两个 Tab 迁助理。这里锁三件事：
+  // ① 两个组件真的被助理挂载（否则功能直接消失）；
+  // ② 空间键必须是 projectPath（写死 'default' = 串项目，IA-02 缺陷复发）；
+  // ③ 无项目时**不挂** TeamSpace —— 它会拿空格键去读写 default 空间。
+  const page = stripComments(read('components/AssistantPage.tsx'));
+  assert.match(page, /<TeamsPage/, 'AssistantPage 未挂载 TeamsPage（编制无落点）');
+  assert.match(page, /<TeamSpace spaceId=\{projectPath\}/, 'TeamSpace 未拿 projectPath 当空间键（串项目）');
+  assert.ok(!/spaceId\s*=\s*["']default["']/.test(page), 'AssistantPage 写死 spaceId="default"（串项目）');
+  assert.match(page, /tab === 'space' && \(projectPath \?/, '空间 Tab 缺少「无项目」分支（会静默读写 default）');
+  assert.ok(!fs.existsSync(path.join(ROOT, 'renderer/src/components/StudioPage.tsx')),
+    'StudioPage 又回来了（编制/空间已并入助理，重建一级页面就是双入口）');
+  assert.ok(!fs.existsSync(path.join(ROOT, 'renderer/src/lib/studioTabs.ts')),
+    'studioTabs.ts 又回来了（工作室 Tab 集合已并入 assistantTabs，两套清单必然漂移）');
 });
 
 await check('C5 看板数据源是真实项目级读取，不是前端伪造', () => {
@@ -316,24 +316,6 @@ await check('C5 看板数据源是真实项目级读取，不是前端伪造', (
   assert.ok(!/\$\{/.test(injected), '项目查询出现模板字符串拼接（SQL 注入面）');
   // 空 projectPath 必须短路返回，不得回落全局列表
   assert.match(q, /if\s*\(!p\)\s*return\s*\[\]/, 'listGroupsByProject 未对空 projectPath 短路');
-});
-
-await check('C2 工作室文案键双侧齐全，且指向 studio 模块（禁硬编码文案）', () => {
-  const zh = JSON.parse(fs.readFileSync(path.join(SRC, 'i18n/locales/zh-CN/studio.json'), 'utf8'));
-  const en = JSON.parse(fs.readFileSync(path.join(SRC, 'i18n/locales/en-US/studio.json'), 'utf8'));
-  for (const tab of STUDIO_TABS) {
-    assert.match(tab.labelKey, /^studio\./, `${tab.id} 的文案键不在 studio 模块：${tab.labelKey}`);
-    const leaf = tab.labelKey.replace(/^studio\./, '');
-    assert.equal(typeof zh[leaf], 'string', `zh-CN 缺 ${tab.labelKey}`);
-    assert.equal(typeof en[leaf], 'string', `en-US 缺 ${tab.labelKey}`);
-  }
-});
-
-await check('C3 编制由工作室挂载（助理已摘除）⇒ StudioPage 渲染 TeamsPage，且复用 ui/TabBar', () => {
-  const page = read('components/StudioPage.tsx');
-  assert.match(page, /<TeamsPage/, 'StudioPage 未挂载 TeamsPage（编制无落点）');
-  assert.match(page, /<TabBar/, 'StudioPage 未使用 ui/TabBar 原语');
-  assert.ok(!/<button/.test(stripComments(page)), 'StudioPage 仍含裸 <button>（应收敛到 ui/TabBar）');
 });
 
 await check('B7 Tab 条具备可访问性语义：tabs 原语提供 role/aria，助理页复用它（不再散落裸 button）', () => {

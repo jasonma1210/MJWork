@@ -51,8 +51,11 @@ check('G1 定时任务渲染期不裸取 prompt，且入口做了归一', () => 
 check('G2 每个路由页面各自被局部 ErrorBoundary 包裹（数点位，不是查存在）', () => {
   const app = stripComments(read('App.jsx'));
   // 不含 RightPane：它原本就有 compact 边界（P1-18），这里只锁本轮新增的页面区
+  // 2026-11-03：StudioPage 随「工作室」下线（编制/空间并入助理），页面清单同步移除。
+  // 清单只放**当前真实挂载**的页面：留着已删除的项会让本条永远红，
+  // 而删掉后若有人重建该页面，它会因为没有边界在别的断言里暴露（B1「StudioPage 不应存在」）。
   const pages = ['Sidebar', 'Dashboard', 'AssistantPage', 'ScheduledTasks',
-    'StudioPage', 'LedgerPage', 'DeskPage', 'ChatArea'];
+    'LedgerPage', 'DeskPage', 'ChatArea'];
   const missing = [];
   for (const name of pages) {
     const i = app.indexOf(`<${name}`);
@@ -183,21 +186,33 @@ check('G9b tsconfig 未把 .js/.jsx 偷偷纳入（防止「纳入了但没检�
   assert.ok(!/\.jsx?\b/.test(inc), `include 出现 js/jsx 通配（但不一定开 checkJs，等于假覆盖）：${inc}`);
 });
 
-// ── G10（P0-1，2026-11-03）表单控件的焦点环必须存在且不被关掉 ────────────────
+// ── G10（P0-1，2026-11-03）表单控件的焦点提示必须**可见** ────────────────
 // 事故形态：组件里 68 处 `outline-none`（特异性 0-1-0）与全局 `:focus-visible`（同为 0-1-0）
 // 争同一条声明，靠书写顺序决胜 —— 顺序一变焦点环静默消失，用户只看到 1px 边框变点色。
-// 断言两条：
-//   ① CSS 里存在「元素选择器 + :focus-visible」的提升规则（0-1-1 稳压 utility 类）；
-//   ② 不存在 `textarea:focus { outline: none }` 这类主动关轮廓的规则。
-// 注意：断言前必须剥掉 CSS 注释 —— 本套件自己就在注释里写了 `input:focus-visible` 与
-// 「68 处 outline-none」，不剥的话注释即满足断言，等于空转。
+//
+// 2026-11-03 第二次调整（用户反馈 4「输入框点进去有一圈黑框，去掉」）：
+// 焦点指示由「2px 实色 outline」改为「1px 主色边框 + 3px 同色柔环」，并允许由外层容器承担。
+// 门禁**跟着改判据**而不是删断言：只允许「outline:none + 可见替代指示」的组合，
+// 单纯把 outline 关掉仍然判红 —— 否则 a11y 就这样静默回退了。
+// 注意：断言前必须剥掉 CSS 注释，否则注释即满足断言，等于空转。
 const stripCss = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '');
-check('G10 表单控件焦点环：存在 0-1-1 规则，且没有关掉轮廓的规则', () => {
+check('G10 表单控件焦点可见：0-1-1 规则必须带可见替代指示（不是只关掉 outline）', () => {
   const css = stripCss(fs.readFileSync(path.join(SRC, 'styles', 'theme.css'), 'utf8'));
-  assert.ok(/(^|\})\s*input:focus-visible/.test(css), '缺少 input:focus-visible 规则（utility 类会盖掉全局环）');
+  assert.ok(/(^|\})\s*input:focus-visible/.test(css), '缺少 input:focus-visible 规则（utility 类会盖掉焦点样式）');
   assert.ok(/textarea:focus-visible/.test(css), '缺少 textarea:focus-visible 规则');
-  assert.ok(!/textarea:focus\s*\{\s*outline:\s*none/.test(css), '仍存在 textarea:focus { outline:none }（主动关掉焦点提示）');
-  assert.ok(!/--sem-focus:\s*rgba\(/.test(css), '--sem-focus 仍是半透明值（2px 环对比不足 3:1）');
+  const at = css.indexOf('input:focus-visible');
+  const group = css.slice(at, at + 700);
+  assert.ok(group.length > 200, '焦点规则组截取过短，断言可能空过');
+  // 可见替代指示：边框换主色 + 同色柔环（两者都必须存在，缺一就只剩「看不见的焦点」）
+  assert.match(group, /border-color:\s*var\(--sem-accent\)/, '焦点规则组缺少 border-color 指示');
+  assert.match(group, /box-shadow:\s*0 0 0 3px var\(--sem-accent-bg\)/, '焦点规则组缺少柔环指示');
+  // 反向：若把 outline 关掉却没有任何替代，本条会因为没有上面两条而红
+  //（这条注释本身不是断言，真正的判据就是上面两个 match）
+  // 输入卡片内的 textarea 豁免：必须由外层容器承担焦点（Composer 的 focus-within 可见）
+  const composer = read('components/Composer.tsx');
+  assert.match(composer, /data-focus-ring="container"/, 'Composer 的 textarea 未标记「焦点由容器承担」');
+  assert.match(composer, /focus-within:border-accent/, 'Composer 容器缺少 focus-within 可见指示（内层豁免就没有承接方）');
+  assert.ok(!/--sem-focus:\s*rgba\(/.test(css), '--sem-focus 仍是半透明值');
 });
 
 // ── G11（P0-2，2026-11-03）地标与播报 ────────────────────────────────────────

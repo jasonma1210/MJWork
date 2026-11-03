@@ -167,5 +167,10 @@
     "hintPickAssistant": "先在上方选一个助手"
   },
   "tabDispatch": "派活",
-  "tabBoard": "看板"
+  "tabBoard": "看板",
+  "tabRoster": "编制",
+  "tabSpace": "空间",
+  "spaceNoProjectTitle": "尚未选择项目",
+  "spaceNoProjectDesc": "项目空间（协作看板、共享审批、知识库授权）都围绕同一个项目展开。请先选择一个项目，避免把资产写进错误的位置。",
+  "spacePickProject": "选择项目"
 }

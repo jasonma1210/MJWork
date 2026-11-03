@@ -338,24 +338,34 @@
   outline-offset: 1px;
 }
 
-/* P0（2026-11-03）：表单控件的焦点环必须单独声明。
+/* P0（2026-11-03）：表单控件的焦点提示必须单独声明。
    ─ 为什么 `:focus-visible` 不够：组件里普遍带 Tailwind 的 `outline-none`
      （`.outline-none { outline: 2px solid transparent }`，特异性 0-1-0），
      它与上面的 `:focus-visible`（同为 0-1-0）争的是同一条声明，靠书写顺序决胜；
-     一旦某个文件顺序变化，焦点环就静默消失——实测全站 68 处 `outline-none`，
-     用户看到的现象是「Tab 到输入框，只有 1px 边框变了点颜色」。
-   ─ 这里用「元素选择器 + 伪类」（0-1-1）稳压 utility 类（0-1-0），
-     不依赖顺序、不需要 !important，也不必去改那 68 处调用点。
-   ─ 颜色用 --sem-focus 的实色值：2px 半透明环压在深底上对比不足 3:1，
-     WCAG 2.4.11（焦点外观）要求指示区域与相邻色至少 3:1。 */
+     一旦某个文件顺序变化，焦点环就静默消失——实测全站 68 处 `outline-none`。
+   ─ 用「元素选择器 + 伪类」（0-1-1）稳压 utility 类（0-1-0），不依赖顺序。
+   ─ 2026-11-03 二次调整（用户反馈 4「输入框点进去有一圈黑框，去掉」）：
+     原方案是 2px 实色 outline（--sem-focus），在浅色主题里读起来就是「输入框里套了一圈黑框」，
+     且与组件自己的 `focus:border-accent` 叠成三重指示，视觉重量过载。
+     改为**边框换主色 + 3px 同色淡环**：焦点依然一眼可见（键盘用户不受影响），
+     但描边从硬线条降为容器级的柔和提示。 */
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 [contenteditable="true"]:focus-visible,
 [role="textbox"]:focus-visible,
 [role="combobox"]:focus-visible {
-  outline: 2px solid var(--sem-focus);
-  outline-offset: 1px;
+  outline: none;
+  border-color: var(--sem-accent);
+  box-shadow: 0 0 0 3px var(--sem-accent-bg);
+}
+
+/* 焦点由外层容器承担时（输入卡片本身有 focus-within:border-accent + ring），
+   内层输入框不能再画一圈 —— 那正是截图里那道突兀的框。加 data-focus-ring="container" 即可。 */
+[data-focus-ring="container"]:focus-visible {
+  outline: none;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -425,6 +435,45 @@ h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); font-weight: 600; }
   margin: 8px 0;
   color: var(--theme-text-secondary);
 }
+
+/* ── Markdown 表格（GFM）与公式（KaTeX）──
+   2026-11-03（用户反馈 6）：回复里的表格此前只用浏览器默认样式 —— 没有边框、没有内边距，
+   三列以上就挤成一团无法对照；公式则根本不解析，`$...$` 原样显示成美元符号。
+   表格规则同时覆盖对话正文（.msg-prose）与文件预览（.markdown-body）两处容器。 */
+.msg-prose table, .markdown-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+/* 宽表格横向滚动而不是把消息列撑破：外层容器由 markdownComponents 的 table 渲染器包裹 */
+.md-table-wrap { margin: 10px 0; overflow-x: auto; }
+.md-table-wrap > table { margin: 0; }
+.msg-prose th, .msg-prose td, .markdown-body th, .markdown-body td {
+  border: 1px solid var(--theme-border);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.msg-prose th, .markdown-body th {
+  background: var(--theme-hover);
+  font-weight: 600;
+  /* 表头不换行：列宽由内容决定时，窄列的表头折行会让整张表看着高低不齐 */
+  white-space: nowrap;
+}
+.msg-prose tbody tr:nth-child(even), .markdown-body tbody tr:nth-child(even) { background: var(--sem-fill-1); }
+
+/* 块级公式：居中 + 超宽可横向滚动（长推导式不该把整个消息列撑出横向滚动条） */
+.msg-prose .katex-display, .markdown-body .katex-display {
+  margin: 10px 0;
+  padding: 2px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.msg-prose .katex { font-size: 1.05em; }
+/* 公式里的文字颜色继承正文，避免深色主题下 KaTeX 默认黑色看不见 */
+.msg-prose .katex, .markdown-body .katex { color: inherit; }
 
 /* Markdown 排版（旧规则，供 .msg-assistant 等容器沿用） */
 .msg-assistant p, .msg-user p { margin: 4px 0; line-height: 1.6; }
