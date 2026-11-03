@@ -21,6 +21,56 @@ function sh(cwd, args) {
   return execFileSync(gitBin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
+// ── initRepo 用例的**身份环境**必须自备，不能依赖运行机 ────────────────────
+// 起因（2026-11-03 CI 实证）：本套件新增的 initRepo 用例在本地绿、在 CI ubuntu 红了——
+//   CI runner 没有全局 user.name/user.email（`git var GIT_AUTHOR_IDENT` 直接失败），
+//   而开发机 ~/.gitconfig 通常有 ⇒ 「首个空提交能不能成功」取决于**运行机有没有配身份**，
+//   不是被测代码的性质。这类断言叫「环境断言」：它测的是 CI 机器，不是 initRepo。
+//
+// 为什么用 HOME 而不是别的开关：
+//   · main/worktree.js 的 git() 走 shellEnv()，env 允许表里含 HOME ⇒ 改 HOME 一定生效；
+//   · git 的身份解析顺序是 系统级 /etc/gitconfig → 全局 $HOME/.gitconfig → 本地 .git/config，
+//     全局层可被 HOME 精确覆盖，而系统层与本地层都不行（本地层会被 initRepo 自己写的配置覆盖）。
+//   · 只设 HOME 不够：XDG 路径（$XDG_CONFIG_HOME/git/config）优先级更高，
+//     某些机器上那份配置里就有身份 ⇒ 必须一起隔离，否则「无身份」场景仍会被本机配置救回来。
+//
+// 因此这里提供两个 helper：一个给出**有身份**的 HOME，一个给出**无身份**的 HOME
+// （无身份靠 useConfigOnly=true 关掉 git 的自动探测——否则 git 会用主机名/用户名
+// 猜一个身份出来，CI 与本机都猜得出，场景就测不到）。
+function makeGitHome(dir, { withIdentity }) {
+  fs.mkdirSync(dir, { recursive: true });
+  const cfg = withIdentity
+    ? '[user]\n\tname = t\n\temail = t@t.io\n'
+    // 无身份：useConfigOnly=true ⇒ git 不再用主机名/用户名自动探测，身份解析必定失败
+    : '[user]\n\tuseConfigOnly = true\n';
+  fs.writeFileSync(path.join(dir, '.gitconfig'), cfg);
+  return dir;
+}
+
+/** 在指定 HOME（及隔离后的 XDG 路径）下跑一段代码，跑完恢复原环境 */
+async function withGitHome(homeDir, fn) {
+  const prev = {
+    HOME: process.env.HOME,
+    USERPROFILE: process.env.USERPROFILE,
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+  };
+  process.env.HOME = homeDir;
+  // Windows 侧 git 也读 USERPROFILE
+  process.env.USERPROFILE = homeDir;
+  // 把 XDG 指向一个**空目录**：否则 $XDG_CONFIG_HOME/git/config 里的身份会盖过 HOME
+  const xdg = path.join(homeDir, '.xdg');
+  fs.mkdirSync(xdg, { recursive: true });
+  process.env.XDG_CONFIG_HOME = xdg;
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
 (async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-wt-'));
   const repo = path.join(tmp, 'repo');
@@ -452,10 +502,14 @@ function sh(cwd, args) {
 
   // ── 2026-11-03（用户反馈 5「git 应该是你帮我主动创建」）：仓库初始化 ──
   // 这组用**独立临时目录**，不碰上面那个已备好身份的 repo —— initRepo 会在目录里写 .git 与一条提交。
+  // 身份环境由 withGitHome 自备（见 helper 处的说明）：断言的是 initRepo 的行为，
+  // 不是「这台机器有没有配 git 身份」。
+  const homeIdent = makeGitHome(path.join(tmp, 'home-ident'), { withIdentity: true });
+
   await check('initRepo：全新目录一次性 init + 首个空提交，落地即有 main 分支', async () => {
     const fresh = path.join(tmp, 'fresh-init');
     fs.mkdirSync(fresh);
-    const r = await worktree.initRepo(fresh);
+    const r = await withGitHome(homeIdent, () => worktree.initRepo(fresh));
     assert.equal(r.created, true, '应回报 created（之前不是仓库）');
     assert.equal(r.committed, true, `首个空提交未成功：${JSON.stringify(r)}`);
     assert.equal(r.branch, 'main', `主分支应统一为 main，实际 ${r.branch}`);
@@ -469,7 +523,7 @@ function sh(cwd, args) {
     const fresh = path.join(tmp, 'fresh-init');
     const count = () => Number(sh(fresh, ['rev-list', '--count', 'HEAD']).trim());
     const before = count();
-    const r = await worktree.initRepo(fresh);
+    const r = await withGitHome(homeIdent, () => worktree.initRepo(fresh));
     assert.equal(r.created, false, '不应重新 init');
     assert.equal(r.committed, false, '不应再提交');
     assert.equal(count(), before, '提交数必须不变（幂等）');
@@ -481,12 +535,27 @@ function sh(cwd, args) {
     sh(staged, ['init', '-q']);
     fs.writeFileSync(path.join(staged, 'wip.txt'), 'work in progress\n');
     sh(staged, ['add', 'wip.txt']);
-    const r = await worktree.initRepo(staged);
+    const r = await withGitHome(homeIdent, () => worktree.initRepo(staged));
     assert.equal(r.stagedPending, true, '应识别出暂存区非空');
     assert.equal(r.committed, false, '不得替用户提交已暂存的内容');
     assert.equal(r.unborn, true, '没有提交 ⇒ 仍是空仓库');
     // 暂存内容必须原样留在暂存区
     assert.match(sh(staged, ['diff', '--cached', '--name-only']), /wip\.txt/);
+  });
+
+  // 身份缺失是**可预期状态**而非失败：仓库照样建好，只是不提交，并回报 identityMissing
+  // 让界面提示「先配 user.name/user.email」。这条断言是 2026-11-03 CI 红过的真实场景
+  // （CI runner 无全局身份），此前**没有任何用例钉住它** —— 缺了它，换台机器就会静默变红。
+  await check('initRepo：缺少提交身份时建好仓库但不提交，回报 identityMissing', async () => {
+    const noIdent = path.join(tmp, 'init-no-ident');
+    fs.mkdirSync(noIdent);
+    const homeNone = makeGitHome(path.join(tmp, 'home-no-ident'), { withIdentity: false });
+    const r = await withGitHome(homeNone, () => worktree.initRepo(noIdent));
+    assert.equal(r.created, true, '身份缺失不该让 init 失败（仓库仍应建好）');
+    assert.equal(r.identityMissing, true, '应回报 identityMissing（界面据此提示去配身份）');
+    assert.equal(r.committed, false, '没有身份不能提交');
+    assert.equal(r.unborn, true, '没有提交 ⇒ 仍是空仓库');
+    assert.equal(r.branch, 'main', '空仓库也要能报出分支名（否则界面回到「选不到分支」）');
   });
 
   fs.rmSync(tmp, { recursive: true, force: true });
