@@ -24,13 +24,12 @@ import AiTeamBuilder from './AiTeamBuilder';
 import AssistantDirectory, { type Employee } from './AssistantDirectory';
 import AssistantDispatch from './AssistantDispatch';
 import StudioBoard from './StudioBoard';
-// 2026-11-03（用户反馈 2）：编制与项目空间自「工作室」并入 —— 工作室一级入口随之下线。
-// 组件本体零改动（TeamsPage / TeamSpace 复用），这里只负责按 Tab 挂载。
+// 2026-11-03（用户反馈 2）：编制自「工作室」并入 —— 工作室一级入口随之下线。
+// 2026-11-04（用户裁决）：项目空间 Tab 下线（collab / knowledge 默认关闭、Y.Doc 仅内存、
+// 与 board 两套看板互不相通），TeamSpace 组件与后端保留为冻结资产，本页不再挂载。
 import TeamsPage from './TeamsPage';
-import TeamSpace from './TeamSpace';
-import Button from './ui/Button';
 import TabBar from './ui/TabBar';
-import { IconBot, IconChart, IconFolder, IconList, IconUsers, IconZap } from './icons';
+import { IconBot, IconChart, IconList, IconUsers, IconZap } from './icons';
 import { useI18n } from '../i18n';
 import { ASSISTANT_TABS, type AssistantTab } from '../lib/assistantTabs';
 
@@ -41,7 +40,6 @@ const TAB_ICON: Record<AssistantTab, typeof IconUsers> = {
   aiTeam: IconBot,
   roster: IconUsers,
   board: IconChart,
-  space: IconFolder,
 };
 
 export interface DispatchTeamResult {
@@ -52,7 +50,7 @@ export interface DispatchTeamResult {
 }
 
 export default function AssistantPage({
-  tab, onTab, threadId, projectPath, projectId, onAutoRun, onDispatchEmployee, onDispatchTeam, onOpenFile, onPickProject,
+  tab, onTab, threadId, projectPath, onAutoRun, onDispatchEmployee, onDispatchTeam, onOpenFile,
 }: {
   tab: AssistantTab;
   onTab: (t: AssistantTab) => void;
@@ -60,8 +58,6 @@ export default function AssistantPage({
   threadId?: string | null;
   /** 当前项目目录（派活的工作目录；看板 Tab 的数据范围键） */
   projectPath?: string;
-  /** 授权主体（与 projectPath 不是同义词，见设计文档 §4.2.1）：空间 Tab 的知识库授权只认它 */
-  projectId?: string | null;
   /** 主体=系统：目标交回主链路，由判定器决定是否升级为团队 */
   onAutoRun: (goal: string) => void;
   /** 主体=助手：复用 recruit-expert 链路（落当前会话，见 App 的 recruit 分支） */
@@ -70,8 +66,6 @@ export default function AssistantPage({
   onDispatchTeam?: (p: { teamId: string; goal: string }) => Promise<DispatchTeamResult | undefined>;
   /** 看板点开任务产物时回传 App 右栏预览（与工作室同源 openFileInPane） */
   onOpenFile?: (path: string) => void;
-  /** 空间 Tab 无项目时的出口（App 的项目选择器） */
-  onPickProject?: () => void;
 }) {
   const { t } = useI18n();
   // 资源面 → 派活面的回填。只在页面内存里，不落盘：它描述的是"这一次派活选了谁"。
@@ -126,21 +120,9 @@ export default function AssistantPage({
         {/* 2026-10-28：项目任务看板自工作室迁入（StudioBoard 复用未改，projectPath 维度）。
             无项目时 StudioBoard 自带空态（门禁 C5 锁定），这里不重复造空态。 */}
         {tab === 'board' && <StudioBoard projectPath={projectPath || null} onOpenFile={onOpenFile} />}
-        {/* 2026-11-03：编制（TeamsPage）与项目空间（TeamSpace）自工作室迁入。
-            编制无项目也能管理（它是「谁在」而不是「在哪干」）；空间必须先有项目 ——
-            无项目时不挂载 TeamSpace，否则它会拿空格键去读写 default 空间（设计文档 §6.3 禁止串项目）。 */}
+        {/* 2026-11-03：编制（TeamsPage）自工作室迁入。编制无项目也能管理
+            （它是「谁在」而不是「在哪干」）。2026-11-04：项目空间 Tab 已下线，不再挂载 TeamSpace。 */}
         {tab === 'roster' && <TeamsPage />}
-        {tab === 'space' && (projectPath ? (
-          <div className="h-full min-h-0"><TeamSpace spaceId={projectPath} projectId={projectId} /></div>
-        ) : (
-          <div className="min-h-0 flex flex-col items-center justify-center gap-2 p-6 text-center">
-            <div className="text-sm font-medium">{t('assistant.spaceNoProjectTitle')}</div>
-            <div className="max-w-md text-caption text-text2">{t('assistant.spaceNoProjectDesc')}</div>
-            {onPickProject && (
-              <Button size="sm" variant="secondary" onClick={onPickProject}>{t('assistant.spacePickProject')}</Button>
-            )}
-          </div>
-        ))}
       </div>
     </div>
   );

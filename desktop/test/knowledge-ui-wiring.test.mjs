@@ -67,7 +67,9 @@ check('知识库面板以 .tsx 提供（no-new-jsx：新组件不得用 .jsx）'
   assert.ok(fs.existsSync(path.join(SRC, 'components/KnowledgePanel.tsx')));
 });
 
-// ── 2) 挂在「工作室 → 空间」内，且受 projectId 保护（§8.2 不新增一级入口；无项目不串数据）──
+// ── 2) 冻结资产 TeamSpace 内，且受 projectId 保护（§8.2 不新增一级入口；无项目不串数据）──
+// 2026-11-04：空间 Tab 已下线，但 TeamSpace.jsx / lib/collab.js 保留为冻结资产，
+// 待 collab 能力真正启用再接回；此段仍守「组件内的授权主体不串项目」这条数据纪律。
 check('TeamSpace 在 projectId 存在时才挂载 KnowledgePanel，并把 projectId 传进去', () => {
   const { sf } = parse(path.join(SRC, 'components/TeamSpace.jsx'));
   const el = jsxElements(sf).find((e) => e.name === 'KnowledgePanel');
@@ -81,23 +83,28 @@ check('TeamSpace 在 projectId 存在时才挂载 KnowledgePanel，并把 projec
     'KnowledgePanel 未被 projectId 条件保护（无项目时也会渲染 → 串项目风险）');
 });
 
-// ── 3) 上层把两个键分别传对：spaceId=项目目录，projectId=授权主体（§4.2.1 不是同义词）──
-// 2026-11-03：工作室下线后 TeamSpace 的宿主改为助理的「空间」Tab。
-// 判据不变（两个键必须分别传对），只是被检文件跟着搬家 —— 不改成「随便哪个文件都行」，
-// 那会让「谁负责传这两个键」失去唯一定位。
-check('助理页把 projectId 与 spaceId 分别传给 TeamSpace', () => {
+// ── 3) 2026-11-04：空间 Tab 下线 ⇒ 助理页不再挂 TeamSpace（冻结资产仍在，但无入口）──
+// 方向翻转是**显式记录过的语义变更**（2026-11-03 这条原本是正向断言「必须挂在助理页」），
+// 不是把红断言删掉。配一条自检证明 jsxElements 在同文件里确实能找到元素，
+// 否则「找不到 TeamSpace」可能只是解析器坏了 —— 那正是空过。
+check('空间 Tab 已下线：助理页不挂 TeamSpace，冻结资产仍保留在磁盘上', () => {
   const { sf } = parse(path.join(SRC, 'components/AssistantPage.tsx'));
-  const el = jsxElements(sf).find((e) => e.name === 'TeamSpace');
-  assert.ok(el, 'AssistantPage 没有渲染 TeamSpace');
-  const pid = el.attrs.get('projectId');
-  const sid = el.attrs.get('spaceId');
-  assert.ok(pid, 'AssistantPage 未把 projectId 传给 TeamSpace（知识库授权主体会丢）');
-  assert.ok(sid, 'AssistantPage 未把 spaceId 传给 TeamSpace');
-  const pidText = pid.initializer && ts.isJsxExpression(pid.initializer) ? pid.initializer.expression.getText(sf) : '';
-  const sidText = sid.initializer && ts.isJsxExpression(sid.initializer) ? sid.initializer.expression.getText(sf) : '';
-  assert.equal(pidText, 'projectId', `projectId 应为项目 id，实际：${pidText}`);
-  assert.equal(sidText, 'projectPath', `spaceId 应为项目目录，实际：${sidText}`);
-  assert.notEqual(pidText, sidText, '两个键被写成了同一个值（§4.2.1 明确二者不是同义词）');
+  const names = jsxElements(sf).map((e) => e.name);
+  assert.ok(names.includes('TeamsPage'), '自检失败：jsxElements 连同文件的 TeamsPage 都解析不到');
+  assert.ok(!names.includes('TeamSpace'), '助理页又挂回了 TeamSpace（空间 Tab 已下线，不得悄悄复活）');
+  const page = fs.readFileSync(path.join(SRC, 'components/AssistantPage.tsx'), 'utf8');
+  assert.ok(!/tab === 'space'/.test(page), '助理页仍有 space 分支');
+  // 不能用 /<AssistantPage[^>]*projectId=/：props 里的 `=>` 会提前吃掉 [^>]*，让否定式断言空过。
+  // 改成截一段挂载窗口，并先用 projectPath 自证窗口确实盖到了 props 区。
+  const app = fs.readFileSync(path.join(SRC, 'App.jsx'), 'utf8');
+  const at = app.indexOf('<AssistantPage');
+  assert.ok(at >= 0, '自检失败：App.jsx 里找不到 <AssistantPage 挂载点');
+  const block = app.slice(at, at + 900);
+  assert.ok(/projectPath=/.test(block), '自检失败：挂载窗口没盖到 props 区');
+  assert.ok(!/\bprojectId=/.test(block), 'App 仍给 AssistantPage 传 projectId（下线后已成死参数）');
+  assert.ok(!/\bonPickProject=/.test(block), 'App 仍给 AssistantPage 传 onPickProject（空间 Tab 已下线）');
+  assert.ok(fs.existsSync(path.join(SRC, 'components/TeamSpace.jsx')), '冻结资产 TeamSpace.jsx 被误删');
+  assert.ok(fs.existsSync(path.join(SRC, 'lib/collab.js')), '冻结资产 lib/collab.js 被误删');
 });
 
 // ── 4) 桥面：8 条需要的方法都在，且**不**暴露快照重验（§8.6.4 由主进程独占判定）──

@@ -172,6 +172,9 @@ contextBridge.exposeInMainWorld('mjcode', {
   webSearchSetConfig: (providers) => ipcRenderer.invoke('websearch:setConfig', { providers }),
   // Updater
   checkUpdates: () => ipcRenderer.invoke('updater:check'),
+  // 启动自动更新弹窗：渲染层挂载时补拉「本次启动已发现的新版本」，
+  // 防止 10s 自动检查早于窗口加载完成时 'updater:status' 事件无人接收。
+  getLastUpdate: () => ipcRenderer.invoke('updater:lastAvailable'),
   // P0-3：应用内下载更新（available 态按钮；autoDownload=false 下唯一下载入口）
   downloadUpdate: () => ipcRenderer.invoke('updater:download'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),

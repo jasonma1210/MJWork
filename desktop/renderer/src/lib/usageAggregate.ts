@@ -15,6 +15,8 @@
 
 export interface UsageMessage {
   role?: string;
+  /** fork 复制的消息带原文，用于识别「同一段消耗的冗余副本」（见 dedupeForkCopies） */
+  content?: string;
   tokensInput?: number;
   tokensOutput?: number;
   modelName?: string;
@@ -55,7 +57,10 @@ export interface DayRow {
 }
 
 export interface ThreadRow {
+  /** 该行所属会话的代表 id；合并分支后多行会共享它，不能单独当 React key */
   threadId: string;
+  /** 稳定唯一行键（会话分组 + 模型），合并/拆行后都不重复 */
+  key: string;
   title: string;
   model: string;
   total: number;
@@ -69,6 +74,56 @@ const num = (v: unknown): number => {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
 };
+
+// 会话分支后缀：main/store/localStore.js 的 forkThread 给新会话加「 · 分支」，
+// 历史上在分支上再分会反复叠加成「· 分支· 分支· 分支· 分支」。表里只认会话本身，
+// 不认分支，故循环剥到干净（对历史脏数据同样有效）。
+// Unicode 转义而非字面量：i18n-scan 把正则里的中文当「裸中文」，
+// ui-conventions 把「•」当装饰性字形，两者都要求 renderer/src 源码零此类字面量。
+// \u00b7=· \u2022=• \u5206\u652f=分支
+const FORK_SUFFIX_RE = /\s*[\u00b7\u2022]\s*\u5206\u652f\s*$/u;
+
+/** 返回不含分支后缀的会话名；空串表示「本来就没有标题」。 */
+export function normalizeThreadTitle(title: unknown): string {
+  let s = String(title ?? '').trim();
+  for (let i = 0; i < 16; i += 1) {
+    const next = s.replace(FORK_SUFFIX_RE, '').trim();
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+}
+
+/**
+ * fork 会把源会话的历史消息（连 tokensInput/tokensOutput 一起）整份复制到新会话。
+ * 那是同一段消耗的存储副本，不是新增消耗：若按会话合并时直接累加，一次分叉就把
+ * 这段历史算第二遍，分四次就变五倍。全局消息先按指纹去重一次，
+ * 使 totals / byModel / byDay / byThread 四个口径共用同一份真实消耗。
+ * 指纹含 createdAt、模型、双向 token、role 与正文前缀，真实不同消息撞车的概率极低；
+ * 而复制消息这几项逐个相同，必然被识别为副本。
+ */
+function usageFingerprint(m: UsageMessage): string {
+  return [
+    num(m?.createdAt), String(m?.modelName || '').trim(),
+    num(m?.tokensInput), num(m?.tokensOutput), String(m?.role || ''),
+    String(m?.content || '').slice(0, 120),
+  ].join('\u0000');
+}
+
+export function dedupeForkCopies(messages: UsageMessage[] = []): UsageMessage[] {
+  const seen = new Set<string>();
+  const out: UsageMessage[] = [];
+  for (const m of messages) {
+    if (!m) continue;
+    // 不带 usage 的消息不参与任何口径，原样保留即可（去重只针对带消耗的副本）
+    if (num(m?.tokensInput) + num(m?.tokensOutput) <= 0) { out.push(m); continue; }
+    const fp = usageFingerprint(m);
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    out.push(m);
+  }
+  return out;
+}
 
 /** 本地日零点（用于「今天/近 7 天」与按日分桶，与账本的 date(...,'localtime') 同口径） */
 export function startOfLocalDay(ts: number): number {
@@ -93,6 +148,8 @@ export function aggregateMessages(
   now: number = Date.now(),
   topThreads = 8,
 ): { totals: Totals; byModel: ModelRow[]; byDay: DayRow[]; byThread: ThreadRow[] } {
+  // 所有口径共用同一份「真实消耗」：先剔掉 fork 复制出来的冗余副本
+  const msgs = dedupeForkCopies(messages);
   const titleOf = new Map<string, UsageThread>();
   for (const t of threads) if (t && t.id) titleOf.set(String(t.id), t);
 
@@ -102,7 +159,7 @@ export function aggregateMessages(
   //   ② 派单新建的会话 thread.modelName 常为空，但该会话消息里确实有模型名。
   // 解析优先级：thread.modelName → 该会话消息里按 token 最多的模型 → ''（真空才回落未记录）。
   const threadMsgModel = new Map<string, Map<string, number>>();
-  for (const m of messages) {
+  for (const m of msgs) {
     const tid = m?.threadId ? String(m.threadId) : '';
     const mn = String(m?.modelName || '').trim();
     if (!tid || !mn) continue;
@@ -123,8 +180,26 @@ export function aggregateMessages(
   // 顺序为什么反过来了（2026-10-29）：thread.modelName 只在建会话时写一次、全程没有更新入口
   // （全仓无 updateThread），用户中途换模型后它就是一个**过期快照**；而这一行的 token 数是
   // 消息算出来的，模型列却报旧模型 —— 同一行自相矛盾。消息里的 modelName 才是每次请求的真值。
-  const threadModel = (tid: string): string =>
-    resolvedModelOf.get(tid) || String(titleOf.get(tid)?.modelName || '').trim();
+  const visibleModelOf = (m: UsageMessage, tid: string): string =>
+    String(m?.modelName || '').trim()
+    || resolvedModelOf.get(tid)
+    || String(titleOf.get(tid)?.modelName || '').trim();
+
+  // 会话分组键：去掉「· 分支」后缀后的会话名。分支是同一段对话的不同走向，
+  // 在「会话消耗」里只认会话本身；无标题会话仍回落 threadId（既有口径，门禁 ⑤ 钉住）。
+  const groupKeyOf = (tid: string): { key: string; title: string } => {
+    const normalized = normalizeThreadTitle(titleOf.get(tid)?.title);
+    return normalized
+      ? { key: `t:${normalized}`, title: normalized }
+      : { key: `id:${tid}`, title: tid };
+  };
+
+  type ModelBucket = { total: number; requests: number };
+  type ThreadGroup = {
+    key: string; threadId: string; title: string;
+    total: number; requests: number; lastAt: number;
+    models: Map<string, ModelBucket>;
+  };
 
   const todayStart = startOfLocalDay(now);
   const windowStart = todayStart - 6 * 86400000; // 含今天，共 7 天
@@ -137,9 +212,9 @@ export function aggregateMessages(
 
   const modelAgg = new Map<string, { input: number; output: number; total: number; requests: number }>();
   const dayAgg = new Map<string, { total: number; requests: number }>();
-  const threadAgg = new Map<string, { total: number; requests: number; lastAt: number }>();
+  const groupAgg = new Map<string, ThreadGroup>();
 
-  for (const m of messages) {
+  for (const m of msgs) {
     const ti = num(m?.tokensInput);
     const to = num(m?.tokensOutput);
     const sum = ti + to;
@@ -168,10 +243,20 @@ export function aggregateMessages(
     }
 
     if (tid) {
-      const ta = threadAgg.get(tid) || { total: 0, requests: 0, lastAt: 0 };
-      ta.total += sum; ta.requests += 1;
-      if (at > ta.lastAt) ta.lastAt = at;
-      threadAgg.set(tid, ta);
+      const { key: gkey, title } = groupKeyOf(tid);
+      const g = groupAgg.get(gkey) || {
+        key: gkey, threadId: tid, title,
+        total: 0, requests: 0, lastAt: 0, models: new Map<string, ModelBucket>(),
+      };
+      g.total += sum;
+      g.requests += 1;
+      if (at > g.lastAt) g.lastAt = at;
+      const vm = visibleModelOf(m, tid);
+      const mb = g.models.get(vm) || { total: 0, requests: 0 };
+      mb.total += sum;
+      mb.requests += 1;
+      g.models.set(vm, mb);
+      groupAgg.set(gkey, g);
     }
   }
 
@@ -195,23 +280,30 @@ export function aggregateMessages(
     });
   }
 
-  const byThread: ThreadRow[] = [...threadAgg.entries()]
-    .map(([threadId, v]) => {
-      const meta = titleOf.get(threadId);
-      return {
-        threadId,
-        title: String(meta?.title || '').trim() || threadId,
-        // 会话表「模型」列：thread.modelName 常为空（派单新建会话未写），回落到会话消息里的解析模型
-        model: threadModel(threadId),
-        total: v.total,
-        requests: v.requests,
-        lastAt: v.lastAt,
-      };
-    })
-    // 排序口径（2026-10-28 用户口径）：会话消耗按**执行顺序（最近活跃在前）**，不按消耗额。
-    // 用户回看时先找「我刚才那个会话」，按额度排会把它压到中间（实测缺陷：当前会话排在第 6 位）。
-    // lastAt = 该会话带 usage 消息的最大 createdAt；同刻按额度兜底（稳定），无时间戳（0）自然沉底。
-    .sort((a, b) => b.lastAt - a.lastAt || b.total - a.total)
+  // 一个会话默认一行；只有确实换过模型才按模型拆成多行（用户 2026-11-04 口径：
+  // 「同一个会话就显示一个，除非该会话使用了多个不同的模型才分开显示」）。
+  // 拆行时每行只统计该模型的消耗，不重复计入整组总量。
+  const threadRows: ThreadRow[] = [];
+  for (const g of groupAgg.values()) {
+    const entries = [...g.models.entries()];
+    const split = entries.length > 1;
+    for (const [model, mb] of entries) {
+      threadRows.push({
+        threadId: g.threadId,
+        key: `${g.key}|${model}`,
+        title: g.title,
+        model,
+        total: split ? mb.total : g.total,
+        requests: split ? mb.requests : g.requests,
+        // 组内共享组活跃时间：拆出来的几行属于同一个会话，排序时必须相邻
+        lastAt: g.lastAt,
+      });
+    }
+  }
+  // 排序口径（2026-10-28 用户口径）：会话消耗按**执行顺序（最近活跃在前）**，不按消耗额。
+  // 同刻按额度兜底；组内多模型行按额度降序并因 lastAt 相同而保持相邻。
+  const byThread: ThreadRow[] = threadRows
+    .sort((a, b) => b.lastAt - a.lastAt || b.total - a.total || a.key.localeCompare(b.key))
     .slice(0, Math.max(1, topThreads));
 
   return { totals: { input, output, total, requests, todayTotal, last7Total }, byModel, byDay, byThread };

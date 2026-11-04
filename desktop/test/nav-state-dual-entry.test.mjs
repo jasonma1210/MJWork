@@ -12,6 +12,9 @@
 //     · FLAGS 里去掉 showStudio（8 个标志 ⇒ 256 组组合）；
 //     · 'studio' 从合法返回值集合移除，并新增一条「任何组合都不得再返回 studio」的反向断言；
 //     · 助理 Tab 集合扩为 6 个（+roster/+space），C 段整体改写为「助理挂载编制/空间」。
+//   2026-11-04 第八版（用户反馈「助手界面的空间 tab 存在意义不大」）：空间 Tab 下线。
+//     · 助理 Tab 集合回到 5 个（保留 roster/board，移除 space）；isAssistantTab('space') 必须为 false；
+//     · C 段方向翻转为反向断言「助理页不得再挂 TeamSpace」，防止冻结资产被悄悄接回入口。
 //
 // 断言范式纪律：
 //   · **必须用行为断言**——直接 import `renderer/src/lib/navState.ts` 与
@@ -194,13 +197,16 @@ await check('A11 账本（ledger）优先于定时任务/助理/生态中心，�
 
 // ── B. 助理子页目录与挂载方式 ──
 
-await check('B1 助理子页目录恰为六个 Tab：派活（默认）/ 目录 / AI 建团 / 编制 / 看板 / 空间', () => {
+await check('B1 助理子页目录恰为五个 Tab：派活（默认）/ 目录 / AI 建团 / 编制 / 看板', () => {
   const ids = ASSISTANT_TABS.map((x) => x.id);
   // 第六版（2026-10-27）：'publish'（发布任务）下线 —— 它只能派给军团或自动，与助手毫无关系，
   // 且与目录/建团各自都有一套提交。改为 'dispatch'（派活面板，唯一提交出口）。
   // 第七版（2026-11-03）：工作室下线 ⇒ 'roster'（编制）与 'space'（项目空间）并入，
-  // 顺序固定为「建团 → 编制」（建团产出编制，相邻才连贯）与「看板 → 空间」（跟进 → 资产）。
-  assert.deepEqual(ids, ['dispatch', 'directory', 'aiTeam', 'roster', 'board', 'space']);
+  // 顺序固定为「建团 → 编制」（建团产出编制，相邻才连贯）。
+  // 第八版（2026-11-04）：'space' 下线 —— collab/knowledge 默认关、Y.Doc 仅内存、
+  // 与 board 两套看板互不相通、共享审批不 gate 真实工具执行 ⇒ 留着是假承诺。
+  assert.deepEqual(ids, ['dispatch', 'directory', 'aiTeam', 'roster', 'board']);
+  assert.ok(!ids.includes('space'), 'space（项目空间）已下线，不应再出现在 Tab 条');
   assert.ok(!ids.includes('publish'), 'publish（发布任务）已下线，不应再出现');
   assert.ok(!ids.includes('teams'), '旧 id teams 已由 roster 取代（编制仍是助理 Tab，但只有一种叫法）');
   // 定时任务已升回一级入口 ⇒ 不得再作为助理 Tab
@@ -221,8 +227,9 @@ await check('B3 默认 Tab 是「派活」；isAssistantTab 对非法输入返�
   // 目录作为资源面退到第二个 Tab。
   assert.equal(DEFAULT_ASSISTANT_TAB, 'dispatch', `默认 Tab 应为 dispatch，实际 ${DEFAULT_ASSISTANT_TAB}`);
   assert.ok(isAssistantTab(DEFAULT_ASSISTANT_TAB), `默认 Tab 非法：${DEFAULT_ASSISTANT_TAB}`);
-  for (const ok of ['dispatch', 'directory', 'aiTeam', 'roster', 'board', 'space']) assert.ok(isAssistantTab(ok), ok);
+  for (const ok of ['dispatch', 'directory', 'aiTeam', 'roster', 'board']) assert.ok(isAssistantTab(ok), ok);
   assert.equal(isAssistantTab('publish'), false, 'publish 已下线，必须判为非法');
+  assert.equal(isAssistantTab('space'), false, 'space 已下线，必须判为非法（历史存档不得把用户切到空 Tab）');
   // 'teams' 是旧 id（现名 roster）⇒ 必须判为非法，防止历史存档把界面切到一个不存在的 Tab
   for (const bad of ['', null, undefined, 'teams', 'teams ', 'Teams', 'unknown', 'scheduled', 'complex', 0]) {
     assert.equal(isAssistantTab(bad), false, String(bad));
@@ -262,7 +269,6 @@ await check('B6 AssistantPage 按 tab 条件挂载各子视图，且不再有 sc
     ["tab === 'aiTeam'", '<AiTeamBuilder'],
     ["tab === 'board'", '<StudioBoard'],
     ["tab === 'roster'", '<TeamsPage'],
-    ["tab === 'space'", '<TeamSpace'],
   ]) {
     const i = page.indexOf(pair[0]);
     assert.ok(i > 0, `AssistantPage 缺分支 ${pair[0]}`);
@@ -275,24 +281,32 @@ await check('B6 AssistantPage 按 tab 条件挂载各子视图，且不再有 sc
   // 第七版（2026-11-03）：编制**回到**助理（工作室下线）⇒ 必须挂载。
   // 方向翻转是显式记录过的语义变更（第四版曾是反面断言），不是把红断言删掉了事。
   assert.ok(page.includes('<TeamsPage'), 'AssistantPage 未挂 TeamsPage（编制已随工作室下线，必须由助理承接）');
+  // 第八版（2026-11-04）：空间下线 ⇒ 反向钉住，防止「组件还在」被误当成「入口还在」。
+  assert.ok(!page.includes('<TeamSpace'), 'AssistantPage 又挂回 TeamSpace（空间 Tab 已下线）');
+  assert.ok(!page.includes("tab === 'space'"), 'AssistantPage 仍有 space 分支');
 });
 
 // ── C. 工作室（Studio）子页目录与挂载方式 ──
 
-await check('C1 编制与空间只有助理一个入口：助理挂载 TeamsPage / TeamSpace，且无项目时不挂空间数据面', () => {
-  // 第七版（2026-11-03）：工作室下线，两个 Tab 迁助理。这里锁三件事：
-  // ① 两个组件真的被助理挂载（否则功能直接消失）；
-  // ② 空间键必须是 projectPath（写死 'default' = 串项目，IA-02 缺陷复发）；
-  // ③ 无项目时**不挂** TeamSpace —— 它会拿空格键去读写 default 空间。
+await check('C1 编制仍由助理承接；空间 Tab 已下线且不得悄悄接回', () => {
+  // 第七版（2026-11-03）这条锁「助理挂载 TeamsPage / TeamSpace 且 spaceId=projectPath」。
+  // 第八版（2026-11-04）用户裁决空间 Tab 下线：方向**整体翻转**为反向断言，
+  // 保留「编制有唯一落点」与「工作室不得复活」两条不变判据。
+  // 冻结资产（TeamSpace.jsx / lib/collab.js）刻意不删，供后续真正启用 collab 时接回；
+  // 这里同时钉住它们仍在磁盘上，避免把「下线入口」误做成「删掉能力」。
   const page = stripComments(read('components/AssistantPage.tsx'));
   assert.match(page, /<TeamsPage/, 'AssistantPage 未挂载 TeamsPage（编制无落点）');
-  assert.match(page, /<TeamSpace spaceId=\{projectPath\}/, 'TeamSpace 未拿 projectPath 当空间键（串项目）');
-  assert.ok(!/spaceId\s*=\s*["']default["']/.test(page), 'AssistantPage 写死 spaceId="default"（串项目）');
-  assert.match(page, /tab === 'space' && \(projectPath \?/, '空间 Tab 缺少「无项目」分支（会静默读写 default）');
+  assert.ok(!/<TeamSpace\b/.test(page), 'AssistantPage 仍挂 TeamSpace（空间 Tab 已下线）');
+  assert.ok(!/spaceId\s*=/.test(page), 'AssistantPage 仍在传 spaceId（已无空间数据面）');
+  assert.ok(!/tab === 'space'/.test(page), 'AssistantPage 仍有 space 分支');
   assert.ok(!fs.existsSync(path.join(ROOT, 'renderer/src/components/StudioPage.tsx')),
-    'StudioPage 又回来了（编制/空间已并入助理，重建一级页面就是双入口）');
+    'StudioPage 又回来了（工作室已下线，重建一级页面就是双入口）');
   assert.ok(!fs.existsSync(path.join(ROOT, 'renderer/src/lib/studioTabs.ts')),
     'studioTabs.ts 又回来了（工作室 Tab 集合已并入 assistantTabs，两套清单必然漂移）');
+  assert.ok(fs.existsSync(path.join(ROOT, 'renderer/src/components/TeamSpace.jsx')),
+    '冻结资产 TeamSpace.jsx 被误删（下线入口 ≠ 删除能力）');
+  assert.ok(fs.existsSync(path.join(ROOT, 'renderer/src/lib/collab.js')),
+    '冻结资产 lib/collab.js 被误删（下线入口 ≠ 删除能力）');
 });
 
 await check('C5 看板数据源是真实项目级读取，不是前端伪造', () => {

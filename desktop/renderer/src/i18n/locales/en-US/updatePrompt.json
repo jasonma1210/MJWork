@@ -1,0 +1,15 @@
+{
+  "title": "Update Available",
+  "version": "Version {version}",
+  "notesLabel": "What's New",
+  "defaultNotes": "Bug fixes and experience improvements",
+  "cancel": "Cancel",
+  "update": "Update",
+  "downloading": "Downloading update {percent}%",
+  "downloaded": "Update ready - restart to install",
+  "restart": "Restart to Install",
+  "later": "Later",
+  "failed": "Update failed: {message}",
+  "retry": "Retry",
+  "manualHint": "You can also update in Settings / General / Updates"
+}

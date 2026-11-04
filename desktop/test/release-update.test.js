@@ -79,7 +79,7 @@ check('检查失败附手动下载降级链接（build.publish 推导）', () =>
     '手动下载链接未由 publish owner/repo 推导');
   // T2-7：error 事件附分类 hint（kind/hint），手动下载兜底链接保持
   assert.match(updaterSrc, /send\('error', \{ message: err\.message, kind, hint, downloadUrl: MANUAL_DOWNLOAD_URL \}\)/);
-  assert.match(updaterSrc, /send\('available', \{ version: info\.version, downloadUrl: MANUAL_DOWNLOAD_URL \}\)/);
+  assert.match(updaterSrc, /send\('available', lastAvailable\)/);
   assert.match(updaterSrc, /return \{ ok: false, error: err\.message, kind, hint, downloadUrl: MANUAL_DOWNLOAD_URL \};/,
     '手动检查失败未带回 downloadUrl');
 });
@@ -127,6 +127,67 @@ check('回滚 Runbook 就位', () => {
   assert.match(rb, /回滚步骤/);
   assert.match(rb, /latest\.yml/, 'Runbook 未说明 latest.yml 是更新源真值');
   assert.match(rb, /演练记录/);
+});
+
+// ── 2026-11-04：启动自动更新弹窗（用户反馈「启动 app 后自动扫描并弹窗提示」）──
+// 断言分两层：本文件锁「接线 + 调用点」，updater-errors.test.mjs 锁「40 字截断的真实运行行为」。
+// 只断言「存在一个 summarizeReleaseNotes 函数」是模块级孤儿，等于没测到事件载荷。
+const promptSrc = read(path.join(DESKTOP, 'renderer/src/components/UpdatePrompt.tsx'));
+const appSrc = read(path.join(DESKTOP, 'renderer/src/App.jsx'));
+const preloadSrc = read(path.join(DESKTOP, 'main/preload.js'));
+const zhPrompt = JSON.parse(read(path.join(DESKTOP, 'renderer/src/i18n/locales/zh-CN/updatePrompt.json')));
+const enPrompt = JSON.parse(read(path.join(DESKTOP, 'renderer/src/i18n/locales/en-US/updatePrompt.json')));
+
+check('available 事件载荷带 ≤40 字更新说明，且截断函数真的在调用点上', () => {
+  assert.match(updaterSrc, /const RELEASE_NOTES_MAX_CHARS = 40;/);
+  assert.match(updaterSrc, /function summarizeReleaseNotes\(/);
+  assert.match(updaterSrc, /autoUpdater\.on\('update-available'[\s\S]{0,600}?releaseNotes: summarizeReleaseNotes\(info\?\.releaseNotes\)/,
+    'update-available 未把截断后的 releaseNotes 塞进事件载荷');
+  assert.match(updaterSrc, /send\('available', lastAvailable\)/, '事件未推送完整载荷');
+});
+
+check('主进程缓存 lastAvailable + 补拉通道 + 下载开始后清缓存', () => {
+  assert.match(updaterSrc, /ipcMain\.handle\('updater:lastAvailable', \(\) => \(\{ ok: true, info: lastAvailable, state: downloadState \}\)\)/);
+  assert.match(updaterSrc, /lastAvailable = null; \/\/ 用户已点「更新」/,
+    '开始下载后未清待提示，渲染层重挂载会再弹一次');
+  assert.match(updaterSrc, /autoUpdater\.on\('update-not-available'[\s\S]{0,200}?lastAvailable = null/);
+  assert.match(preloadSrc, /getLastUpdate: \(\) => ipcRenderer\.invoke\('updater:lastAvailable'\)/);
+});
+
+check('启动弹窗常驻挂载于 App 根部，且设置页仍保留手动更新入口', () => {
+  assert.match(appSrc, /import UpdatePrompt from '\.\/components\/UpdatePrompt';/);
+  assert.match(appSrc, /<UpdatePrompt \/>/, 'App 未挂载启动更新弹窗');
+  assert.match(mainSrc, /updater\.scheduleAutoUpdateCheck\(\);/, '启动自动检查接线丢了');
+  assert.match(settings, /downloadUpdate/, '设置页手动下载入口丢了');
+});
+
+check('弹窗文案双侧齐备且默认更新说明不超过 40 字', () => {
+  const keys = Object.keys(zhPrompt).sort().join(',');
+  assert.equal(keys, Object.keys(enPrompt).sort().join(','), 'zh-CN / en-US 键集不一致');
+  assert.ok(zhPrompt.cancel && zhPrompt.update, '缺少「取消 / 更新」文案');
+  assert.ok([...zhPrompt.defaultNotes].length <= 40, 'zh-CN 默认更新说明超过 40 字');
+  assert.ok([...enPrompt.defaultNotes].length <= 40, 'en-US 默认更新说明超过 40 字');
+  assert.match(promptSrc, /t\('updatePrompt\.cancel'\)/);
+  assert.match(promptSrc, /t\('updatePrompt\.update'\)/);
+  assert.match(promptSrc, /t\('updatePrompt\.version', \{ version \}\)/, '弹窗未展示版本号');
+});
+
+check('只有点「更新」才下载；取消不持久化，下次启动会再提示', () => {
+  assert.equal((promptSrc.match(/downloadUpdate\?\.\(\)/g) || []).length, 1,
+    'downloadUpdate 调用点必须且只能有一个');
+  assert.match(promptSrc, /async function startDownload\(\)[\s\S]{0,600}?downloadUpdate\?\.\(\)/);
+  assert.match(promptSrc, /onUpdate=\{startDownload\}/, '「更新」按钮未接到 startDownload');
+  assert.match(promptSrc, /onCancel=\{dismiss\}/, '「取消」按钮未接到 dismiss');
+  assert.match(promptSrc, /if \(dismissedRef\.current \|\| acceptedRef\.current\) return;/,
+    '取消后本次会话内仍会被 available 事件反复打扰');
+  // 剥注释后再判：文件头注释里本就写了「刻意不写 localStorage」，不剥会假红。
+  // 自检：原文里必须能搜到这个词（证明探测器有效），代码里必须搜不到。
+  const promptCode = promptSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(/localStorage/.test(promptSrc), '自检失败：否定式断言的探测器已失效');
+  assert.ok(!/localStorage|sessionStorage/.test(promptCode),
+    '取消不应写持久化忽略标记，否则下次启动不会再提示');
+  assert.match(promptSrc, /getLastUpdate\?\.\(\)/, '窗口晚于自动检查加载时没有补拉');
+  assert.match(promptSrc, /const mj = window\.mjcode;/, '缺少整桥别名（bridge-parity 会误报死桥）');
 });
 
 console.log(`\nPASS：${pass}/${total} 项通过`);

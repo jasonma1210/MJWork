@@ -38,6 +38,8 @@ import { restoreMcpTools } from './lib/mcpTools';
 import { loadAgentsMd } from './lib/agentsMd';
 import ipc from './lib/ipc';
 import FeedbackHost, { confirm, toast } from './components/feedback';
+// 启动自动更新提示：必须常驻挂载（UpdateSection 只在设置弹窗打开时订阅，覆盖不到启动检查）
+import UpdatePrompt from './components/UpdatePrompt';
 import BranchSwitchHost from './components/BranchSwitchDialog';
 // P3-1：MCP 工具执行的请求级进度条（全局一条，订阅主进程 mcp:progress）
 import McpProgressStrip from './components/McpProgressStrip';
@@ -564,7 +566,7 @@ export default function App() {
         <EntryRouteNotice threadId={activeThreadId} projectPath={activeProject?.path} onOpenAssistant={(a) => navDispatch({ type: 'page', page: 'assistant', tab: a === 'open_assistant_scheduled' ? 'scheduled' : undefined })} />
         {/* 助理工作台：Tab 容器，内部按 tab 挂载（不是同时挂载）。 */}
         {showAssistant && <ErrorBoundary compact><AssistantPage
-  tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path} projectId={activeProject?.id || null} onOpenFile={openFileInPane} onPickProject={() => setShowProjectPicker(true)}
+  tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path} onOpenFile={openFileInPane}
   onAutoRun={(goal) => { newThreadInProject(null, goal); }}
   onDispatchEmployee={({ employee, goal, runtime }) => {
     // 复用生态中心「用此角色开会话」的既有链路（mjcode:recruit-expert），
@@ -787,6 +789,8 @@ export default function App() {
         }}
       />
       <FeedbackHost />
+      {/* 启动 10s 自动检查发现新版本时弹「取消 / 更新」；常驻订阅，不随设置弹窗卸载 */}
+      <UpdatePrompt />
       {/* 发送前「切换分支」确认卡（含脏工作区三选一）：命令式调用，宿主在此挂一次 */}
       <BranchSwitchHost />
       <McpProgressStrip />

@@ -471,4 +471,75 @@ check('渲染冒烟：运行中的思考态带计时（减少误以为卡死）'
   assert.ok(/已收\s*\d+\s*字/.test(html), '未渲染出「已收 N 字」');
 });
 
+// 2026-11-04：会话消耗 / 用量流水超过 10 条一律分页。断言打在**真实渲染出的行**上，
+// 只断言「有个 Pagination 组件」是空过（组件挂了但没切片照样绿）。
+check('渲染冒烟：会话消耗 12 条时第一页恰好 10 行且分页条报真实总数', () => {
+  const code = [
+    "import { LanguageProvider } from './i18n';",
+    "import { DeskThreadTable } from './components/desk/DeskUsageTables';",
+    'export default function Root() {',
+    '  const rows = Array.from({ length: 12 }, (_, i) => ({',
+    "    threadId: 't' + i, key: 'k' + i, title: '会话-' + i, model: 'm', total: 1000, requests: i + 1, lastAt: i,",
+    '  }));',
+    '  return <LanguageProvider><DeskThreadTable rows={rows} /></LanguageProvider>;',
+    '}',
+  ].join('\n');
+  let html = '';
+  assert.doesNotThrow(() => { html = renderToStaticMarkup(React.createElement(loadInline(code, '__usage_pager_probe.jsx').default)); },
+    '12 行会话渲染抛错');
+  // 只数单元格文本：td 的 title 属性里还有一份同名字符串，直接 match 会翻倍（实测 20）
+  const titles = html.match(/>会话-\d+<\/td>/g) || [];
+  assert.equal(titles.length, 10, `第一页应恰好 10 行，实际 ${titles.length}`);
+  assert.ok(!html.includes('>会话-10</td>') && !html.includes('>会话-11</td>'), '第 2 页的数据泄漏到第 1 页');
+  assert.ok(html.includes('共 12 条'), '分页条没显示真实总条数');
+  assert.ok(html.includes('第 1 / 2 页'), '分页条没显示总页数');
+});
+
+check('渲染冒烟：页码越界与非法输入一律钳制到合法页', () => {
+  const code = [
+    "import { clampPage } from './components/ui/Pagination';",
+    'export default function Root() {',
+    '  return <div>{[clampPage(99, 10, 12), clampPage(-3, 10, 12), clampPage(Number.NaN, 10, 12), clampPage(2, 10, 12)].join(",")}</div>;',
+    '}',
+  ].join('\n');
+  const html = renderToStaticMarkup(React.createElement(loadInline(code, '__pager_clamp_probe.jsx').default));
+  assert.ok(html.includes('2,1,1,2'), `页码钳制结果不对：${html}`);
+});
+
+// 2026-11-04：启动自动更新弹窗。断言打在**真实渲染出的弹窗 HTML** 上，
+// 只断言「组件存在」覆盖不到版本号 / 40 字摘要 / 两个按钮这三个用户可见契约。
+check('渲染冒烟：启动更新弹窗展示版本号、≤40 字更新内容、取消与更新按钮', () => {
+  const html = renderNamedWithI18n('components/UpdatePrompt.tsx', 'UpdatePromptView', {
+    open: true,
+    version: '0.8.13-beta',
+    notes: '修'.repeat(80),
+    phase: 'available',
+    percent: 0,
+    errorText: '',
+    onCancel: noop,
+    onUpdate: noop,
+    onRestart: noop,
+  });
+  assert.ok(html.includes('0.8.13-beta'), `弹窗没显示版本号：${html.slice(0, 200)}`);
+  assert.ok(html.includes('取消') && html.includes('更新'), '弹窗缺少「取消 / 更新」按钮');
+  assert.ok(html.includes('设置 / 通用 / 版本更新'), '取消后未告知手动更新入口');
+  const m = html.match(/<div class="mt-1 text-sm text-text break-words">([^<]*)<\/div>/);
+  assert.ok(m, '弹窗没渲染更新内容区');
+  assert.ok([...m[1]].length <= 40, `更新内容超过 40 字：${[...m[1]].length}`);
+});
+
+check('渲染冒烟：更新内容截断按码点计，空值回落默认文案', () => {
+  const { clipNotes, NOTES_LIMIT } = loadModule('components/UpdatePrompt.tsx');
+  assert.equal(NOTES_LIMIT, 40);
+  assert.equal(clipNotes('一二三'), '一二三', '短文案被误截断');
+  assert.equal([...clipNotes('修'.repeat(100))].length, 40);
+  assert.equal([...clipNotes('😀'.repeat(100))].length, 40, 'emoji 代理对被切坏');
+  assert.equal(clipNotes(undefined), '');
+  const html = renderNamedWithI18n('components/UpdatePrompt.tsx', 'UpdatePromptView', {
+    open: true, version: '1.0.0', notes: '', phase: 'available', percent: 0, errorText: '',
+    onCancel: noop, onUpdate: noop, onRestart: noop,
+  });
+  assert.ok(html.includes('修复已知问题并优化使用体验'), '无 releaseNotes 时未回落默认更新说明');
+});
+
 console.log(`\nPASS：${pass}/${total} 项通过`);

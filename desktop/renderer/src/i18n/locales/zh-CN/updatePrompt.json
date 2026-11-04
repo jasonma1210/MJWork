@@ -1,0 +1,15 @@
+{
+  "title": "发现新版本",
+  "version": "版本 {version}",
+  "notesLabel": "本次更新",
+  "defaultNotes": "修复已知问题并优化使用体验",
+  "cancel": "取消",
+  "update": "更新",
+  "downloading": "正在下载更新 {percent}%",
+  "downloaded": "更新已就绪，重启后安装",
+  "restart": "重启安装",
+  "later": "稍后",
+  "failed": "更新失败：{message}",
+  "retry": "重试",
+  "manualHint": "也可在设置 / 通用 / 版本更新中手动更新"
+}

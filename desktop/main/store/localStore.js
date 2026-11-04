@@ -397,8 +397,12 @@ class LocalStore {
       .sort((a, b) => a.id - b.id);
     if (copied.length === 0) return { ok: false, error: '分支点之前没有可复制的内容' };
     const now = Date.now();
+    // 分支后缀不叠加：在分支上再 fork 曾产出「· 分支· 分支· 分支· 分支」，
+    // 会话消耗表里同一会话因此被拆成多行（用户 2026-11-04 反馈）。侧栏仍需要
+    // 区分分支会话，故只保留一个后缀；展示层由 normalizeThreadTitle 剥净。
+    const baseTitle = String(src.title || '会话').replace(/(\s*[·•]\s*分支\s*)+$/u, '').trim() || '会话';
     const t = {
-      id: this.nextId(), title: `${src.title || '会话'} · 分支`,
+      id: this.nextId(), title: `${baseTitle} · 分支`,
       cwd: src.cwd || '', projectPath: src.projectPath || '',
       providerId: src.providerId ?? null, providerName: src.providerName || '', modelName: src.modelName || '',
       status: 'idle', parentThreadId: src.id, forkFromMessageId: pivot,

@@ -12,6 +12,7 @@
 //   · 查询失败保留旧数据，绝不把失败显示成 0（§7.5）。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Button from './ui/Button';
+import Pagination, { clampPage, DEFAULT_PAGE_SIZE } from './ui/Pagination';
 import InlineAlert from './InlineAlert';
 import { useI18n } from '../i18n';
 
@@ -65,6 +66,9 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
   const [refreshing, setRefreshing] = useState(false);
   const [exportMsg, setExportMsg] = useState('');
   const [exporting, setExporting] = useState(false);
+  // 明细按页展示（一页 10 条）；后端仍是 keyset 游标，页码只是前端切片 + 按需补页
+  const [page, setPage] = useState(1);
+  const [paging, setPaging] = useState(false);
   const reqId = useRef(0);
 
   const filters = useMemo(() => {
@@ -76,7 +80,13 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
     };
   }, [range, projectId, source]);
 
-  /** 首页查询（重置分页）。后续页走 loadMore，不重算 asOf。 */
+  // 总条数：后端 summary.count 是筛选内真实总数；游标拉空后以已加载条数为准，
+  // 避免页码指向一个「按汇总数算存在、实际已无数据」的空页。
+  const totalRows = cursor ? Math.max(summary.count || 0, items.length) : items.length;
+  const current = clampPage(page, DEFAULT_PAGE_SIZE, totalRows);
+  const visible = items.slice((current - 1) * DEFAULT_PAGE_SIZE, current * DEFAULT_PAGE_SIZE);
+
+  /** 首页查询（重置分页）。后续页走 appendPage，不重算 asOf。 */
   const loadFirst = useCallback((quiet = false) => {
     const id = ++reqId.current;
     if (quiet) setRefreshing(true); else setStatus('loading');
@@ -95,6 +105,7 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
         setUnfiltered(res.unfiltered ?? null);
         setAsOf(Number(res.asOf) || 0);
         setCursor(res.nextCursor || null);
+        setPage(1);
         setStatus((res.items || []).length ? 'ready' : 'empty');
       })
       .catch((e) => { if (id === reqId.current) { setStatus('error'); setError(String(e?.message || e)); } })
@@ -103,19 +114,48 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
 
   useEffect(() => { loadFirst(); }, [loadFirst]);
 
-  function loadMore() {
-    if (!cursor) return;
-    const id = reqId.current; // 翻页不推进 reqId：不打断首页快照
-    Promise.resolve(window.mjcode?.ledgerQuery?.({ cursor, limit: 100 }))
-      .then((raw) => {
-        if (id !== reqId.current) return;
-        const res = raw as { ok?: boolean; items?: LedgerItem[]; nextCursor?: string | null } | undefined;
-        if (!res?.ok) { setError(String(res && 'error' in res ? (res as { error?: string }).error : 'UNKNOWN')); return; }
-        // 追加，不替换 —— 翻页沿用首页 asOf，故两页之间不重不漏
-        setItems((prev) => [...prev, ...(res.items || [])]);
-        setCursor(res.nextCursor || null);
-      })
-      .catch((e) => setError(String(e?.message || e)));
+  /** 追加一页游标数据；失败返回原值并留错误，不把「没查到」压成「查到了空」。 */
+  async function appendPage(
+    base: LedgerItem[], cur: string,
+  ): Promise<{ list: LedgerItem[]; next: string | null }> {
+    const res = await Promise.resolve(window.mjcode?.ledgerQuery?.({ cursor: cur, limit: 100 })) as
+      { ok?: boolean; items?: LedgerItem[]; nextCursor?: string | null; error?: string } | undefined;
+    if (!res?.ok) {
+      setError(res?.error || 'UNKNOWN');
+      return { list: base, next: cur };
+    }
+    // 追加，不替换 —— 沿用首页 asOf，故两页之间不重不漏
+    return { list: base.concat(res.items || []), next: res.nextCursor || null };
+  }
+
+  /** 跳到第 n 页：已加载数据不够就沿游标补到够，再一次性落状态（翻页不闪空表）。 */
+  async function changePage(next: number) {
+    const target = clampPage(next, DEFAULT_PAGE_SIZE, totalRows);
+    const needed = target * DEFAULT_PAGE_SIZE;
+    if (needed <= items.length || !cursor) { setPage(target); return; }
+    const id = reqId.current; // 不推进 reqId：补页不打断首页快照
+    setPaging(true);
+    try {
+      let list = items;
+      let cur: string | null = cursor;
+      let guard = 0;
+      while (cur && list.length < needed && guard < 50) {
+        guard += 1;
+        const r = await appendPage(list, cur);
+        if (r.list === list && r.next === cur) break; // 查询失败：停止空转
+        list = r.list;
+        cur = r.next;
+      }
+      if (id !== reqId.current) return; // 筛选已变，丢弃过期结果
+      setItems(list);
+      setCursor(cur);
+      setPage(target);
+    } catch (e) {
+      if (id === reqId.current) setError(String((e as Error)?.message || e));
+    } finally {
+      // 异常/筛选切换都必须解除禁用，否则分页条会永久卡住
+      if (id === reqId.current) setPaging(false);
+    }
   }
 
   function exportCsv() {
@@ -252,7 +292,7 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
                 </tr>
               </thead>
               <tbody>
-                {items.map((it) => (
+                {visible.map((it) => (
                   <tr key={it.id} className="border-t border-border">
                     <td className="py-1 tabular-nums">{it.createdAt ? new Date(it.createdAt).toLocaleString() : t('ledger.notRecorded')}</td>
                     <td className="py-1 truncate">
@@ -274,11 +314,13 @@ export default function LedgerPage({ projectId }: { projectId?: string | null })
             </table>
             <div className="text-caption text-text2">{t('ledger.memberUnverifiedNote')}</div>
 
-            <div className="flex items-center gap-2">
-              {cursor
-                ? <Button size="xs" variant="secondary" onClick={loadMore}>{t('ledger.loadMore')}</Button>
-                : <span className="text-caption text-text2">{t('ledger.noMore')}</span>}
-            </div>
+            <Pagination
+              page={current}
+              pageSize={DEFAULT_PAGE_SIZE}
+              total={totalRows}
+              busy={paging}
+              onPageChange={(n) => { void changePage(n); }}
+            />
           </>
         )}
       </div>

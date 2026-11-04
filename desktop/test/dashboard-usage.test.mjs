@@ -7,6 +7,7 @@
 import assert from 'node:assert';
 import {
   aggregateMessages, mergeTaskUsage, fmtTokens, startOfLocalDay, UNMODELED,
+  normalizeThreadTitle, dedupeForkCopies,
 } from '../renderer/src/lib/usageAggregate.ts';
 
 let pass = 0;
@@ -160,6 +161,78 @@ check('⑧ 数字缩写与本地日零点口径', () => {
   assert.equal(new Date(s).getDate(), 27);
   assert.equal(new Date(s).getHours(), 0);
   assert.equal(t - s < DAY, true, '日窗口必须小于一天');
+});
+
+// ── 2026-11-04 用户反馈：会话消耗里同一个会话被拆成 5 行、名字还叠着「· 分支」──
+// 形态复刻自真机截图：fork 出的多个 threadId 各自复制了同一段带 usage 的历史消息。
+const BASE_TITLE = '我现在usb接入的是什么设备？';
+const hist = [
+  { role: 'assistant', modelName: 'deepseek-flash', tokensInput: 100, tokensOutput: 50, createdAt: at(0, 9), content: '第一轮' },
+  { role: 'assistant', modelName: 'deepseek-flash', tokensInput: 200, tokensOutput: 60, createdAt: at(0, 10), content: '第二轮' },
+  { role: 'assistant', modelName: 'deepseek-flash', tokensInput: 300, tokensOutput: 70, createdAt: at(0, 11), content: '第三轮' },
+];
+// 复制体：字段与源消息逐个相同（forkThread 会把 content/usage/model/createdAt 一起复制）
+const copyOf = (m, tid) => ({ ...m, threadId: tid });
+const forkMessages = [
+  ...hist.map((m) => copyOf(m, 't1')),
+  ...hist.map((m) => copyOf(m, 't2')),                       // 分支 1：纯复制
+  ...hist.map((m) => copyOf(m, 't3')),                       // 分支 2：纯复制
+  { role: 'assistant', modelName: 'deepseek-flash', tokensInput: 400, tokensOutput: 80, createdAt: at(0, 12), content: '分支1新增', threadId: 't2' },
+  { role: 'assistant', modelName: 'deepseek-flash', tokensInput: 500, tokensOutput: 90, createdAt: at(0, 13), content: '分支2新增', threadId: 't3' },
+];
+const forkThreads = [
+  { id: 't1', title: BASE_TITLE },
+  { id: 't2', title: `${BASE_TITLE} · 分支` },
+  { id: 't3', title: `${BASE_TITLE} · 分支· 分支· 分支· 分支` },
+];
+
+check('⑨ 会话名归一化：反复叠加的「· 分支」后缀全部剥掉', () => {
+  assert.equal(normalizeThreadTitle(BASE_TITLE), BASE_TITLE);
+  assert.equal(normalizeThreadTitle(`${BASE_TITLE} · 分支`), BASE_TITLE);
+  assert.equal(normalizeThreadTitle(`${BASE_TITLE} · 分支· 分支· 分支· 分支`), BASE_TITLE);
+  assert.equal(normalizeThreadTitle('  '), '');
+  assert.equal(normalizeThreadTitle('不是后缀 · 分支 · 别的'), '不是后缀 · 分支 · 别的');
+});
+
+check('⑨b fork 复制体被去重，但真实的不同消息不会被误删', () => {
+  const d = dedupeForkCopies(forkMessages);
+  assert.equal(d.length, 5, `应剩 3 条历史 + 2 条新增，实际 ${d.length}`);
+  // 反向对照：同刻同模型同 token，但正文不同 ⇒ 是两条真实消息，不能被当成副本
+  const sameUsage = [
+    { role: 'assistant', modelName: 'm', tokensInput: 10, tokensOutput: 0, createdAt: at(0), content: '甲' },
+    { role: 'assistant', modelName: 'm', tokensInput: 10, tokensOutput: 0, createdAt: at(0), content: '乙' },
+  ];
+  assert.equal(dedupeForkCopies(sameUsage).length, 2, '正文不同的真实消息被误去重');
+});
+
+check('⑨c 三个 threadId 的同一会话合并成一行，消耗不因复制而翻五倍', () => {
+  const r9 = aggregateMessages(forkMessages, forkThreads, NOW, 99);
+  const rows = r9.byThread.filter((x) => x.title === BASE_TITLE);
+  assert.equal(rows.length, 1, `同一会话应只有 1 行，实际 ${rows.length}`);
+  assert.equal(rows[0].title, BASE_TITLE, '会话名不得带分支后缀');
+  assert.equal(rows[0].model, 'deepseek-flash');
+  // 3 条历史 + 2 条新增 = 5 次请求，总 token = 150+260+370+480+590
+  assert.equal(rows[0].requests, 5, `请求数被复制体放大：${rows[0].requests}`);
+  assert.equal(rows[0].total, 150 + 260 + 370 + 480 + 590);
+  assert.equal(r9.totals.requests, 5, '总量口径也必须用去重后的消息');
+  assert.equal(r9.totals.total, rows[0].total, '总量与会话行必须同口径');
+});
+
+check('⑨d 仅多模型会话才拆行：单模型一行，多模型每个模型一行且行键唯一', () => {
+  const multi = [
+    { role: 'assistant', threadId: 'm1', modelName: 'deepseek-flash', tokensInput: 100, tokensOutput: 0, createdAt: at(0, 9), content: 'A' },
+    { role: 'assistant', threadId: 'm1', modelName: 'flint', tokensInput: 900, tokensOutput: 0, createdAt: at(0, 10), content: 'B' },
+  ];
+  const r10 = aggregateMessages([...forkMessages, ...multi], [...forkThreads, { id: 'm1', title: '多模型会话' }], NOW, 99);
+  const one = r10.byThread.filter((x) => x.title === BASE_TITLE);
+  const two = r10.byThread.filter((x) => x.title === '多模型会话');
+  assert.equal(one.length, 1, '单模型会话不得拆行');
+  assert.equal(two.length, 2, '多模型会话必须按模型拆成两行');
+  assert.deepEqual(two.slice().sort((a, b) => a.total - b.total).map((x) => [x.model, x.total]),
+    [['deepseek-flash', 100], ['flint', 900]], '拆行后每行只能统计自己那个模型的消耗');
+  assert.equal(two[0].lastAt, two[1].lastAt, '同会话拆出的行必须共享活跃时间以保持相邻');
+  const keys = r10.byThread.map((x) => x.key);
+  assert.equal(new Set(keys).size, keys.length, '行键重复：合并/拆行后 React key 会撞车');
 });
 
 console.log(`\ndashboard-usage: ${pass}/${pass + fail} 通过`);

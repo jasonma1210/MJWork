@@ -24,7 +24,7 @@ type Bridge = Record<string, ((arg?: unknown) => Promise<unknown>) | undefined>;
 
 interface RawThread { id?: string; title?: string; modelName?: string; updatedAt?: number }
 interface RawMessage {
-  threadId?: string; role?: string; modelName?: string;
+  threadId?: string; role?: string; content?: string; modelName?: string;
   tokensInput?: number; tokensOutput?: number; createdAt?: number;
 }
 interface RawGroup { groupId?: string; goal?: string; status?: string; totalTasks?: number; doneTasks?: number; failedTasks?: number; updatedAt?: number; createdAt?: number }
@@ -188,7 +188,9 @@ export function useDeskUsage(maxThreads = 200, taskLimit = 8): DeskUsage {
   }, [reload]);
 
   const agg = useMemo(
-    () => aggregateMessages(messages as UsageMessage[], threads as UsageThread[], Date.now(), 8),
+    // topN 交给表格前端分页，不再在这里截 8 行：截断发生在排序之后，
+    // 只留 8 行会让「第 2 页」永远没有数据。分页上限由表格组件持有。
+    () => aggregateMessages(messages as UsageMessage[], threads as UsageThread[], Date.now(), Number.POSITIVE_INFINITY),
     [messages, threads],
   );
   const tasks = useMemo(

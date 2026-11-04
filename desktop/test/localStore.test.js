@@ -201,6 +201,11 @@ check('分支会话落盘可恢复',
 check('源会话不存在时拒绝', sF.forkThread(999999, { fromMessageId: f1.id }).ok === false);
 check('分支点缺失时拒绝', sF.forkThread(src.id, {}).ok === false);
 check('分支点为非数字时拒绝', sF.forkThread(src.id, { fromMessageId: 'abc' }).ok === false);
+// 2026-11-04：在分支上再 fork 不得把「· 分支」后缀反复叠加（会话消耗表因此被拆成多行）
+const rf2 = sF.forkThread(forked.id, { fromMessageId: fm[0].id });
+check('分支后缀不叠加（连续 fork 仍只有一个）',
+  rf2.ok === true && /·\s*分支$/.test(rf2.thread.title) && !/分支.*分支/.test(rf2.thread.title),
+  `实际标题：${rf2.thread?.title}`);
 
 // ── P0-1：消息热路径合并刷盘（主进程不再被每条消息一次的整库同步写阻塞）──
 const dirHot = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-hot-'));

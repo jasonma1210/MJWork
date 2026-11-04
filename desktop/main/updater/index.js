@@ -39,8 +39,41 @@ function getDownloadState() {
   return downloadState;
 }
 
+/**
+ * 纯函数：把 electron-updater 的 releaseNotes 压成一条 ≤40 字的单行摘要。
+ * GitHub provider 给的是 Release 正文（markdown，可能是 string 或 [{version,note}]），
+ * 直接塞进弹窗会出现标题井号、链接 URL、多行列表，且长度不可控。
+ * 截断按 Unicode 码点计（Array.from），避免 emoji / 代理对被切成半个字符；
+ * 真被截断时末位用省略号占位，总长仍 ≤ limit。
+ */
+function summarizeReleaseNotes(notes, limit = RELEASE_NOTES_MAX_CHARS) {
+  const parts = Array.isArray(notes)
+    ? notes.map((n) => (n && typeof n === 'object' ? n.note : n))
+    : [notes];
+  const text = parts
+    .filter((p) => typeof p === 'string')
+    .join(' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^[\s#>*+-]+/gm, '')
+    .replace(/[`*_~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const cap = Math.max(1, Math.trunc(Number(limit) || RELEASE_NOTES_MAX_CHARS));
+  const chars = Array.from(text);
+  if (chars.length <= cap) return text;
+  return `${chars.slice(0, cap - 1).join('')}…`;
+}
+
 let getMainWindow = () => null;
 let lastDownloadPercent = 0;
+
+// 2026-11-04（用户反馈「启动 app 后自动扫描更新并弹窗」）：主进程缓存「本次启动发现的新版本」。
+// 启动 10s 的自动检查可能早于渲染层窗口加载完成，'updater:status' 事件会丢；渲染层挂载时
+// 经 updater:lastAvailable 补拉。开始下载 / 已是最新 / 已下载完成时清空，避免重挂载后又弹一次。
+let lastAvailable = null;
+const RELEASE_NOTES_MAX_CHARS = 40;
 
 /** 状态推送唯一出口：IPC 跳过分支与 autoUpdater 事件共用，保证渲染层总能对齐主进程真值。 */
 function send(status, data = {}) {
@@ -63,6 +96,7 @@ const MANUAL_DOWNLOAD_URL = resolveManualDownloadUrl();
 function init(deps) {
   getMainWindow = deps.getMainWindow;
   downloadState = 'idle';
+  lastAvailable = null;
   ipcMain.handle('updater:check', async () => {
     if (!app.isPackaged) return { ok: false, error: '仅打包后可检查更新' };
     const up = initUpdater();
@@ -103,6 +137,7 @@ function init(deps) {
     // 同步置位：await 之前连点两次也不会各自进入下载分支
     downloadState = 'downloading';
     lastDownloadPercent = 0;
+    lastAvailable = null; // 用户已点「更新」：清掉待提示，渲染层重挂载不得再弹一次
     try {
       await up.downloadUpdate();
       // 正常情况下 update-downloaded 事件已置终态；这里兜住「事件未发但 Promise 已 resolve」
@@ -128,6 +163,10 @@ function init(deps) {
     up.quitAndInstall();
     return { ok: true };
   });
+
+  // 启动自动更新弹窗的状态补拉：窗口加载慢于 10s 自动检查时，'updater:status' 已发过且无人接收。
+  // 返回 state 让渲染层自行判断：非 idle 说明已经进入下载/完成，不该再展示「取消 / 更新」。
+  ipcMain.handle('updater:lastAvailable', () => ({ ok: true, info: lastAvailable, state: downloadState }));
 }
 
 // T2-7：更新失败可诊断文案——把 electron-updater 的原始错误按失败模式归类，
@@ -172,9 +211,18 @@ function initUpdater() {
   autoUpdater.on('update-available', (info) => {
     // downloaded 是终态；downloading 中也不许把进度面打回 available（会再露出「下载更新」按钮）
     if (downloadState !== 'idle') return;
-    send('available', { version: info.version, downloadUrl: MANUAL_DOWNLOAD_URL });
+    lastAvailable = {
+      version: info?.version || '',
+      releaseNotes: summarizeReleaseNotes(info?.releaseNotes),
+      downloadUrl: MANUAL_DOWNLOAD_URL,
+    };
+    send('available', lastAvailable);
   });
-  autoUpdater.on('update-not-available', () => { if (downloadState === 'idle') send('up-to-date'); });
+  autoUpdater.on('update-not-available', () => {
+    if (downloadState !== 'idle') return;
+    lastAvailable = null;
+    send('up-to-date');
+  });
   autoUpdater.on('download-progress', (p) => {
     if (downloadState === 'downloaded') return; // 忽略迟到的进度事件（100% 后又被显示成「下载中」）
     downloadState = 'downloading';
@@ -184,6 +232,7 @@ function initUpdater() {
   autoUpdater.on('update-downloaded', () => {
     downloadState = 'downloaded';
     lastDownloadPercent = 100;
+    lastAvailable = null;
     send('downloaded');
   });
   autoUpdater.on('error', (err) => {
@@ -208,4 +257,4 @@ function scheduleAutoUpdateCheck() {
   }, UPDATE_CHECK_DELAY_MS).unref?.();
 }
 
-module.exports = { init, initUpdater, scheduleAutoUpdateCheck, resolveManualDownloadUrl, classifyUpdateError, canStartDownload, getDownloadState, UPDATE_CHECK_DELAY_MS, UPDATE_CHANNEL };
+module.exports = { init, initUpdater, scheduleAutoUpdateCheck, resolveManualDownloadUrl, classifyUpdateError, canStartDownload, getDownloadState, summarizeReleaseNotes, RELEASE_NOTES_MAX_CHARS, UPDATE_CHECK_DELAY_MS, UPDATE_CHANNEL };

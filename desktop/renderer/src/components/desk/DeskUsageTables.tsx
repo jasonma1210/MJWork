@@ -7,8 +7,10 @@
 // 两者**都真实存在**，故分两张表展示，不强行合并成一张"看起来统一"的假表。
 //
 // 未记录 ≠ 0：任务没有账本流水时显示「未记录」而不是 0（mergeTaskUsage 的 hasTokens）。
+import { useState } from 'react';
 import { fmtTokens, type TaskUsageRow, type ThreadRow } from '../../lib/usageAggregate';
 import { useI18n } from '../../i18n';
+import Pagination, { clampPage, DEFAULT_PAGE_SIZE } from '../ui/Pagination';
 
 function StatusChip({ status }: { status: string }) {
   if (!status) return null;
@@ -67,7 +69,11 @@ export function DeskTaskTable({ rows, hint }: { rows: TaskUsageRow[]; hint: 'no-
 
 export function DeskThreadTable({ rows }: { rows: ThreadRow[] }) {
   const { t } = useI18n();
+  const [page, setPage] = useState(1);
   if (rows.length === 0) return null; // 没有可统计会话 ⇒ 整卡卸载（不画空表）
+  // 数据刷新后行数可能变少：渲染时就地钳制，避免停在一个空页上
+  const current = clampPage(page, DEFAULT_PAGE_SIZE, rows.length);
+  const visible = rows.slice((current - 1) * DEFAULT_PAGE_SIZE, current * DEFAULT_PAGE_SIZE);
   return (
     <section className="rounded-xl border border-border bg-surface p-5" aria-label={t('desk.stats.threads')}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -85,8 +91,9 @@ export function DeskThreadTable({ rows }: { rows: ThreadRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.threadId} className="border-t border-border">
+          {visible.map((r) => (
+            // 合并分支后多行共享 threadId；多模型拆行后也共享，故行键必须用 r.key
+            <tr key={r.key || `${r.threadId}|${r.model}`} className="border-t border-border">
               <td className="max-w-[320px] truncate py-1 text-text" title={r.title}>{r.title}</td>
               <td className="max-w-[160px] truncate py-1 text-text2">{r.model || t('desk.stats.notRecorded')}</td>
               <td className="py-1 text-right tabular-nums text-text2">{r.requests}</td>
@@ -95,6 +102,12 @@ export function DeskThreadTable({ rows }: { rows: ThreadRow[] }) {
           ))}
         </tbody>
       </table>
+      <Pagination
+        page={current}
+        pageSize={DEFAULT_PAGE_SIZE}
+        total={rows.length}
+        onPageChange={setPage}
+      />
     </section>
   );
 }

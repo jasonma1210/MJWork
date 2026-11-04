@@ -6,10 +6,10 @@
     "deadBridgeMethods": {
       "source": "desktop/main/preload.js − desktop/renderer/src（口径同 test/bridge-parity.test.mjs）",
       "unit": "method",
-      "total": 290,
-      "referenced": 239,
+      "total": 291,
+      "referenced": 240,
       "dead": 51,
-      "ratio": 0.1759,
+      "ratio": 0.1753,
       "groups": [
         {
           "prefix": "market",
@@ -112,7 +112,7 @@
       "source": "desktop/renderer/src（排除 components/ui/ 与 styles/，口径同 test/ui-conventions.test.js）",
       "unit": "button",
       "total": 151,
-      "scannedFiles": 178,
+      "scannedFiles": 180,
       "groups": [
         {
           "file": "components/Onboarding.jsx",

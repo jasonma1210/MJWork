@@ -27,7 +27,7 @@ require.cache[mainRequire.resolve('electron')] = {
   exports: { app: electronAppStub, ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) } },
 };
 
-const { classifyUpdateError, init, canStartDownload, getDownloadState } = require(path.join(DESKTOP, 'main/updater/index.js'));
+const { classifyUpdateError, init, canStartDownload, getDownloadState, summarizeReleaseNotes, RELEASE_NOTES_MAX_CHARS } = require(path.join(DESKTOP, 'main/updater/index.js'));
 
 let pass = 0, total = 0;
 function check(name, fn) {
@@ -92,6 +92,36 @@ check('下载状态机纯函数：idle 可下载，downloading / downloaded 幂�
   assert.equal(canStartDownload('downloading').start, false);
   assert.equal(canStartDownload('downloaded').start, false);
   assert.equal(canStartDownload('downloaded').state, 'downloaded');
+});
+
+// ── 2026-11-04：启动更新弹窗的「更新内容 ≤40 字」（真跑纯函数，不只查函数存在）──
+check('releaseNotes 三种形态都归一成单行摘要（markdown / HTML / 数组）', () => {
+  const md = summarizeReleaseNotes('# 0.8.13-beta\n\n- **修复** [下载重复](https://example.com/a)\n- 优化体验');
+  assert.equal(md, '0.8.13-beta 修复 下载重复 优化体验', md);
+  const html = summarizeReleaseNotes('<h2>Release</h2><p>Fixed &amp; improved</p>');
+  assert.equal(html, 'Release Fixed &amp; improved', html);
+  const arr = summarizeReleaseNotes([{ version: '1', note: '修复 A' }, { version: '2', note: '修复 B' }]);
+  assert.equal(arr, '修复 A 修复 B', arr);
+});
+
+check('releaseNotes 任意输入都 ≤40 字，且空值不得抛错 / 不得产出 undefined', () => {
+  assert.equal(RELEASE_NOTES_MAX_CHARS, 40);
+  for (const input of [
+    '修'.repeat(500),
+    '# '.repeat(200) + '修复'.repeat(200),
+    '😀'.repeat(100),
+    [{ note: '长'.repeat(300) }],
+    undefined,
+    null,
+    42,
+    { unexpected: true },
+  ]) {
+    const out = summarizeReleaseNotes(input);
+    assert.equal(typeof out, 'string', `非字符串输出：${String(input).slice(0, 20)}`);
+    assert.ok([...out].length <= 40, `超过 40 字：${[...out].length} — ${out}`);
+  }
+  assert.equal(summarizeReleaseNotes('修复若干问题'), '修复若干问题', '短文案不得被误截断');
+  assert.equal([...summarizeReleaseNotes('修'.repeat(41))].length, 40, '41 字应截成 40 字（含省略号）');
 });
 
 // ── P0-3 + 2026-11-04：updater:download IPC 与下载状态机（注入 electron-updater stub）──
@@ -221,6 +251,32 @@ init({ getMainWindow });
   verify('update-downloaded 事件置终态并推送 downloaded',
     getDownloadState() === 'downloaded' && donePush?.status === 'downloaded',
     `${getDownloadState()} / ${JSON.stringify(donePush)}`);
+
+  // 9b. 启动更新弹窗：available 载荷带 ≤40 字说明，可补拉，下载开始后不再待提示
+  init({ getMainWindow });
+  emit('update-available', { version: '0.8.13-beta', releaseNotes: `# 0.8.13\n- ${'修'.repeat(200)}` });
+  const startupPush = statusPushes[statusPushes.length - 1];
+  verify('startup 的 available 事件真的带 releaseNotes 且 ≤40 字',
+    startupPush?.status === 'available' && startupPush?.version === '0.8.13-beta'
+      && typeof startupPush?.releaseNotes === 'string'
+      && [...startupPush.releaseNotes].length > 0
+      && [...startupPush.releaseNotes].length <= 40,
+    JSON.stringify(startupPush));
+  const lastBefore = await handlers.get('updater:lastAvailable')();
+  verify('窗口晚于自动检查加载时：updater:lastAvailable 补拉到同一条待提示且 state=idle',
+    lastBefore.ok === true && lastBefore.state === 'idle'
+      && lastBefore.info?.version === '0.8.13-beta'
+      && lastBefore.info?.releaseNotes === startupPush.releaseNotes,
+    JSON.stringify(lastBefore));
+  await startDownload();
+  const lastAfter = await handlers.get('updater:lastAvailable')();
+  verify('点「更新」进入下载后清空待提示：渲染层重挂载不得再弹「取消 / 更新」',
+    lastAfter.info === null && lastAfter.state === 'downloaded', JSON.stringify(lastAfter));
+  init({ getMainWindow });
+  emit('update-not-available');
+  const lastNone = await handlers.get('updater:lastAvailable')();
+  verify('已是最新时同样清空待提示',
+    lastNone.info === null && lastNone.state === 'idle', JSON.stringify(lastNone));
 
   // 10. 静态钉值：链路里没有运行时测试覆盖的几处（自动检查 / 渲染层）
   const updaterSrc = fs.readFileSync(path.join(DESKTOP, 'main/updater/index.js'), 'utf8');
