@@ -121,10 +121,17 @@ function windowsSandboxPlan() {
       },
       {
         id: 'block-outbound-firewall',
-        cmd: 'netsh',
-        args: ['advfirewall', 'firewall', 'add', 'rule', `name=${FIREWALL_RULE_PREFIX}_BlockOutbound`,
-          `dir=out`, `action=block`, `user=${SANDBOX_USER_OFFLINE}`, 'enable=yes'],
-        note: '防火墙阻断离线用户的全部出网（OS 级断网，对应 Linux 的 --unshare-net）',
+        // 关键修正：netsh advfirewall firewall add rule **不支持 user= 参数**（按用户过滤出网
+        // 不是 netsh 的能力），原写法会让这一步非零退出 ⇒ 触发整体回滚，导致整个一次性管理员
+        // 设置失败。Windows 上按用户阻断出网的正确原语是 PowerShell 的
+        // `New-NetFirewallRule -LocalUser <SDDL>`（-LocalUser 接受该用户 SID 的 SDDL 串）。
+        // 故本步改为：先按用户名解析出 SID（NTAccount→SID），再以该 SID 创建一条阻断离线用户
+        // 全部出网（dir=out action=block）的规则；规则 Name 与 DisplayName 取同一值，
+        // 以便回滚里的 `netsh advfirewall firewall delete rule name=…` 按 Name 命中删除。
+        cmd: 'powershell',
+        args: ['-NoProfile', '-Command',
+          `$sid=(New-Object System.Security.Principal.NTAccount('${SANDBOX_USER_OFFLINE}')).Translate([System.Security.Principal.SecurityIdentifier]).Value; New-NetFirewallRule -Name '${FIREWALL_RULE_PREFIX}_BlockOutbound' -DisplayName '${FIREWALL_RULE_PREFIX}_BlockOutbound' -Direction Outbound -Action Block -LocalUser $sid -Enabled True`],
+        note: '防火墙按专用用户 SID（SDDL）阻断其全部出网（OS 级断网，对应 Linux 的 --unshare-net）。netsh 不支持按用户过滤，改用 PowerShell New-NetFirewallRule -LocalUser',
       },
     ],
     rollback: [

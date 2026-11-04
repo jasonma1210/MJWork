@@ -388,6 +388,10 @@ export default function App() {
         onFinish={(prompt, extras) => {
           localStorage.setItem('mj_onboarded', '1');
           setOnboarded(true);
+          // 首启完成后明确落到工作台（desk）：工作台是一级入口的默认落地页
+          // （navRoute.INITIAL_ROUTE.page='desk'），这里再显式切一次，防止任何遗留
+          // 路由态把首屏带偏到对话页（thread）的欢迎对话框。macOS/Windows/Linux 一致。
+          navDispatch({ type: 'page', page: 'desk' });
           if (prompt) setInitialPrompt(prompt);
           const pickedModel = pickOnboardingModel(userProviders, extras?.model); if (pickedModel) setSelectedModel(pickedModel); // FIX-P07：向导选定的模型 = 首聊当前模型
           // 引导里选的技能：合并进启用列表（setEnabledSkillsSafe 只接受值，不接受 updater）
@@ -574,9 +578,10 @@ export default function App() {
 /></ErrorBoundary>}
         {showScheduled && <ErrorBoundary compact><ScheduledTasks /></ErrorBoundary>}
         {showLedger && <ErrorBoundary compact><LedgerPage projectId={activeProject?.id || null} /></ErrorBoundary>}
-        {/* 接单台（desk）：默认不落地（showDesk 初值 false），仅由侧栏入口/命令面板进入。
-            派单与 AssistantPage.onAutoRun 完全同构 —— 只把目标交回主链路（setInitialPrompt），
-            不新增任何派活分支；「打开工件」复用右栏既有的 paneTab/paneOpen 两态。 */}
+        {/* 接单台（desk）：工作台是一级入口的**默认落地页**（INITIAL_ROUTE.page='desk' ⇒
+            showDesk 初值为 true），首启完成亦显式切回 desk（见 onFinish）。侧栏入口/命令面板
+            仅为再次进入的同名通道。派单与 AssistantPage.onAutoRun 完全同构 —— 只把目标交回主链路
+            （setInitialPrompt），不新增任何派活分支；「打开工件」复用右栏既有的 paneTab/paneOpen 两态。 */}
         {showDesk && (
           <ErrorBoundary compact><DeskPage
             threads={threads} threadId={activeThreadId} projectPath={activeProject?.path || ''} approvalSettings={approvalSettings} onPolicyChange={(patch) => setApprovalSettings((prev) => ({ ...prev, ...patch }))} projects={projects} activeProjectId={activeProject?.id || null} onNewProject={() => setShowProjectPicker(true)}
