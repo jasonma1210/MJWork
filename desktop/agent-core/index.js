@@ -820,8 +820,8 @@ const COMPACT_RESCUE_TIMEOUT_MS = 180000;
 // 卡住就等于「消息发不出去」，不能给它压缩救援那种长耐心。
 const AC_EXTRACT_TIMEOUT_MS = 20000;
 
-// P2-4：激进裁剪门槛（0.85 → 0.80）与中段轻提示阈值（0.70，与压缩触发同源）
-export const AGGRESSIVE_RATIO = 0.80;
+// P2-4：激进裁剪门槛（0.85 → 0.90）与中段轻提示阈值（0.80，与压缩触发同源）
+export const AGGRESSIVE_RATIO = 0.90;
 // P2-3：摘要硬长度约束——提示里写「300 字以内」不等于输出受限，必须在代码里截断。
 // 2000 字符 ≈ 500 tokens：给足细节，又不让摘要本身变成新的大块上下文。
 export const COMPACT_SUMMARY_MAX_CHARS = 2000;
@@ -829,8 +829,8 @@ export const COMPACT_SUMMARY_MAX_CHARS = 2000;
 // 所以重写次数是**成本指标**而非纯技术副作用。5 次 = 3 次自动救援 + 1 次 400 救援 + 1 次余量；
 // 超过说明压缩无效，应转硬截断/挂起，而不是继续刷摘要。
 export const MAX_REWRITES_PER_RUN = 5;
-// P1-5：入口裁剪触发比例——与压缩阈值（0.7）同源，消灭「45% 就裁 / 70% 才压」的双标。
-export const TRIM_TRIGGER_RATIO = 0.7;
+// P1-5：入口裁剪触发比例——与压缩阈值（0.8）同源，消灭「45% 就裁 / 80% 才压」的双标。
+export const TRIM_TRIGGER_RATIO = 0.8;
 // P0-1⑤：入口裁剪的有效窗口下限（此前是内联的 16000）
 export const TRIM_MIN_EFFECTIVE_WINDOW = 16000;
 // P1-1：整任务墙钟预算（轮次/token/abort 三闸之外的第四道，先于子预算判定）
@@ -1071,8 +1071,8 @@ const MAX_AUTO_RESTARTS = 4;
 // 统一收口为一份策略对象：函数内默认取 DEFAULT_COMPACT_POLICY，调用方经
 // `runOpts.compactPolicy` 覆盖（宿主可按团队/任务下发）；所有比例都会夹到安全区间。
 export const DEFAULT_COMPACT_POLICY = Object.freeze({
-  triggerRatio: 0.7,            // 常规压缩触发（窗口体积占比）
-  aggressiveRatio: 0.8,         // 激进压缩触发
+  triggerRatio: 0.8,            // 常规压缩触发（窗口体积占比）
+  aggressiveRatio: 0.9,         // 激进压缩触发
   keepTailRatio: 0.25,          // 常规档尾部保留
   aggressiveKeepTailRatio: 0.15,// 激进档尾部保留
   trimTargetRatio: 0.45,        // 硬截断目标
@@ -1107,7 +1107,7 @@ export function resolveCompactPolicy(input) {
 // 因此只抬不降，且抬升上限 declared*4，防止 provider 口径差异（含 cache read / 工具 schema）
 // 把窗口过度抬高、压缩反而更晚触发。
 export const WINDOW_OVERSHOOT_RATIO = 0.95;   // 留 5% 给声明值自身的误差
-export const WINDOW_BACKOFF_DIVISOR = 0.7;    // 与压缩阈值 0.7 同源：抬高后立刻能被压缩闸看见
+export const WINDOW_BACKOFF_DIVISOR = 0.7;    // 窗口反推安全裕度（独立于 0.8 压缩触发）：抬高后的窗口须仍能被压缩闸看见；维持 0.7 使 1.43× 抬升后的触发线（0.8×1.43≈1.14×）仍高于实测体积，避免压缩后立刻再触发
 
 export function effectiveWindowOf(declared, lastPromptTokens) {
   const base = Number(declared) > 0 ? Number(declared) : DEFAULT_CONTEXT_WINDOW_FALLBACK;
@@ -1317,8 +1317,8 @@ export function clampSummary(text, max = COMPACT_SUMMARY_MAX_CHARS) {
   return `${clipped}\n${missing.map((k) => `${k}（模型未提供该段）`).join('\n')}`;
 }
 
-// 上下文压缩：超出上下文窗口 70% 时，将早期对话摘要化，保留 system + 最近若干轮
-// P1-A 双档阈值：70% 常规摘要；P2-4 起 80% 激进裁剪（保留更短尾部 + 注入压力告警）
+// 上下文压缩：超出上下文窗口 80% 时，将早期对话摘要化，保留 system + 最近若干轮
+// P1-A 双档阈值：80% 常规摘要；激进档维持 0.90（与常规分档，保留更短尾部 + 注入压力告警）
 // opts.knownTokens：调用方提供的真实 prompt_tokens（上一轮 usage），替代每轮全量重估（O(n²)）
 // opts.force：token 预算超限时无视阈值强制压缩
 // opts.ledger：P1-3 重写记账（{count, recomputeTokens}，缺省不记账，保持纯函数可测）
@@ -1341,8 +1341,8 @@ export async function compactHistory(convo, model, chatFn, opts = {}) {
   // `body.length <= keepTail` 与「无收益即放弃」两道闸会兜住，不会白付一次摘要调用。
   if (!opts.force && est <= contextWindow * policy.triggerRatio) return convo;
 
-  // P2-4：激进档门槛 0.85 → 0.80。0.85 只给压缩留 15% 余量（128k 窗口 ≈ 19k），
-  // 一次工具回包就能撞顶；0.80 给 20%，也更贴合 keepTail 的 0.15/0.25 分档。
+  // P2-4：激进档门槛 0.85 → 0.90。0.85 只给压缩留 15% 余量（128k 窗口 ≈ 19k），
+  // 一次工具回包就能撞顶；0.90 给 10% 余量，激进档只保留更短尾部（keepTail 0.15）。
   const aggressive = est > contextWindow * policy.aggressiveRatio;
   // T2：尾部保留区按体积预算（窗口的 25% / 激进档 15%，可由 compactPolicy 覆盖），不再按条数。
   // 条数制在「一轮并发多工具」时会退化成「整段保留 → 压缩放弃」。
@@ -1415,7 +1415,7 @@ ${transcript}` }],
       // P2-3：提示约束 ≠ 输出约束——模型超写必须在这里截断并补齐四段（否则摘要自己变成大块上下文）
       const clamped = clampSummary(r.content);
       console.log(`[agent] 上下文压缩（${aggressive ? '激进' : '常规'}）：${est} → 摘要 ${estimateTokens(clamped)} tokens`);
-      // P2-4 三分支：激进档强告警；常规档轻提示（0.70~0.80 之间此前是**静默压缩**，
+      // P2-4 三分支：激进档强告警；常规档轻提示（0.80~0.90 之间此前是**静默压缩**，
       // 模型不知道自己刚被摘过，容易「凭记忆假设」）。两条文案都必须是摘要消息内的固定后缀，
       // 不能新增 system 消息（DeepSeek 系端点只认首部 system）。
       const summary = aggressive
@@ -3117,7 +3117,7 @@ export async function runAgent({
   // 落库不做——展示历史 ≠ 模型上下文，会话记录仍保留全文。
   // P1-5：**只在接近上限时才裁**。此前无条件调用 → 历史刚过 45% 就被砍，
   // 45%~70% 这段本可完整保留（等于用「丢历史」换「省一点 token」）。
-  // 现在与压缩闸同阈值（0.7）：小于 70% 谁都不许动历史。
+  // 现在与压缩闸同阈值（0.8）：小于 80% 谁都不许动历史。
   const trimBeforeTokens = estimateMessagesTokens(convo);
   const trimRes = trimBeforeTokens > declaredWindow * TRIM_TRIGGER_RATIO
     ? trimHistoryForRun(convo, { contextWindow: declaredWindow, policy: compactPolicy, archive: onCollapse })

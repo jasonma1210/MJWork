@@ -210,7 +210,7 @@ function buildLongConvo(rounds = 30) {
     { role: 'user', content: 'USER-RAW-REQUEST 原始需求：审查这个仓库' },
     ...buildLongConvo(20).slice(2),
   ];
-  // context_window 12000：该历史 ≈10.6k tokens > 70%(8400) → 真触发压缩（不改数据构造，只调窗口）
+  // context_window 12000：该历史 ≈10.6k tokens > 80%(9600) → 真触发压缩（不改数据构造，只调窗口）
   const out = await compactHistory(convo, model(12000), async () => ({ content: '压缩摘要内容 ABCD' }));
   const firstNonSystem = out.findIndex((m) => m.role !== 'system');
   check('compactHistory 确实压缩了（消息数下降）', out.length < convo.length, `len=${out.length} < ${convo.length}`);
@@ -325,19 +325,19 @@ function buildLongConvo(rounds = 30) {
     budgetDecision({ ctxEst: 27071, ctxWindow: 128000, spent: 143923, budget: 200000, rescues: 0 }) === 'new-window',
     '小上下文被压缩 → 会把模型还需要的内容压成摘要，逼它重搜');
   check('预算压力 + 上下文够大（≥ 窗口 35%）才值得压缩',
-    budgetDecision({ ctxEst: 60000, ctxWindow: 128000, spent: 143923, budget: 200000, rescues: 0 }) === 'compact');
+    budgetDecision({ ctxEst: 60000, ctxWindow: 128000, spent: 170000, budget: 200000, rescues: 0 }) === 'compact');
   check('上下文真的接近窗口上限才压缩',
-    budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, rescues: 0 }) === 'compact');
+    budgetDecision({ ctxEst: 110000, ctxWindow: 128000, spent: 1000, budget: 200000, rescues: 0 }) === 'compact');
   check('压缩救援用尽且上下文仍过大 → 交回主循环走硬截断/换窗口（不再由判据函数宣布结束）',
-    budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, rescues: 3 }) === 'reclaim-context',
+    budgetDecision({ ctxEst: 110000, ctxWindow: 128000, spent: 1000, budget: 200000, rescues: 3 }) === 'reclaim-context',
     '旧返回值 suspend-context 会跳过三阶梯直接 break —— 用户实测「184145 tokens 已达总上限」就是这么来的');
   // 2026-10-30 第二次修（用户实测原文「累计 184145 tokens，期间已自动续期 3 次」）：
   // 续期次数与上下文救援次数必须分账。共用计数器时，续期 3 次就把上下文额度吃光，
-  // 之后**任何一轮**上下文过 70% 都会立刻硬停——这就是「本可自愈却打断任务」的根因。
+  // 之后**任何一轮**上下文过 80% 都会立刻硬停——这就是「本可自愈却打断任务」的根因。
   check('续期 3 次不得消耗上下文救援额度：上下文刚过热仍应压缩，而不是停',
-    budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, contextRescues: 0, windowRenews: 3 }) === 'compact');
+    budgetDecision({ ctxEst: 110000, ctxWindow: 128000, spent: 1000, budget: 200000, contextRescues: 0, windowRenews: 3 }) === 'compact');
   check('上下文救援额度用尽与续期次数无关：contextRescues=3 才交回阶梯',
-    budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 1000, budget: 200000, contextRescues: 3, windowRenews: 0 }) === 'reclaim-context');
+    budgetDecision({ ctxEst: 110000, ctxWindow: 128000, spent: 1000, budget: 200000, contextRescues: 3, windowRenews: 0 }) === 'reclaim-context');
   // 2026-10-30 语义变更：窗口级预算耗尽不再挂起（'suspend-tokens'），改为续期（'renew'）。
   // 理由：长途任务必然多次撞窗口级预算（每轮重发上下文），把它当终点等于把任务废在半路；
   // 真正的终点只剩「累计消耗撞到 TASK_TOTAL_TOKEN_CAP」。两条分支都要锁，缺一条就会
@@ -351,11 +351,11 @@ function buildLongConvo(rounds = 30) {
     budgetDecision({ ctxEst: 27071, ctxWindow: 128000, spent: 210000, budget: 200000, rescues: 3, totalSpent: 9e9 }) === 'renew');
   check('预算为 0 视为不设限，但体积闸仍生效',
     budgetDecision({ ctxEst: 27071, ctxWindow: 128000, spent: 9e9, budget: 0, rescues: 0 }) === 'ok'
-    && budgetDecision({ ctxEst: 100000, ctxWindow: 128000, spent: 0, budget: 0, rescues: 0 }) === 'compact');
+    && budgetDecision({ ctxEst: 110000, ctxWindow: 128000, spent: 0, budget: 0, rescues: 0 }) === 'compact');
   // P1-1 回归（2026-10-18 第二轮审查）：窗口校准**只能在调用方做一次**。
   // 旧实现 budgetDecision 内部又对「已抬高的 ctxWindow」用同一个 lastPromptTokens
   // 反推一遍：declared=32768 → 上游抬到 131072 → 内部算成 285715（≈8.7×），
-  // 0.7×285715≈200000 恰好不过线 → 返回 'ok'，压力闸永久失敏。
+  // 0.8×285715≈228572 仍不过线 → 返回 'ok'，压力闸永久失敏。
   check('已抬高的窗口不得被二次反推绕过 4× 封顶',
     budgetDecision({ ctxEst: 200000, ctxWindow: 131072, lastPromptTokens: 200000, budget: 0, rescues: 0 }) === 'compact',
     '旧实现：二次反推后 win≈285715 → 误判 ok（闸门失敏）');
@@ -377,7 +377,7 @@ function buildLongConvo(rounds = 30) {
   let calls = 0;
   const chatFn = async () => { calls += 1; return { content: '摘要' }; };
   const est = estimateMessagesTokens(convo);
-  // 90k 量级的历史 + 已抬高的 131072 窗口：0.7×131072=91750 > est ⇒ 不该压
+  // 90k 量级的历史 + 已抬高的 131072 窗口：0.8×131072=104857 > est ⇒ 不该压
   await compactHistory(convo, model(32768), chatFn, { knownTokens: est, window: 131072 });
   check('给定有效窗口时压缩器按它判定（不再反推回声明值）', calls === 0, `chat 调用 ${calls} 次`);
   // 反证：不传 window 时，est 会被反推成 est*1.2（上限 declared*4），阈值更低 ⇒ 仍然不压？

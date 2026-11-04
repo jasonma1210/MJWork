@@ -30,8 +30,8 @@ function check(name, ok, detail = '') {
 const CHAT_BASE = { provider: { id: 1, isGlobal: false, base_url: 'http://local' } };
 
 // ── ① P0-1 窗口接线：差分实验（4096 兜底 vs 128000 高估）──
-// 同一段历史、同一段 usage：声明窗口 4096 → 3000 tokens 已占 73% → 必须压缩；
-// 声明 128000 → 3000 tokens 只占 2.3% → 一次都不该压。两边行为必须不同。
+// 同一段历史、同一段 usage：声明窗口 4096 → 3500 tokens 已占 85% → 必须压缩；
+// 声明 128000 → 3500 tokens 只占 2.7% → 一次都不该压。两边行为必须不同。
 async function windowDifferential(declaredWindow) {
   const summaryCalls = [];
   let rounds = 0;
@@ -48,11 +48,11 @@ async function windowDifferential(declaredWindow) {
         };
       }
       if (rounds === 4) {
-        // provider 接受了 3000 tokens 的 prompt（对 4096 窗口而言已占 73%）
+        // provider 接受了 3500 tokens 的 prompt（对 4096 窗口而言已占 85%，越过 0.80 压缩线）
         return {
           content: '第 4 步',
           tool_calls: [{ id: 'd4', type: 'function', function: { name: 'shell', arguments: '{"command":"echo 1"}' } }],
-          usage: { prompt_tokens: 3000, completion_tokens: 10 },
+          usage: { prompt_tokens: 3500, completion_tokens: 10 },
         };
       }
       return { content: '完成', usage: { prompt_tokens: 100, completion_tokens: 10 } };
@@ -81,7 +81,7 @@ async function windowDifferential(declaredWindow) {
   const fallbackRun = await windowDifferential(undefined);
   const highRun = await windowDifferential(128000);
 
-  check('【差分组 A】未声明窗口（兜底 4096）⇒ 3000 tokens prompt 触发压缩', fallbackRun.summaryCalls >= 1,
+  check('【差分组 A】未声明窗口（兜底 4096）⇒ 3500 tokens prompt 触发压缩', fallbackRun.summaryCalls >= 1,
     `摘要请求=${fallbackRun.summaryCalls} rewrites=${fallbackRun.maxRewrites}`);
   check('【差分组 A】兜底档下历史被真实改写（rewrites ≥ 1）', fallbackRun.maxRewrites >= 1,
     `rewrites=${fallbackRun.maxRewrites}`);

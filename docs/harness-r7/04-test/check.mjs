@@ -198,6 +198,7 @@
  *          三包版本同步由 `test/release-update.test.js` 与 `scripts/preflight-release.mjs` P1 双重守护。
  *      · 0.8.10-beta 发版批（2026-11-04，本地模型就绪治理 + 技能/连接器芯片弹层 + 本机模型健壮性）—— 同一条版本钉值**原地重写**（总数仍 76）：
  *        → A15b：`0.8.9-beta` → **`0.8.10-beta`**。
+ *      · 0.8.11-beta 发版批（2026-11-04，上下文窗口误判修复 + 压缩线 80%）—— A15b **`0.8.10-beta` → `0.8.11-beta`**。
  *          触发：本地模型冷启动/加载健壮性（KEEP_ALIVE=-1、启动预热、backend-aware readiness、分层超时、优雅降级）、技能/连接器芯片点击弹层（点击展开/折叠、弹层内可删、最外层×清除本会话）；
  *          三包版本同步由 `test/release-update.test.js` 与 `scripts/preflight-release.mjs` P1 双重守护。
  *
@@ -825,7 +826,7 @@ function httpHeaderSegments() {
   const proto = stripComments(read('desktop/main/mcpProtocol.js'));
   okTrue('A15a', "已修复：CLIENT_INFO version 不再硬编码 '1.0'（与 package.json 同源）",
     !/CLIENT_INFO\s*=\s*Object\.freeze\(\{[^}]*version:\s*'1\.0'/s.test(proto));
-  ok('A15b', 'desktop/package.json version', JSON.parse(read('desktop/package.json')).version, '0.8.10-beta');
+  ok('A15b', 'desktop/package.json version', JSON.parse(read('desktop/package.json')).version, '0.8.11-beta');
   okTrue('A15c', 'mcpClient 每次 initialize 都发 clientInfo',
     /clientInfo:\s*\{\s*\.\.\.CLIENT_INFO\s*\}/.test(stripComments(read('desktop/main/mcpClient.js'))));
 }

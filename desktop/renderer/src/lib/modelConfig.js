@@ -87,8 +87,31 @@ export function resolveContextWindow(provider, model, probedNumCtx = 0) {
 
 // 兼容旧签名：**必须继续返回 number**（ChatArea.jsx:90 的 `|| 128000` 对对象恒真，
 // 改成对象会静默把用量圆环算错 —— P1-12 风险①）。需要 confirmed 的调用方用 resolveContextWindow()。
+// 切换模型 / 运行中实时回读本机 Ollama 探测到的真实 num_ctx，作为上下文窗口分母。
+// 仅在 ollama 分支生效（非 ollama 仍按映射表/家族/默认档）；探测值未就绪时回落 4096（与 resolveWindow 同源）。
+// 放在 effectiveContextWindow（圆环 + 引擎注入入口），不污染 resolveContextWindow 纯函数——
+// 后者有单测钉死「无探测值返回 {4096, confirmed:false}」，不能在此读全局快照。
+function probedNumCtxFromSnapshot(provider, model) {
+  try {
+    if (typeof window === 'undefined' || !window?.mjcode?.quotaSnapshot) return 0;
+    const snap = window.mjcode.quotaSnapshot();
+    const list = snap?.localBackend?.modelWindows;
+    if (!Array.isArray(list)) return 0;
+    const id = String(model?.model_id || model?.id || model?.modelId || '');
+    if (!id) return 0;
+    const norm = (s) => String(s || '').trim().replace(/:latest$/i, '');
+    const hit = list.find((w) => norm(w?.name) === norm(id));
+    if (!hit || hit.source !== 'api-show') return 0;
+    return Number(hit.numCtx) > 0 ? Number(hit.numCtx) : 0;
+  } catch {
+    // 探测快照缺失/结构异常时回落 0，由调用方走 resolveContextWindow 默认窗口，属预期降级
+    return 0;
+  }
+}
+
 export function effectiveContextWindow(provider, model) {
-  return resolveContextWindow(provider, model).window;
+  const probe = probedNumCtxFromSnapshot(provider, model);
+  return resolveContextWindow(provider, model, probe).window;
 }
 
 // P0-1① / P0-4（2026-10-22）：把 selectedModel 补成「运行用模型」——注入 context_window

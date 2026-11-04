@@ -1,9 +1,9 @@
 // P1-5 入口裁剪触发条件门禁（2026-10-18 全量修复）
 //
-// 双标问题：压缩闸是「到窗 70% 才压」，而**入口裁剪**是无条件调用且内部按 45% 裁——
+// 双标问题：压缩闸是「到窗 80% 才压」，而**入口裁剪**是无条件调用且内部按 45% 裁——
 //   历史刚过 45% 就被砍掉中段，45%~70% 这段本可完整保留（等于用「丢历史」换「省一点 token」）。
 //   真机表现：长任务中段开始「模型忘了刚才读过什么」，反复重读同一批文件。
-// 修复语义：runAgent 入口只在 > TRIM_TRIGGER_RATIO(0.7) 时才调 trimHistoryForRun；
+// 修复语义：runAgent 入口只在 > TRIM_TRIGGER_RATIO(0.8) 时才调 trimHistoryForRun；
 //   trimHistoryForRun **本身**行为不变（45% 目标、下限 16000）——直接调用它仍会裁。
 //
 // 陷阱（规格 §4）：必须与本仓已有的 context-econ 用例共存。变的只是「入口触发条件」，
@@ -20,7 +20,7 @@ function check(name, ok, detail = '') {
 }
 
 const WINDOW = 20000;
-check('TRIM_TRIGGER_RATIO === 0.7（与压缩阈值同源）', TRIM_TRIGGER_RATIO === 0.7, `got=${TRIM_TRIGGER_RATIO}`);
+check('TRIM_TRIGGER_RATIO === 0.8（与压缩阈值同源）', TRIM_TRIGGER_RATIO === 0.8, `got=${TRIM_TRIGGER_RATIO}`);
 
 // 构造：27 条 assistant/user 交替消息，每条约 1500 字符 ≈ 379 tokens ⇒ 合计 ≈ 10.2k
 // 加上 SYSTEM 后约 60% 窗口（2026-10-22：BASE_PROMPT 增补工具选择纪律后从 2376→2776 字符，
@@ -33,8 +33,8 @@ const history = Array.from({ length: 27 }, (_, i) => ({
 {
   const before = estimateMessagesTokens([{ role: 'system', content: 'SYS' }, ...history]);
   const pct = before / WINDOW;
-  check(`构造落在 60% 附近且低于 70% 触发线（实测 ${(pct * 100).toFixed(1)}%）`,
-    pct > 0.5 && pct < 0.7, `est=${before} window=${WINDOW}`);
+  check(`构造落在 60% 附近且低于 80% 触发线（实测 ${(pct * 100).toFixed(1)}%）`,
+    pct > 0.5 && pct < 0.8, `est=${before} window=${WINDOW}`);
 
   const traces = [];
   const toolHandlers = {
@@ -69,7 +69,7 @@ const history = Array.from({ length: 27 }, (_, i) => ({
     `after=${direct.afterTokens} budget=${Math.floor(WINDOW * 0.45)}`);
 }
 
-// 对照组：真正越过 70% 时，入口**必须**裁（否则这条闸形同被删）
+// 对照组：真正越过 80% 时，入口**必须**裁（否则这条闸形同被删）
 {
   const bigHistory = Array.from({ length: 61 }, (_, i) => ({
     role: i % 2 === 0 ? 'assistant' : 'user',
@@ -88,7 +88,7 @@ const history = Array.from({ length: 27 }, (_, i) => ({
     onMessage: () => {}, onTrace: (e) => traces.push(e), onDone: () => {},
   });
   const trimEvents = traces.filter((e) => e.type === 'trim');
-  check('越过 70% 时入口仍会裁（触发条件收紧而非被删）', trimEvents.length === 1,
+  check('越过 80% 时入口仍会裁（触发条件收紧而非被删）', trimEvents.length === 1,
     `trim=${trimEvents.length}`);
 }
 

@@ -68,7 +68,7 @@ const TEXT_PART = { type: 'text', text: '这是我截的报错图' };
     convo.push({ role: 'tool', tool_call_id: `s${i}`, content: 'z'.repeat(360) });
   }
   const est = estimateMessagesTokens(convo);
-  const win = Math.round(est / 0.75); // 反推窗口 → 落在常规压缩档
+  const win = Math.round(est / 0.85); // 反推窗口 → 落在常规压缩档（>0.80 触发、<0.90 非激进）
   const model = { provider: { id: 1, isGlobal: false, base_url: 'http://local' }, model: { id: 1, model_id: 'm', context_window: win } };
 
   let captured = null;

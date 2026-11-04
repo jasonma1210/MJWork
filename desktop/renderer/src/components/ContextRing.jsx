@@ -3,8 +3,8 @@ import { estimateMessagesTokens } from '../../../agent-core/index.js';
 import { useI18n } from '../i18n';
 
 // 上下文用量圆环（对标 Codex 右上角圆环）。AUTO_COMPACT_RATIO 仅作颜色阈值（黄/红），
-// 真正的自动压缩在引擎侧（agent-core compactHistory，窗口×0.70 触发），本组件不触发压缩。
-const AUTO_COMPACT_RATIO = 0.7;
+// 真正的自动压缩在引擎侧（agent-core compactHistory，窗口×0.80 触发），本组件不触发压缩。
+const AUTO_COMPACT_RATIO = 0.8;
 // 运行中刷新间隔：引擎没有「实时推上下文体积」的通道，但每轮 onBudget 快照都落在
 // agentRunner.lastBudgetState 上，`agent:token/state` 一读即最新。10s 轮询的代价是
 // 最多滞后一个轮次，换来的是「运行中也能看到真实占用」——纯真值，不是本地估算。

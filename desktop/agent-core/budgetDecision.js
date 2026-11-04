@@ -9,10 +9,16 @@
 // 与 index.js 的关系：index.js 从这里 import 并原样 re-export，外部
 // `import { budgetDecision } from '../agent-core/index.js'` 的既有调用方（含测试）零改动。
 
-// 预判式触发比例（复盘文档 P1-2 采纳）：上下文达模型窗口 70% 即压缩。
+// 预判式触发比例（复盘文档 P1-2 采纳）：上下文达模型窗口 80% 即压缩（2026-11-04 由 70% 上调）。
 // 2026-10-17 语义修正：这个比例**只作用于上下文体积**，不再作用于「累计花费」——
 // 拿花费判「上下文过长」会导致小上下文被强制压缩（详见下方 budgetDecision 注释）。
-export const TOKEN_COMPACTION_TRIGGER = 0.7;
+export const TOKEN_COMPACTION_TRIGGER = 0.8;
+
+// 预算压力闸（成本节流阀）触发比例：累计花费占预算 70% 即开始考虑预算驱动动作
+// （开新预算窗口 / 压缩 / 续期）。**与上下文体积压缩触发（TOKEN_COMPACTION_TRIGGER）是两条独立轴**——
+// 前者管「钱花到多少该节流」，后者管「上下文占窗口多少该压缩」，不可共用一个常量，
+// 否则调高上下文压缩线会意外延后成本节流（实测 0.70→0.80 会让 72% 预算场景从 new-window 退化为 ok）。
+export const BUDGET_PRESSURE_TRIGGER = 0.7;
 
 // 预算压力下「值不值得压」的下限：上下文至少占窗口 35% 才压——
 // 压缩省下的是「每轮重发量」，27k 的上下文压成摘要会把模型还需要的内容抹掉。
@@ -81,7 +87,7 @@ export function budgetDecision({
   // 上下文到窗口：救援额度还有就压缩；用尽则交回主循环走「硬截断 → 换新窗口」的阶梯，
   // **不再由本函数宣布结束**（'reclaim-context' = 便宜招用完了，请用贵的招）。
   if (ctxHot) return ctxUsed < rescueMax ? 'compact' : 'reclaim-context';
-  if (budget > 0 && spent > budget * TOKEN_COMPACTION_TRIGGER) {
+  if (budget > 0 && spent > budget * BUDGET_PRESSURE_TRIGGER) {
     // 真终点只有累计总上限：它优先于任何续期判断，避免被续期绕开。
     if (totalCap > 0 && totalSpent >= totalCap) return 'suspend-tokens';
     // 上下文救援额度已用尽：预算还没越线就不动它；越线则续期（成本节流，不是终点）。

@@ -153,7 +153,7 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
       pol.triggerRatio === 0.55 && pol.keepTailRatio === 0.5 && pol.toolShrinkChars === 200,
       JSON.stringify(pol));
     check('策略：默认值来自单一事实来源',
-      DEFAULT_COMPACT_POLICY.triggerRatio === 0.7 && DEFAULT_COMPACT_POLICY.toolShrinkChars === 2000);
+      DEFAULT_COMPACT_POLICY.triggerRatio === 0.8 && DEFAULT_COMPACT_POLICY.toolShrinkChars === 2000);
 
     // 策略 A：大工具输出优先裁剪（保首尾），不丢首条 user 与决策消息
     const trimInput = [
@@ -587,7 +587,7 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
       && String(out[1].content).includes('压缩摘要内容')
       && out[2]?.role === 'user' && String(out[2].content).includes('开始'));
 
-    // 14.3 双档阈值：85% 以上激进档（更短尾部 + 压力告警），70%~85% 常规档
+    // 14.3 双档阈值：≥0.80 触发压缩；其中 ≥0.90 为激进档（更短尾部 + 压力告警），0.80~0.90 为常规档
     reset();
     chatScript = [{ content: '激进摘要', usage: { prompt_tokens: 10, completion_tokens: 5 } }];
     const outAggressive = await compactHistory(
@@ -597,14 +597,14 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
     );
     // 2026-10-17：压缩保留前导 system + 首条 user（原始需求/专家角色不可被摘要掉）
     // 激进档的断言移到 outNormal 计算之后（两者要比较；尾部条数不再固定）
-    // 2026-10-18（P2-4）：激进档门槛 0.85 → 0.80，同一段历史（估算 1067 tokens）在 window=1300 时
-    // 占用 1067/1300 = 0.82 > 0.80 会落进激进档，常规档样本必须后移到 1500（1067/1500 = 0.71，
-    // 仍 > 0.70 触发线，所以照样会压缩）。只改样本窗口，不动断言强度。
+    // 2026-11-04（本次）：压缩触发 0.70→0.80、激进档门槛 0.80→0.90。同一段历史（估算 1067 tokens）
+    // 在 window=1000 时占用 1067/1000 = 1.07 ≥ 0.90 落进激进档；常规档样本用 window=1250
+    // （1067/1250 = 0.854，介于 0.80~0.90 之间，触发常规档而非激进档）。只改样本窗口，不动断言强度。
     reset();
     chatScript = [{ content: '常规摘要', usage: { prompt_tokens: 10, completion_tokens: 5 } }];
     const outNormal = await compactHistory(
       [{ role: 'system', content: 'sys' }, ...toolHistory],
-      { ...model, model: { ...model.model, context_window: 1500 } },
+      { ...model, model: { ...model.model, context_window: 1250 } },
       async () => chatScript.shift(),
     );
     // 2026-10-17 T2：尾部保留量改由「体积预算」决定（常规保留窗口 25% / 激进 15%），
@@ -619,7 +619,7 @@ function reset() { chatScript = []; chatCalls = []; shellCalls.length = 0; gitSt
       `agg=${outAggressive.length} normal=${outNormal.length}`);
     check('激进档比常规档裁得更多', outAggressive.length < outNormal.length);
 
-    // 14.4 真实 usage 驱动压缩：启发式估算低于阈值，但上一轮真实 prompt_tokens 超过 70% → 仍触发
+    // 14.4 真实 usage 驱动压缩：启发式估算低于阈值，但上一轮真实 prompt_tokens 超过 80% → 仍触发
     reset();
     const filler = Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `m${i}` }));
     chatScript = [
