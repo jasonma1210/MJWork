@@ -63,48 +63,66 @@ check('守卫：无命令串不崩', sandbox.checkCommandGuard('read-only', unde
 // ── 真实沙箱写入边界（darwin 且 sandbox-exec 存在时执行）──
 const requireRealSandbox = process.env.MJCODE_REQUIRE_REAL_SANDBOX === '1';
 // 2026-11-04：现代 macOS（本机 M4 Pro 与 GitHub-hosted macos runner 均稳定复现）宿主会
-// 拒绝 `sandbox_apply`（Operation not permitted），真机探测拿不到任何隔离结论。
-// 这是**环境不具备验证条件**，不是隔离失效；把它和真机断言失败混为一谈会把每次 CI 判红。
-// CI 用 MJCODE_ALLOW_SANDBOX_BLOCKED=1 显式声明允许「宿主拒绝」这一状态：不判红，
-// 但绝不记 PASS——下方会打印 SANDBOX_REAL_STATUS 与「真机隔离未验证」，CI 再打 warning。
-// 本地直接跑（不设该变量）仍严格判红，提醒开发者真机没验成。
-// 只有 RUN 才代表真机隔离被验证过；ERROR（非宿主拒绝的执行异常）与 NOT RUN 一律判红。
+// 拒绝 `sandbox_apply`，真机探测拿不到任何隔离结论。这是**环境不具备验证条件**，不是隔离失效。
+// 判定不能靠 err.message 的文本：GitHub runner 静默拒绝、stderr 为空，本机却带
+// "sandbox_apply: Operation not permitted"，同一环境阻断会被判成两种状态。
+// 故改为**前置探测**：用与被测代码无关、但同形态（含 deny）的最小 profile
+// `(version 1) (deny default)` 跑 /usr/bin/true —— 实测现代 macOS 宿主会拒绝 apply
+// 任何含 deny 的 profile（纯 allow-default 反能跑，故探测必须用 deny 形态才不误判）。
+// 它都失败，只能是宿主不允许该形态（BLOCKED）；它成功才继续跑真机断言，
+// 此后任何异常都记 ERROR（可能是真隔离缺陷），绝不因环境豁免被掩盖。
+// CI 用 MJCODE_ALLOW_SANDBOX_BLOCKED=1 显式声明允许 BLOCKED：不判红，但绝不记 PASS——
+// 下方会打印 SANDBOX_REAL_STATUS 与「真机隔离未验证」，CI 再打 warning annotation。
+// 本地直接跑（不设该变量）仍严格判红；只有 RUN 才代表真机隔离被验证过。
 const allowSandboxBlocked = process.env.MJCODE_ALLOW_SANDBOX_BLOCKED === '1';
 let realSandboxStatus = 'NOT RUN';
 if (process.platform === 'darwin' && fs.existsSync(sandbox.SANDBOX_EXEC)) {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-sb-'));
+  const probeBin = fs.existsSync('/usr/bin/true') ? '/usr/bin/true' : '/bin/echo';
+  let hostAllowsSandbox = false;
   try {
-    realSandboxStatus = 'RUN';
-    // 沙箱内项目目录写：应成功
-    const profile = sandbox.buildSeatbeltProfile('workspace-write', repo);
-    execFileSync(sandbox.SANDBOX_EXEC, ['-p', profile, '/bin/zsh', '-c', 'echo ok > inside.txt'], { cwd: repo, timeout: 15000 });
-    check('沙箱内项目目录写入成功', fs.existsSync(path.join(repo, 'inside.txt')));
-
-    // /dev/null 重定向：真机回归（打包版曾报 operation not permitted: /dev/null）
-    let devnullOk = false;
+    execFileSync(sandbox.SANDBOX_EXEC, ['-p', '(version 1) (deny default)', probeBin], { timeout: 15000 });
+    hostAllowsSandbox = true;
+  } catch (e) {
+    // 最小合法 profile 都无法 apply ⇒ 宿主/环境阻断，与被测 profile 无关
+  }
+  if (!hostAllowsSandbox) {
+    realSandboxStatus = 'BLOCKED';
+    console.log('⚠ Seatbelt 真机探测 BLOCKED（宿主拒绝含 deny 的 profile：最小 deny-default profile 亦无法 apply）');
+  } else {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-sb-'));
     try {
-      execFileSync(sandbox.SANDBOX_EXEC, ['-p', profile, '/bin/zsh', '-c', 'echo x >/dev/null 2>/dev/null && echo devnull-ok'], { cwd: repo, timeout: 15000 });
-      devnullOk = true;
-    } catch (e) { /* 拒绝即失败 */ }
-    check('沙箱内 /dev/null 重定向成功（不触发 operation not permitted）', devnullOk);
+      realSandboxStatus = 'RUN';
+      // 沙箱内项目目录写：应成功
+      const profile = sandbox.buildSeatbeltProfile('workspace-write', repo);
+      execFileSync(sandbox.SANDBOX_EXEC, ['-p', profile, '/bin/zsh', '-c', 'echo ok > inside.txt'], { cwd: repo, timeout: 15000 });
+      check('沙箱内项目目录写入成功', fs.existsSync(path.join(repo, 'inside.txt')));
 
-    // 沙箱外写：应被拒绝（进程非零退出）
-    let blocked = false;
-    try {
-      execFileSync(sandbox.SANDBOX_EXEC, ['-p', profile, '/bin/zsh', '-c', 'echo blocked > /tmp/mjcode-sb-escape-marker'], { cwd: repo, timeout: 15000 });
-    } catch (e) {
-      blocked = true; // 沙箱拒绝导致非零退出
+      // /dev/null 重定向：真机回归（打包版曾报 operation not permitted: /dev/null）
+      let devnullOk = false;
+      try {
+        execFileSync(sandbox.SANDBOX_EXEC, ['-p', profile, '/bin/zsh', '-c', 'echo x >/dev/null 2>/dev/null && echo devnull-ok'], { cwd: repo, timeout: 15000 });
+        devnullOk = true;
+      } catch (e) { /* 拒绝即失败 */ }
+      check('沙箱内 /dev/null 重定向成功（不触发 operation not permitted）', devnullOk);
+
+      // 沙箱外写：应被拒绝（进程非零退出）
+      let blocked = false;
+      try {
+        execFileSync(sandbox.SANDBOX_EXEC, ['-p', profile, '/bin/zsh', '-c', 'echo blocked > /tmp/mjcode-sb-escape-marker'], { cwd: repo, timeout: 15000 });
+      } catch (e) {
+        blocked = true; // 沙箱拒绝导致非零退出
+      }
+      if (!blocked) blocked = !fs.existsSync('/tmp/mjcode-sb-escape-marker');
+      check('沙箱拒绝项目目录外写入', blocked);
+      if (fs.existsSync('/tmp/mjcode-sb-escape-marker')) fs.rmSync('/tmp/mjcode-sb-escape-marker');
+    } catch (err) {
+      // 前置探测已证明宿主允许 sandbox_apply，此处失败只能是我们的 profile / 隔离行为有问题，
+      // 记为 ERROR 并判红，不得被环境豁免放过。
+      realSandboxStatus = 'ERROR';
+      console.error(`⚠ Seatbelt 真机探测 ERROR（执行异常）: ${err.message}`);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
     }
-    if (!blocked) blocked = !fs.existsSync('/tmp/mjcode-sb-escape-marker');
-    check('沙箱拒绝项目目录外写入', blocked);
-    if (fs.existsSync('/tmp/mjcode-sb-escape-marker')) fs.rmSync('/tmp/mjcode-sb-escape-marker');
-  } catch (err) {
-    // 区分「宿主拒绝 sandbox_apply」与其它执行异常：后者可能是真隔离缺陷，不得被环境豁免掩盖。
-    const hostRefused = /sandbox_apply|Operation not permitted|not permitted/i.test(String(err?.message || err));
-    realSandboxStatus = hostRefused ? 'BLOCKED' : 'ERROR';
-    console.error(`⚠ Seatbelt 真机探测 ${realSandboxStatus}（${hostRefused ? '宿主拒绝执行' : '执行异常'}）: ${err.message}`);
-  } finally {
-    fs.rmSync(repo, { recursive: true, force: true });
   }
 } else {
   console.log('⚠ Seatbelt 真机探测 NOT RUN（非 darwin 或 sandbox-exec 缺失）');
