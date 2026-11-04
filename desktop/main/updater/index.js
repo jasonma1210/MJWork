@@ -18,7 +18,37 @@ let autoUpdater = null;
 let updaterInitialized = false;
 let autoUpdateChecked = false;
 
+// 2026-11-04（用户反馈「通用 → 版本更新下载到 100% 后又重新开始下载」）：
+// 此前 updater:download **无条件**调用 autoUpdater.downloadUpdate()，去重只靠渲染层按钮
+// disabled，而该 disabled 依赖异步的 download-progress 事件 ⇒ 事件到达前按钮仍可点，
+// 连点即产生两轮下载；更常见的是下载完成后再次 checkForUpdates（手动「检查更新」或
+// 启动 10s 自动检查）触发 update-available，把状态机打回 available，UI 又露出
+// 「下载更新」按钮 ⇒ 100% 之后重新开始第二轮。
+// 现在主进程持有下载状态的**唯一真源**：任何重复下载/重复检查都被幂等拦下，
+// 且 downloaded 是终态，update-available 不得把它打回。
+let downloadState = 'idle'; // idle | downloading | downloaded
+
+/** 纯函数：是否允许发起一轮新下载（供单测直接断言三态，不依赖 IPC 环境）。 */
+function canStartDownload(state = downloadState) {
+  if (state === 'downloading') return { start: false, state: 'downloading' };
+  if (state === 'downloaded') return { start: false, state: 'downloaded' };
+  return { start: true, state: 'idle' };
+}
+
+function getDownloadState() {
+  return downloadState;
+}
+
 let getMainWindow = () => null;
+let lastDownloadPercent = 0;
+
+/** 状态推送唯一出口：IPC 跳过分支与 autoUpdater 事件共用，保证渲染层总能对齐主进程真值。 */
+function send(status, data = {}) {
+  const mainWindow = getMainWindow();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater:status', { status, ...data });
+  }
+}
 
 // 手动下载兜底链接：由 build.publish 推导（owner/repo 缺失时为空串，前端隐藏链接）
 function resolveManualDownloadUrl() {
@@ -32,10 +62,19 @@ const MANUAL_DOWNLOAD_URL = resolveManualDownloadUrl();
 
 function init(deps) {
   getMainWindow = deps.getMainWindow;
+  downloadState = 'idle';
   ipcMain.handle('updater:check', async () => {
     if (!app.isPackaged) return { ok: false, error: '仅打包后可检查更新' };
     const up = initUpdater();
     if (!up) return { ok: false, error: '更新器初始化失败' };
+    // 下载中/已下载时不再检查：checkForUpdates 会再次发 update-available，
+    // 把已完成态打回 available，UI 又露出「下载更新」按钮 ⇒ 第二轮下载。
+    if (downloadState !== 'idle') {
+      // 重推当前真值：设置页可能已重挂载、本地状态丢了也能立刻对回终态
+      if (downloadState === 'downloaded') send('downloaded');
+      else send('downloading', { percent: lastDownloadPercent });
+      return { ok: true, skipped: true, state: downloadState };
+    }
     try {
       await up.checkForUpdates();
       return { ok: true };
@@ -53,10 +92,30 @@ function init(deps) {
     if (!app.isPackaged) return { ok: false, error: '仅打包后可下载更新' };
     const up = initUpdater();
     if (!up) return { ok: false, error: '更新器初始化失败' };
+    const gate = canStartDownload();
+    if (!gate.start) {
+      // 幂等：重复点击 / 100% 之后再来一轮，一律不再调 downloadUpdate。
+      // 同时把当前真值推给渲染层（可能刚打开设置页或状态已丢失），避免按钮永远停在进度态。
+      if (gate.state === 'downloaded') send('downloaded');
+      else send('downloading', { percent: lastDownloadPercent });
+      return { ok: true, skipped: true, state: gate.state };
+    }
+    // 同步置位：await 之前连点两次也不会各自进入下载分支
+    downloadState = 'downloading';
+    lastDownloadPercent = 0;
     try {
       await up.downloadUpdate();
-      return { ok: true };
+      // 正常情况下 update-downloaded 事件已置终态；这里兜住「事件未发但 Promise 已 resolve」
+      if (downloadState === 'downloading') {
+        downloadState = 'downloaded';
+        lastDownloadPercent = 100;
+        send('downloaded'); // 事件未达时也把终态补齐，避免渲染层停在进度态
+      }
+      // 成功响应回带真值：渲染层不依赖「状态事件一定先于 IPC 响应到达」
+      return { ok: true, state: downloadState };
     } catch (err) {
+      // 失败允许重试；但已经完成过下载的终态不许被一次迟到异常打回
+      if (downloadState !== 'downloaded') downloadState = 'idle';
       const { kind, hint } = classifyUpdateError(err);
       return { ok: false, error: err.message, kind, hint, downloadUrl: MANUAL_DOWNLOAD_URL };
     }
@@ -109,16 +168,27 @@ function initUpdater() {
   if (process.env.MJ_ALLOW_DOWNGRADE === '1') {
     try { autoUpdater.allowDowngrade = true; } catch (e) { console.warn('[updater] allowDowngrade 设置失败:', e.message); }
   }
-  const send = (status, data = {}) => {
-    const mainWindow = getMainWindow();
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater:status', { status, ...data });
-  };
-  autoUpdater.on('checking-for-update', () => send('checking'));
-  autoUpdater.on('update-available', (info) => send('available', { version: info.version, downloadUrl: MANUAL_DOWNLOAD_URL }));
-  autoUpdater.on('update-not-available', () => send('up-to-date'));
-  autoUpdater.on('download-progress', (p) => send('downloading', { percent: Math.round(p.percent) }));
-  autoUpdater.on('update-downloaded', () => send('downloaded'));
+  autoUpdater.on('checking-for-update', () => { if (downloadState === 'idle') send('checking'); });
+  autoUpdater.on('update-available', (info) => {
+    // downloaded 是终态；downloading 中也不许把进度面打回 available（会再露出「下载更新」按钮）
+    if (downloadState !== 'idle') return;
+    send('available', { version: info.version, downloadUrl: MANUAL_DOWNLOAD_URL });
+  });
+  autoUpdater.on('update-not-available', () => { if (downloadState === 'idle') send('up-to-date'); });
+  autoUpdater.on('download-progress', (p) => {
+    if (downloadState === 'downloaded') return; // 忽略迟到的进度事件（100% 后又被显示成「下载中」）
+    downloadState = 'downloading';
+    lastDownloadPercent = Math.round(p.percent);
+    send('downloading', { percent: lastDownloadPercent });
+  });
+  autoUpdater.on('update-downloaded', () => {
+    downloadState = 'downloaded';
+    lastDownloadPercent = 100;
+    send('downloaded');
+  });
   autoUpdater.on('error', (err) => {
+    if (downloadState === 'downloaded') return; // 终态不被错误事件打回
+    if (downloadState === 'downloading') downloadState = 'idle'; // 失败后允许重试
     const { kind, hint } = classifyUpdateError(err);
     send('error', { message: err.message, kind, hint, downloadUrl: MANUAL_DOWNLOAD_URL });
   });
@@ -130,10 +200,12 @@ function scheduleAutoUpdateCheck() {
   if (!app.isPackaged) return;
   setTimeout(() => {
     if (autoUpdateChecked) return;
+    // 启动后 10s 的检查若撞上正在下载/已下载，同样跳过：否则 update-available 会重启一轮
+    if (downloadState !== 'idle') return;
     autoUpdateChecked = true;
     const up = initUpdater();
     up?.checkForUpdates().catch((err) => console.warn('[updater] 启动自动检查失败（忽略，用户可手动检查）:', err.message));
   }, UPDATE_CHECK_DELAY_MS).unref?.();
 }
 
-module.exports = { init, initUpdater, scheduleAutoUpdateCheck, resolveManualDownloadUrl, classifyUpdateError, UPDATE_CHECK_DELAY_MS, UPDATE_CHANNEL };
+module.exports = { init, initUpdater, scheduleAutoUpdateCheck, resolveManualDownloadUrl, classifyUpdateError, canStartDownload, getDownloadState, UPDATE_CHECK_DELAY_MS, UPDATE_CHANNEL };

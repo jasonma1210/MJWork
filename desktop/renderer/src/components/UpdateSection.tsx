@@ -3,7 +3,7 @@
 // P0-3：available 态补「下载更新」按钮（此前全仓无 downloadUpdate 调用，用户看到新版本
 // 也无从更新，只剩 Releases 链接）；下载中经 updater:status 'downloading' 显示进度，
 // 'downloaded' 态渲染「重启安装」。手动下载链接保留为自动链路失败时的回滚手段。
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useI18n } from '../i18n';
 import Button from './ui/Button';
@@ -30,10 +30,18 @@ export default function UpdateSection() {
   const [updateError, setUpdateError] = useState('');
   const [updateDownloadUrl, setUpdateDownloadUrl] = useState('');
   const [updaterState, setUpdaterState] = useState(''); // 原始状态机值（驱动「重启安装」按钮显隐）
+  // 下载完成是终态。组件重挂载会清空 useState，主进程持有的唯一真源会在 skipped 响应时
+  // 重推 downloaded；这个 ref 负责本次挂载内挡住迟到的 available/downloading 事件。
+  const downloadedRef = useRef(false);
 
   useEffect(() => {
     if (!window.mjcode?.onUpdaterStatus) return;
     const off = window.mjcode.onUpdaterStatus((d: UpdaterEvent) => {
+      // 终态保护：忽略 downloaded 之后迟到的 available / downloading / checking / error。
+      // 否则下载完成后一次 checkForUpdates 发来的 update-available 会把状态打回 available，
+      // 「下载更新」按钮重新露出 ⇒ 100% 之后又开始第二轮下载。
+      if (downloadedRef.current && d.status !== 'downloaded') return;
+      if (d.status === 'downloaded') downloadedRef.current = true;
       const map: Record<string, string> = {
         checking: t('settings.updaterChecking'),
         available: t('settings.updaterAvailable', { version: d.version || '' }),
@@ -52,14 +60,18 @@ export default function UpdateSection() {
   }, [t]);
 
   async function check() {
-    setUpdateStatus(t('settings.updaterCheckingNow'));
+    if (!downloadedRef.current) setUpdateStatus(t('settings.updaterCheckingNow'));
     setUpdateError('');
     try {
       const r = (await window.mjcode?.checkUpdates?.()) as
-        { ok?: boolean; error?: string; downloadUrl?: string } | undefined;
+        { ok?: boolean; skipped?: boolean; state?: string; error?: string; downloadUrl?: string } | undefined;
       if (r && !r.ok) {
         setUpdateError(r.error || t('settings.checkFailedLabel'));
         setUpdateDownloadUrl(r.downloadUrl || ''); // P1-N：手动检查失败同样给降级链接
+      } else if (r?.skipped && r.state === 'downloaded') {
+        downloadedRef.current = true;
+        setUpdaterState('downloaded');
+        setUpdateStatus(t('settings.updaterDownloaded'));
       }
     } catch (err) {
       setUpdateError((err as Error).message);
@@ -68,16 +80,27 @@ export default function UpdateSection() {
 
   // P0-3：available 态触发下载（updater:download → autoUpdater.downloadUpdate()）。
   // 未打包/初始化失败时主进程返回 { ok:false, error }，这里如实展示，不假装在下载。
+  // 点击后立刻乐观置为 downloading：download-progress 是异步事件，等它到达才禁用按钮
+  // 会留下一个可连点的窗口；主进程另有幂等状态机作唯一真源，此处只负责把 UI 收紧。
   async function download() {
+    if (downloadedRef.current) return;
     setUpdateError('');
+    setUpdaterState('downloading');
+    setUpdateStatus(t('settings.updaterDownloading', { percent: 0 }));
     try {
       const r = (await window.mjcode?.downloadUpdate?.()) as
-        { ok?: boolean; error?: string; downloadUrl?: string } | undefined;
+        { ok?: boolean; skipped?: boolean; state?: string; error?: string; downloadUrl?: string } | undefined;
       if (r && !r.ok) {
+        setUpdaterState('error');
         setUpdateError(t('settings.updaterDownloadFailed', { message: r.error || t('runtime.unknownError') }));
         setUpdateDownloadUrl(r.downloadUrl || '');
+      } else if (r?.state === 'downloaded') {
+        downloadedRef.current = true;
+        setUpdaterState('downloaded');
+        setUpdateStatus(t('settings.updaterDownloaded'));
       }
     } catch (err) {
+      setUpdaterState('error');
       setUpdateError((err as Error).message);
     }
   }
