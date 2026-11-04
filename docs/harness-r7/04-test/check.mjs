@@ -201,6 +201,10 @@
  *      · 0.8.11-beta 发版批（2026-11-04，上下文窗口误判修复 + 压缩线 80%）—— A15b **`0.8.10-beta` → `0.8.11-beta`**。
  *          触发：本地模型冷启动/加载健壮性（KEEP_ALIVE=-1、启动预热、backend-aware readiness、分层超时、优雅降级）、技能/连接器芯片点击弹层（点击展开/折叠、弹层内可删、最外层×清除本会话）；
  *          三包版本同步由 `test/release-update.test.js` 与 `scripts/preflight-release.mjs` P1 双重守护。
+ *      · 0.8.12-beta 发版批（2026-11-04，Windows 沙箱设置修复 + 首启工作台落地 + CI 全绿修复）—— A15b **`0.8.11-beta` → `0.8.12-beta`**。
+ *          触发：netsh 不支持 user= 导致 Windows 一次性设置整体回滚（改用 New-NetFirewallRule -LocalUser）、
+ *          首启完成后落到工作台、以及 verify 的跨平台断言与 verify-macos-sandbox 把 BLOCKED 误判为失败的修复；
+ *          三包版本同步由 `test/release-update.test.js` 与 `scripts/preflight-release.mjs` P1 双重守护。
  *
  * 5) 检索类断言一律在 `stripComments()` 后的**代码正文**上计数：注释里出现标识符既能让
  *    「应当成立」的断言假红，也能让「应当不成立」的断言假绿（注释喂饱）。
@@ -826,7 +830,7 @@ function httpHeaderSegments() {
   const proto = stripComments(read('desktop/main/mcpProtocol.js'));
   okTrue('A15a', "已修复：CLIENT_INFO version 不再硬编码 '1.0'（与 package.json 同源）",
     !/CLIENT_INFO\s*=\s*Object\.freeze\(\{[^}]*version:\s*'1\.0'/s.test(proto));
-  ok('A15b', 'desktop/package.json version', JSON.parse(read('desktop/package.json')).version, '0.8.11-beta');
+  ok('A15b', 'desktop/package.json version', JSON.parse(read('desktop/package.json')).version, '0.8.12-beta');
   okTrue('A15c', 'mcpClient 每次 initialize 都发 clientInfo',
     /clientInfo:\s*\{\s*\.\.\.CLIENT_INFO\s*\}/.test(stripComments(read('desktop/main/mcpClient.js'))));
 }

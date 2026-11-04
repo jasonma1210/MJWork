@@ -4,6 +4,17 @@
 版本号规范：`主版本.次版本.修订号`（语义化版本），配套 git tag `v主.次.修订`（如 `v1.0.0`）。
 desktop / server / renderer 三个 package.json 的 version 必须保持一致，发版时同步提升。
 
+## [0.8.12-beta] - 2026-11-04
+
+### 修复
+- **Windows 沙箱一次性管理员设置失败**：`block-outbound-firewall` 步骤原用 `netsh advfirewall firewall add rule ... user=...`，但 `netsh` 不支持 `user=` 参数，该步非零退出即触发整体回滚（两个专用用户被删除），设置永远无法完成。改用 PowerShell `New-NetFirewallRule -LocalUser <用户 SID 的 SDDL>` 按用户阻断出站；规则 `Name`/`DisplayName` 取同一值，使回滚的 `netsh ... delete rule name=` 仍能按 Name 命中。其余三步（`net user /add`、`net localgroup /delete`）本就有效，不再被连累回滚。
+- **首启落地页**：首启向导完成后显式落到工作台（desk），确保 macOS / Windows / Linux 一致，不再停留在对话欢迎页。
+
+### CI
+- **CI 结果长期全红**：
+  - `verify` 中 `sandbox-crossplatform` 的防火墙断言写死 `advfirewall` 字面量，随上述契约改为校验「确实按离线用户 SID 阻断出站」，并显式禁止无效的 `user=` 回归。
+  - `verify-macos-sandbox` 在现代 macOS 宿主拒绝 `sandbox_apply` 时，把「环境阻断（BLOCKED）」误判为测试失败，导致每次 workflow 整体判红（本机 M4 Pro 与 GitHub macOS runner 均复现）。现区分 `BLOCKED` / `ERROR` / `NOT RUN` / `RUN`：CI 通过显式开关允许 BLOCKED 但如实标注「真机隔离未验证」并打 warning annotation；本地严格模式仍判红，非宿主拒绝的执行异常与缺件一律判红，绝不把未验证冒充通过。
+
 ## [0.8.11-beta] - 2026-11-04
 
 ### 修复

@@ -140,9 +140,23 @@ const plan = windows.windowsSandboxPlan();
 check('设置计划产物可审计（steps 含 id/cmd/args/note）',
   Array.isArray(plan.steps) && plan.steps.every((s) => s.id && s.cmd && Array.isArray(s.args) && s.note));
 check('计划含创建离线专用用户步骤', plan.steps.some((s) => s.id === 'create-offline-user'));
-check('计划含防火墙阻断出网步骤（对应 bwrap 的 --unshare-net）',
-  plan.steps.some((s) => s.id === 'block-outbound-firewall'
-    && s.args.some((a) => String(a).includes('advfirewall'))));
+// 2026-11-04：原断言只认 `advfirewall` 字面量。但 netsh advfirewall **不支持 user=**
+// （按用户过滤出网不是 netsh 的能力），该写法会让这一步非零退出触发整体回滚，
+// Windows 一次性设置永远失败。现改用 PowerShell New-NetFirewallRule -LocalUser <SDDL>。
+// 断言随契约更新为校验「确实按离线用户 SID 阻断出站」，而非某个命令名——
+// 删步骤 / 改回 netsh user= / 把 Block 改成 Allow / 去掉 -LocalUser / 换用户名，都必须红。
+check('计划含防火墙阻断出网步骤（对应 bwrap 的 --unshare-net）', (() => {
+  const s = plan.steps.find((x) => x.id === 'block-outbound-firewall');
+  if (!s) return false;
+  const cmdline = [s.cmd, ...s.args].join(' ');
+  return s.cmd === 'powershell'
+    && /New-NetFirewallRule/.test(cmdline)
+    && /-LocalUser/.test(cmdline)
+    && /-Direction\s+Outbound/.test(cmdline)
+    && /-Action\s+Block/.test(cmdline)
+    && cmdline.includes(windows.SANDBOX_USER_OFFLINE)
+    && !/\buser=/.test(cmdline); // netsh 无效的 user= 参数不得回归
+})());
 check('计划含回滚命令（任一步失败可撤销）', Array.isArray(plan.rollback) && plan.rollback.length >= 2);
 check('用户创建参数禁改密码且必须有效（防空口令账号长期驻留）',
   plan.steps.find((s) => s.id === 'create-offline-user').args.includes('/passwordchg:no')

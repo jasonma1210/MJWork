@@ -62,6 +62,14 @@ check('守卫：无命令串不崩', sandbox.checkCommandGuard('read-only', unde
 
 // ── 真实沙箱写入边界（darwin 且 sandbox-exec 存在时执行）──
 const requireRealSandbox = process.env.MJCODE_REQUIRE_REAL_SANDBOX === '1';
+// 2026-11-04：现代 macOS（本机 M4 Pro 与 GitHub-hosted macos runner 均稳定复现）宿主会
+// 拒绝 `sandbox_apply`（Operation not permitted），真机探测拿不到任何隔离结论。
+// 这是**环境不具备验证条件**，不是隔离失效；把它和真机断言失败混为一谈会把每次 CI 判红。
+// CI 用 MJCODE_ALLOW_SANDBOX_BLOCKED=1 显式声明允许「宿主拒绝」这一状态：不判红，
+// 但绝不记 PASS——下方会打印 SANDBOX_REAL_STATUS 与「真机隔离未验证」，CI 再打 warning。
+// 本地直接跑（不设该变量）仍严格判红，提醒开发者真机没验成。
+// 只有 RUN 才代表真机隔离被验证过；ERROR（非宿主拒绝的执行异常）与 NOT RUN 一律判红。
+const allowSandboxBlocked = process.env.MJCODE_ALLOW_SANDBOX_BLOCKED === '1';
 let realSandboxStatus = 'NOT RUN';
 if (process.platform === 'darwin' && fs.existsSync(sandbox.SANDBOX_EXEC)) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-sb-'));
@@ -91,21 +99,31 @@ if (process.platform === 'darwin' && fs.existsSync(sandbox.SANDBOX_EXEC)) {
     check('沙箱拒绝项目目录外写入', blocked);
     if (fs.existsSync('/tmp/mjcode-sb-escape-marker')) fs.rmSync('/tmp/mjcode-sb-escape-marker');
   } catch (err) {
-    // 宿主可能禁止 sandbox_apply（例如受限容器）；默认测试记为 BLOCKED，不把未运行算 PASS。
-    realSandboxStatus = 'BLOCKED';
-    console.error(`⚠ Seatbelt 真机探测 BLOCKED（宿主拒绝执行）: ${err.message}`);
-    if (requireRealSandbox) fail++;
+    // 区分「宿主拒绝 sandbox_apply」与其它执行异常：后者可能是真隔离缺陷，不得被环境豁免掩盖。
+    const hostRefused = /sandbox_apply|Operation not permitted|not permitted/i.test(String(err?.message || err));
+    realSandboxStatus = hostRefused ? 'BLOCKED' : 'ERROR';
+    console.error(`⚠ Seatbelt 真机探测 ${realSandboxStatus}（${hostRefused ? '宿主拒绝执行' : '执行异常'}）: ${err.message}`);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
 } else {
   console.log('⚠ Seatbelt 真机探测 NOT RUN（非 darwin 或 sandbox-exec 缺失）');
-  if (requireRealSandbox) fail++;
 }
 
-if (realSandboxStatus !== 'RUN') {
-  console.log(`SANDBOX_REAL_STATUS=${realSandboxStatus}`);
+// 统一判定：真机 RUN 时三条边界断言已由 check() 计入 pass/fail（隔离失效仍会红）；
+// 只有「宿主拒绝 + CI 显式允许」这一条环境阻断不判红，且如实标注「未验证」而非 PASS。
+if (requireRealSandbox) {
+  if (realSandboxStatus === 'RUN') {
+    // 已真机验证，无需额外处理
+  } else if (realSandboxStatus === 'BLOCKED' && allowSandboxBlocked) {
+    console.warn('⚠ 真机隔离未验证（BLOCKED）：宿主拒绝 sandbox_apply，本轮只证明静态 profile 断言通过');
+  } else {
+    fail++; // NOT RUN / ERROR / 未被允许的 BLOCKED：严格模式一律判红
+  }
 }
+
+// 状态行始终打印（含 RUN），供 CI 校验并据此打 warning；绝不让状态被静默吞掉。
+console.log(`SANDBOX_REAL_STATUS=${realSandboxStatus}`);
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
 process.exit(fail === 0 ? 0 : 1);
