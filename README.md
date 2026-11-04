@@ -82,7 +82,7 @@ Three action levels + four approval modes + three sandbox tiers; whenever a judg
 | Agent engine | `agent-core` — own tool loop, model adapters, token/context accounting |
 | Storage | SQLite (`sql.js`), Yjs for collaborative buffers |
 | Optional backend | Express 4 + PostgreSQL + JWT |
-| Quality gates | `node --test` (324 suites), ESLint warning ratchet, `tsc --noEmit`, doc-vs-source fact check |
+| Quality gates | `node test/run-all.mjs`（323 suites）, ESLint warning ratchet, `tsc --noEmit`, doc-vs-source fact check |
 
 ## Run it (development)
 

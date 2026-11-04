@@ -44,10 +44,19 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', 'assets']);
 // 800 行软档基线（code 行数快照，2026-10-30 实测）。棘轮：只能缩，不能涨。
 // 值取自 codeLines()，与 eslint max-lines 同一口径；改这个数字等于放宽门禁，
 // 必须在提交信息里写明理由。
+//
+// 2026-11-04 上调（本轮唯一一次，理由写在提交信息里，也写在这里）：
+//   · main/main.js 1154 → 1159（+5，本机模型就绪治理接线：require / 启动预热 /
+//     发请求前 ensureReady / 停止时 abortAll / 成功回复后 markResident）。
+//     为什么不做成「同行追加」硬压回 1154：那 5 处都是**独立的语义动作**，
+//     挤进既有语句会把「在哪一步做了什么」藏起来（本项目已被同行追加坑过一次，见 doc 第 9 章）。
+//     体量已全部外置到 main/localModel.js（411 code 行），main.js 只留 5 个调用点。
+//   · agent-core/index.js 2844 → 2847（+3，isRetryableChatError 按 error.code 判本机就绪类错误）。
+//   · 新增 main/localModel.js 439 code 行，未进基线（< 800）。
 const BASELINE_800 = {
   'main/computerUse.js': 1002,
-  'main/main.js': 1154,
-  'agent-core/index.js': 2844,
+  'main/main.js': 1159,
+  'agent-core/index.js': 2847,
 };
 
 function walk(dir, out) {

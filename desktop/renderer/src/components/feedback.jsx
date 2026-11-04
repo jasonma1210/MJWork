@@ -15,6 +15,46 @@ import Button from './ui/Button';
 let confirmListener = null;
 let toastListener = null;
 let confirmSeq = 0;
+// 本机模型加载提示的去重状态（见下方 local_model_notice 分支）：
+// 主进程按 4s 节流上报进度，若逐条转成 toast，一次 90s 的冷启动会刷 20 多条。
+const localNotice = { model: '', at: 0 };
+
+/**
+ * 本机模型加载进度 → toast。冷启动时这是用户唯一能拿到的「在干什么」的信息
+ * （此前只有「一直转圈，最后一句话叫无法访问」）。
+ * 只在「开始加载」与「加载完成且确实等了一会儿」两个时机各报一次，中间进度不转 toast。
+ * @returns {boolean} 是否已消费该事件（消费了就不再走 approval_notice 分支）
+ */
+function notifyLocalModel(evt) {
+  if (!evt || evt.type !== 'local_model_notice') return false;
+  const model = String(evt.model || '');
+  if (!model) return true;
+  if (evt.phase === 'loading') {
+    const now = Date.now();
+    if (localNotice.model === model && now - localNotice.at < 60000) return true;
+    localNotice.model = model;
+    localNotice.at = now;
+    toast({
+      message: tGlobal('runtime.localModelLoading', {
+        model,
+        waited: Math.max(0, Math.round(Number(evt.waitedMs || 0) / 1000)),
+        remain: Math.max(1, Math.round(Number(evt.estRemainMs || 0) / 1000)),
+      }),
+      duration: 8000,
+    });
+    return true;
+  }
+  if (evt.phase === 'ready' && Number(evt.waitedMs) > 5000) {
+    localNotice.model = '';
+    toast({
+      message: tGlobal('runtime.localModelReady', {
+        model,
+        waited: Math.round(Number(evt.waitedMs) / 1000),
+      }),
+    });
+  }
+  return true;
+}
 
 export function confirm(opts = {}) {
   if (!confirmListener) {
@@ -104,6 +144,9 @@ export default function FeedbackHost() {
     let off;
     try {
       off = mj.onTasksEvent((evt) => {
+        // 本机模型加载进度（独立函数，见 notifyLocalModel）：把这段放在回调里会把
+        // approval_notice 的主判定挤到视线之外，而那条才是本回调原本的职责。
+        if (notifyLocalModel(evt)) return;
         if (!evt || evt.type !== 'approval_notice') return;
         const result = evt.ok ? tGlobal('settings.approvalNoticeOk') : tGlobal('settings.approvalNoticeFail');
         const base = Number.isFinite(evt.ms)

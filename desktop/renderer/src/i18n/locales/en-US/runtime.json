@@ -77,5 +77,7 @@
   "threadCreateFailed": "Failed to create the conversation; this run has been stopped: {error}\nTry again; if it keeps failing, check that the local conversation store is writable.",
   "messageSendFailed": "Failed to write the message to the local conversation; this run has been stopped: {error}\nYour input has been kept, so you can retry directly.",
   "messagesLoadFailed": "Failed to load messages: {error} (switch session or reload to retry)",
-  "worktreeKept": "Switched back to local; changes in the {branch} copy are kept — merge or clean it up from the bar above"
+  "worktreeKept": "Switched back to local; changes in the {branch} copy are kept — merge or clean it up from the bar above",
+  "localModelLoading": "Loading local model \"{model}\" (waited {waited}s, roughly {remain}s to go). The first load reads the weights into memory and is slower than usual — hang tight.",
+  "localModelReady": "Local model \"{model}\" is ready (load took {waited}s); later replies won't wait for this again."
 }

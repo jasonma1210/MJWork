@@ -287,6 +287,9 @@ const { createStreamGuard, streamTimeoutMessage, reportSlowTtfb, ttfbTargetFor }
 const streamSettings = require('./streamSettings');
 // 传 baseUrl：本机推理端点走 LOCAL 档（默认首字节 3 分钟，见 streamGuard.LOCAL_DEFAULTS）
 const resolveStreamTimeouts = (opts) => streamSettings.getStreamTimeouts(opts);
+// 本机模型（Ollama 回环端点）就绪治理：启动预热 + 常驻(keep_alive:-1) + 发请求前确认模型已在显存
+// + 加载进度回报 + 友好降级文案。非回环端点**逐字节不变**（ensureReady 同步直返 remote）。
+const localModel = require('./localModel');
 // T6：注入 localStore getter（此时 localStore 变量已声明，whenReady 后才赋值）
 streamSettings.initStreamSettings({ getLocalStore: () => localStore });
 const { createScheduledChannels } = require('./scheduledChannels');
@@ -318,6 +321,9 @@ ipcMain.handle('checkpoint:clear', (_, threadKey) => {
 ipcMain.handle('agent:token/state', () => agentRunner.getTokenState());
 // P3-4：本地后端探测（Ollama）——启动时一次 + 每 5 分钟复探；结果进快照供渲染层展示
 quota.detectLocalBackend().catch(() => {});
+// 开机预热：把「上次用过的」本机模型加载进显存并钉住（keep_alive:-1），冷启动挪到启动期；
+// 尽力而为，失败只记日志（首次对话会再试），绝不阻断或拖慢启动。
+localModel.prewarmLastUsed().catch(() => {});
 setInterval(() => { quota.detectLocalBackend().catch(() => {}); }, 5 * 60 * 1000).unref?.();
 
 
@@ -656,9 +662,16 @@ async function chatStreamOnce({ providerId, isGlobal = false, baseUrl, messages,
   }
   const root = (baseUrl || secret.base_url || '').replace(/\/+$/, '');
   if (!root) throw new Error('BASE_URL_MISSING: 模型服务地址为空');
+  // Backend-aware readiness：本机端点先确认「模型已在显存里」再把请求发出去——TCP 连得上 ≠ 模型可用。
+  // 未就绪就在这里预热并回报进度（这是「不停重试然后无法访问」的正面解法）；
+  // 抛出的 error 带 code（LOCAL_BACKEND_DOWN / LOCAL_MODEL_MISSING / LOCAL_MODEL_LOADING），
+  // 文案已是「人话 + 预计还需多久」，agent-core 侧按 code 判不可重试，不会再把等待重放三遍。
+  // 位置刻意在 quota.acquire 之前：这里抛错时还没占槽位，不存在泄漏。
+  await localModel.ensureReady({ baseUrl: root, model, signal: externalSignal, onPhase: (p) => emitTaskEvent({ type: 'local_model_notice', ...p }) });
   // P3-2：fg 槽位预占（超时抛错=真过载，调用方按普通失败处理；AbortError 不计错误连击）
   const slot = await quota.acquire('fg', providerId || 'default');
-  const body = { model, messages, stream: true, stream_options: { include_usage: true } };
+  // keep_alive:-1（仅 Ollama 类回环端点）：推理完别把模型驱逐出显存，否则下次提问又是冷启动
+  const body = { model, messages, stream: true, stream_options: { include_usage: true }, ...localModel.chatHints(root) };
   if (tools) body.tools = tools;
   // 思考强度：仅在用户显式选择时下发（OpenAI 兼容 reasoning_effort；空值不发送，避免严格服务端 400）
   if (reasoningEffort) body.reasoning_effort = reasoningEffort;
@@ -686,7 +699,10 @@ async function chatStreamOnce({ providerId, isGlobal = false, baseUrl, messages,
   // 那边可能本来就是正当的长回答，硬切会把文章砍半。
   const streamTimeouts = resolveStreamTimeouts({ baseUrl: root });
   const streamGuard = createStreamGuard({
-    firstByteMs: streamTimeouts.firstByteMs,
+    // 已确认常驻（刚预热过 / 上一条回复刚成功）⇒ 首字节预算收紧到「已常驻档」（默认 60s）：
+    // 常驻模型这么久没首字节就是真挂起；未确认时保持本地兜底档（300s），不误杀正常冷启动。
+    // 传 messages：长 prompt 的 prefill 是物理时间（7.7 万 token 实测 >90s），这类请求一律不下调。
+    firstByteMs: localModel.firstByteBudget(streamTimeouts.firstByteMs, root, model, messages),
     idleMs: streamTimeouts.idleMs,
     totalMs: externalSignal ? streamTimeouts.totalMs : 0,
     onFire: () => controller.abort(),
@@ -760,6 +776,8 @@ async function chatStreamOnce({ providerId, isGlobal = false, baseUrl, messages,
       }
     }
     quota.reportSuccess(providerId || 'default');
+    // 这条回复真出来了 ⇒ 模型此刻确实在显存里。记下这次事实（供下一次免探测 + 启动预热记住是谁）
+    localModel.markResident(root, model);
     return { content: fullContent, tool_calls: toolCalls.filter(Boolean), usage, finish_reason: finishReason };
   } catch (err) {
     // 守卫触发的中断先判：必须给出「首字节没来 / 连续没动静 / 超过总上限」的可读原因，
@@ -773,7 +791,9 @@ async function chatStreamOnce({ providerId, isGlobal = false, baseUrl, messages,
     if (err.name === 'AbortError' && externalSignal?.aborted) {
       return { aborted: true, content: fullContent, usage };
     }
-    quota.reportError(providerId || 'default');
+    // 连接层失败要作废「常驻」缓存：否则接下来 5 分钟一直命中缓存、一直只报原始错误，
+    // 「服务没起 / 正在加载」的友好提示永远走不到（缓存把降级路径挡在门外）
+    quota.reportError(providerId || 'default'); localModel.noteChatFailure(root, model, err);
     throw err;
   } finally {
     // P2-2：主对话通道的 TTFB 告警接线——此前只有 scheduled 通道接了 reportSlowTtfb，
@@ -798,6 +818,8 @@ ipcMain.handle('model:chat', (event, payload) => chatStreamOnce(payload || {}, e
 // P0-4：同时中止主进程 Agent 运行器中挂起的交互式运行（run controller 级联中止在途 fetch）
 ipcMain.handle('model:abort', async () => {
   const n = activeChats.size;
+  // 本机模型就绪探测/预热也一并中止：否则点了「停止」还要干等它把 29GB 读完
+  localModel.abortAll();
   for (const c of activeChats) c.abort();
   activeChats.clear();
   const abortedRuns = agentRunner.abortAllRuns();

@@ -82,7 +82,7 @@
 | Agent 引擎 | `agent-core`：自研工具循环、模型适配、token/上下文记账 |
 | 存储 | SQLite（`sql.js`），协同缓冲用 Yjs |
 | 可选服务端 | Express 4 + PostgreSQL + JWT |
-| 质量门禁 | `node --test`（324 套件）、ESLint 警告棘轮、`tsc --noEmit`、文档与源码数字核对 |
+| 质量门禁 | `node test/run-all.mjs`（323 套件）、ESLint 警告棘轮、`tsc --noEmit`、文档与源码数字核对 |
 
 ## 如何运行（开发）
 

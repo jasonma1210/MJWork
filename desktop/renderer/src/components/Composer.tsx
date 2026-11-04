@@ -13,6 +13,7 @@ import ComposerWorkspaceRow from './ComposerWorkspaceRow';
 import { projectDisplayName } from '../lib/projectName';
 import { useI18n, tGlobal } from '../i18n';
 import Button from './ui/Button';
+import ExtrasChip from './ui/ExtrasChip';
 import KnowledgeScope from './KnowledgeScope';
 
 // T2-2：输入区组件（自主进程 ChatArea.jsx 原样搬移，props 接口不变）。
@@ -324,33 +325,38 @@ export default function Composer({
           </span>
         )}
         {skillIds.length > 0 && (
-          <span className="text-xs px-2 py-1 rounded bg-accent-bg text-accent shrink-0 flex items-center gap-1"
-            title={t('composer.skillsTip', {
-              skills: skillIds.join('、'), // i18n-literal
-            })}>
-            <IconZap size={11} />
-            {t('composer.skillsCount', { n: skillIds.length })}
-            <button onClick={() => onExtrasChange?.({ ...(extras || {}), skillIds: [] })} aria-label={t('composer.removeSkills')} className="hover:opacity-70">
-              <IconX size={10} />
-            </button>
-          </span>
+          <ExtrasChip
+            icon={<IconZap size={11} />}
+            label={t('composer.skillsCount', { n: skillIds.length })}
+            panelTitle={t('composer.skillsPanelTitle')}
+            items={skillIds.map((id) => ({ id, label: id }))}
+            removeItemLabel={t('composer.removeSkillItem')}
+            clearAllLabel={t('composer.removeSkills')}
+            emptyLabel={t('composer.skillsEmpty')}
+            onRemoveItem={(id) => onExtrasChange?.({ ...(extras || {}), skillIds: skillIds.filter((x) => x !== id) })}
+            onClearAll={() => onExtrasChange?.({ ...(extras || {}), skillIds: [] })}
+          />
         )}
         {mcpServers.length > 0 && (
-          <span className="text-xs px-2 py-1 rounded bg-accent-bg text-accent shrink-0 flex items-center gap-1"
-            title={t('composer.connectorsTip', {
-              names: mcpServers.join('、'), // i18n-literal
-            })}>
-            <IconPlug size={11} />
-            {t('composer.connectorsCount', { n: mcpServers.length })}
-            <button onClick={() => onExtrasChange?.({
+          <ExtrasChip
+            icon={<IconPlug size={11} />}
+            label={t('composer.connectorsCount', { n: mcpServers.length })}
+            panelTitle={t('composer.connectorsPanelTitle')}
+            items={mcpServers.map((name) => ({ id: name, label: name }))}
+            removeItemLabel={t('composer.removeConnectorItem')}
+            clearAllLabel={t('composer.removeConnectors')}
+            emptyLabel={t('composer.connectorsEmpty')}
+            onRemoveItem={(name) => onExtrasChange?.({
               ...(extras || {}),
               // 记进排除表而不是清空 mcpServers：清空后「+」菜单里的勾选态会一起消失，
               // 用户既看不出自己移出过什么，也无法「再点一下加回来」。
+              mcpExcludeServers: [...new Set([...mcpExcluded, name])],
+            })}
+            onClearAll={() => onExtrasChange?.({
+              ...(extras || {}),
               mcpExcludeServers: [...new Set([...mcpExcluded, ...mcpServers])],
-            })} aria-label={t('composer.removeConnectors')} className="hover:opacity-70">
-              <IconX size={10} />
-            </button>
-          </span>
+            })}
+          />
         )}
         {/* AGENTS.md 属于「当前工作区」事实，同样只在会话内显示 */}
         {workspaceBound && agentsMd && (

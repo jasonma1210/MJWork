@@ -1857,6 +1857,15 @@ export const CHAT_MAX_RETRIES = 3;
 export function isRetryableChatError(err) {
   if (!err) return false;
   if (err.name === 'AbortError') return false;
+  // 本机模型「就绪类」错误按 code 判，不靠 message 猜：文案里本来就带「已等待 300 秒」这类数字，
+  // 用 /timeout|超时/ 或 /\b\d{3}\b/ 去匹配只会把同一段等待重放三遍（用户实测：重试 3 次 ≈ 十几分钟，
+  // 最后仍只得到一个「无法访问」）。这两类错误的正确处置是**把可读文案交给用户**：
+  //   · LOCAL_MODEL_LOADING —— 模型在后台继续加载，用户稍后点「重试本轮」即可，不需要现在重放；
+  //   · LOCAL_MODEL_MISSING —— 模型名写错了，重试一万次也还是错。
+  // LOCAL_BACKEND_DOWN（服务没起）则相反：用户可能正在 ollama serve，重试几次是有意义的。
+  const code = String(err.code || '');
+  if (code === 'LOCAL_MODEL_LOADING' || code === 'LOCAL_MODEL_MISSING') return false;
+  if (code === 'LOCAL_BACKEND_DOWN') return true;
   const msg = String(err.message || err);
   if (/abort/i.test(msg)) return false;                              // 用户主动中止：直穿
   if (/KEY_MISSING/i.test(msg)) return false;                        // 凭证缺失重试无意义
