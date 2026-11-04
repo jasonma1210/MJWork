@@ -236,6 +236,21 @@ try {
     check('类型不匹配时不落盘（没有半成品 .xlsx）', !fs.existsSync(xlsxPath));
   }
 
+  // ── ⑥b 表格型工件 → xlsx：严格 JSON schema 渲染；非法正文 fail-closed ──
+  {
+    const tableArt = store.createArtifact({ projectId: 'prj_p02', kind: 'table', title: '销售表', outline: [{ key: 'data', title: '数据' }] });
+    store.patchSection({ artifactId: tableArt.artifactId, sectionKey: 'data', content: JSON.stringify({ name: '销售明细', header: ['项目', '金额'], rows: [['服务器', 120000], ['维护', 30000]] }), baseVersion: 'V0.0' });
+    initDeps({ store });
+    const tablePath = path.join(tmp, 'table-artifact.xlsx');
+    const tableResult = await docTools.toolXlsxCreate({ path: tablePath, cwd: tmp, artifactId: tableArt.artifactId });
+    check('xlsx_create 收到 table 工件 → 成功产出并携带工件版本', tableResult.ok === true && tableResult.artifactId === tableArt.artifactId && tableResult.version === 'V0.01' && fs.existsSync(tablePath), JSON.stringify(tableResult).slice(0, 180));
+    const badTable = store.createArtifact({ projectId: 'prj_p02', kind: 'table', title: '非法表格', outline: [{ key: 'data', title: '数据' }] });
+    store.patchSection({ artifactId: badTable.artifactId, sectionKey: 'data', content: '这不是 JSON 表格', baseVersion: 'V0.0' });
+    const badPath = path.join(tmp, 'bad-table-artifact.xlsx');
+    const badResult = await docTools.toolXlsxCreate({ path: badPath, cwd: tmp, artifactId: badTable.artifactId });
+    check('table 工件正文不符合 schema → ARTIFACT_TABLE_SCHEMA_INVALID 且不落盘', badResult.ok === false && badResult.code === 'ARTIFACT_TABLE_SCHEMA_INVALID' && !fs.existsSync(badPath), JSON.stringify(badResult));
+  }
+
   // ── ⑦ 其余 fail-closed 分支 ──
   {
     initDeps({ store });

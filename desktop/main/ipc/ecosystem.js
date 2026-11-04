@@ -569,7 +569,8 @@ function initEcosystemIpc(d) {
   register();
   // IM 对接（钉钉/飞书/企微）IPC：main.js 已顶到 1500 行 eslint 门禁，杂项 IPC 域经此 hub 一次性接线；
   // 逻辑在 main/imConfig.js + main/ipc/im.js，密钥经 getCredentialCrypto 加密，渲染层只拿脱敏配置。
-  initImIpc({ ipcMain, getCredentialCrypto: deps.getCredentialCrypto });
+  // app/getWindows 一并下传：OAuth 深链回落（mjcode://im-oauth）要在主进程侧收口，不能只靠渲染层。
+  initImIpc({ ipcMain, getCredentialCrypto: deps.getCredentialCrypto, app: deps.getApp?.(), getWindows: deps.getWindows });
 }
 
 module.exports = { initEcosystemIpc, resolveEmployeeById };

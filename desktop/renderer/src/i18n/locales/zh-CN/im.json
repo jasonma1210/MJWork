@@ -1,7 +1,7 @@
 {
   "title": "IM 对接",
-  "desc": "填入钉钉 / 飞书 / 企业微信「自建应用」的应用凭证，为后续手机端 IM 接入做准备（当前版本仅保存凭证并生成配对码，尚不能收发消息）。",
-  "scopeNote": "当前为配置与配对码阶段：凭证只存本机（系统钥匙串加密），完整 OAuth 授权与消息收发将随后续版本提供。",
+  "desc": "填写钉钉 / 飞书 / 企业微信自建应用凭证，在本机安全保存后完成 OAuth 授权并发送测试消息。",
+  "scopeNote": "密钥仅存本机并经过系统安全存储加密；请先点击各平台官方申请入口创建应用，再填写下方字段。",
   "bridgeNotReady": "主进程桥未就绪，请重启应用后重试。",
   "platform": {
     "dingtalk": "钉钉",
@@ -33,10 +33,23 @@
   "cryptoUnavailable": "本机安全存储不可用，拒绝以明文保存密钥",
   "pairNeedConfig": "请先保存配置再生成配对码",
   "pairFailed": "生成配对码失败",
-  "pairingIntro": "在手机端对应 IM 使用以下配对码 / 链接完成对接（完整 OAuth 授权为后续版本）：",
+  "pairingIntro": "在手机端对应 IM 使用以下配对码 / 链接完成对接：",
   "copyCode": "复制配对码",
   "copyLink": "复制链接",
   "copied": "已复制",
   "copyFailed": "复制失败，请手动选择",
-  "pairingExpire": "配对码 {min} 分钟内有效，过期请重新生成。"
+  "pairingExpire": "配对码 {min} 分钟内有效，过期请重新生成。",
+  "officialLink": "官方申请入口",
+  "oauth": "OAuth 授权",
+  "send": "发送",
+  "messagePlaceholder": "输入测试消息",
+  "recipientPlaceholder": "接收方 ID（用户 / 群聊）",
+  "oauthSuccess": "授权成功，令牌已加密保存",
+  "oauthStartOk": "授权链接已打开，请在浏览器完成授权（完成后会自动回跳）",
+  "oauthFailed": "授权失败",
+  "callbackPlaceholder": "若浏览器未自动回跳，把地址栏完整 URL 粘到这里",
+  "completeOAuth": "完成授权",
+  "callbackInvalid": "地址里缺少 state / code，请复制完整回调地址",
+  "sendSuccess": "消息已发送",
+  "sendFailed": "消息发送失败"
 }

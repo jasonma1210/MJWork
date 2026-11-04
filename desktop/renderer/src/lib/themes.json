@@ -1,7 +1,7 @@
 [
-  { "id": "dark", "nameKey": "theme.dark", "color": "#0d0d0d", "swatch": { "bg": "#0d0d0d", "surface": "#1e1e1e", "accent": "#10a37f" } },
-  { "id": "light", "nameKey": "theme.light", "color": "#ffffff", "swatch": { "bg": "#ffffff", "surface": "#f0f0f0", "accent": "#0B7C61" } },
-  { "id": "midnight", "nameKey": "theme.midnight", "color": "#0a0e1a", "swatch": { "bg": "#0a0e1a", "surface": "#162033", "accent": "#6366f1" } },
-  { "id": "forest", "nameKey": "theme.forest", "color": "#0c120e", "swatch": { "bg": "#0c120e", "surface": "#16241c", "accent": "#22c55e" } },
-  { "id": "sunset", "nameKey": "theme.sunset", "color": "#1a0f0a", "swatch": { "bg": "#1a0f0a", "surface": "#2e1c16", "accent": "#f97316" } }
+  { "id": "dark", "nameKey": "theme.dark", "color": "#131719", "swatch": { "bg": "#131719", "surface": "#1C2224", "accent": "#43BFA2" } },
+  { "id": "light", "nameKey": "theme.light", "color": "#F5F6F6", "swatch": { "bg": "#F5F6F6", "surface": "#FFFFFF", "accent": "#17715E" } },
+  { "id": "midnight", "nameKey": "theme.midnight", "color": "#06090A", "swatch": { "bg": "#06090A", "surface": "#0D1416", "accent": "#4FD0B2" } },
+  { "id": "forest", "nameKey": "theme.forest", "color": "#0A1E15", "swatch": { "bg": "#0A1E15", "surface": "#132B20", "accent": "#4CBF8E" } },
+  { "id": "sunset", "nameKey": "theme.sunset", "color": "#17120E", "swatch": { "bg": "#17120E", "surface": "#231C16", "accent": "#5BBFA4" } }
 ]

@@ -145,7 +145,18 @@ check('10. DB 迁移 v17 加了 team_members.mcp_allow_json', () => {
   assert.ok(/addColumn\(db,\s*'team_members',\s*'mcp_allow_json'/.test(s), '迁移里没有加列');
 });
 
-check('11. teamStore 写路径：INSERT 列/参数 + UPDATE 列映射 + 读回映射都带 mcp_allow_json', () => {
+check('11. DB 原生探测 dock.hide 失败写入 stderr 且不改变退出码语义', () => {
+  const s = read('main/db/index.js');
+  const start = s.indexOf('const PROBE_SRC = `');
+  const end = s.indexOf('`;\n\nfunction probeBetterSqlite3', start);
+  assert.ok(start >= 0 && end > start, '找不到 PROBE_SRC 探测脚本');
+  const probe = s.slice(start, end);
+  assert.ok(/catch \{ process\.stderr\.write\('\[db-probe\] Electron dock hide unavailable\\\\n'\); \}/.test(probe), 'dock.hide 失败未写入固定 stderr 日志');
+  assert.ok(/process\.exit\(0\)/.test(probe) && /catch \(e\) \{ process\.exit\(2\); \}/.test(probe), '探测成功/失败退出码语义被改动');
+  assert.ok(!/dock\.hide\(\); \} catch \{\s*\}/.test(probe), 'dock.hide 仍为空 catch');
+});
+
+check('12. teamStore 写路径：INSERT 列/参数 + UPDATE 列映射 + 读回映射都带 mcp_allow_json', () => {
   const s = read('main/teamStore.js');
   const insert = s.slice(s.indexOf('INSERT INTO team_members'), s.indexOf('if (m.roleKind === \'lead\') this.setLead'));
   assert.ok(insert.includes('mcp_allow_json'), 'INSERT 列清单缺 mcp_allow_json（会永远存默认值）');

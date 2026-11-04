@@ -330,7 +330,7 @@ initAudit({ getAuthToken: () => authToken, serverBase });
 // T2-1：生态与杂项 IPC 域已拆出 main/ipc/ecosystem.js（只搬移不改行为）——
 // flags/协同/skillCompat/IDE/ecosystem/websearch。audit 与 SKILLS_DIR 经注入保持同源。
 const { initEcosystemIpc } = require('./ipc/ecosystem');
-initEcosystemIpc({ getLocalStore: () => localStore, getCredentialCrypto: () => credentialCrypto, featureFlags, audit, getSkillsDir: () => SKILLS_DIR() });
+initEcosystemIpc({ getLocalStore: () => localStore, getCredentialCrypto: () => credentialCrypto, featureFlags, audit, getSkillsDir: () => SKILLS_DIR(), getApp: () => app, getWindows: () => BrowserWindow.getAllWindows() });
 
 ipcMain.handle('model:getSecrets', async (_, { token }) => {
   if (!token) return { ok: false, error: 'NO_TOKEN' };
@@ -410,7 +410,7 @@ const hasMainLock = app.requestSingleInstanceLock();
 if (!hasMainLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, _commandLine) => {
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();

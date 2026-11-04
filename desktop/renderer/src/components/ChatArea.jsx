@@ -124,7 +124,9 @@ export default function ChatArea({
   const wtWarnedRef = useRef(''); // 只在「项目+数量」变化时提醒一次，别每次重渲染都弹
   const [modeMsg, setModeMsg] = useState(''); // 模式切换提示
   // A4：会话级扩展状态（数字员工 / 技能 / 连接器 / 候选编制），随线程持久化、重开可恢复
-  const EMPTY_EXTRAS = { expert: null, skillIds: [], mcpServers: [], candidateRoster: null };
+  // mcpExcludeServers：本会话**移出**的连接器（连接是进程级全局状态，「本会话不用」只能是减项）。
+  // 没有它时 Composer 上那个「×」只清本地数组 —— 界面移除了、模型照旧拿到工具（2026-11-04 修）。
+  const EMPTY_EXTRAS = { expert: null, skillIds: [], mcpServers: [], mcpExcludeServers: [], candidateRoster: null };
   const [sessionExtras, setSessionExtras] = useState(EMPTY_EXTRAS);
   const [plusOpen, setPlusOpen] = useState(false);
   // 候选编制（candidate roster）—— 2026-10-24 双入口重组 / 设计文档 §7.2、§9 P0-6。
@@ -210,6 +212,12 @@ export default function ChatArea({
   sendOrDispatchRef.current = sendOrDispatch;
 
   // 加载已启用的文件技能内容（~/.mjcode/skills）
+  // 「取不到正文」≠「没启用」：启用了但读不到，意味着用户界面显示在用、模型却从没见过它
+  // （引擎的可用技能清单里根本没有这一行）。这是「配置了但拿不到」最隐蔽的形态 ——
+  // 过去这里 `r.ok ? {...} : null` 静默丢弃且**连日志都没有**。现在保留原行为（不注入空壳），
+  // 但 warn + 一次性 toast 留痕；同一失效 id 只报一次，避免每轮重挂载刷屏。
+  const skillMissRef = useRef(null);
+  if (skillMissRef.current === null) skillMissRef.current = new Set();
   useEffect(() => {
     let cancelled = false;
     const builtin = new Set(BUILTIN_SKILL_IDS);
@@ -218,7 +226,13 @@ export default function ChatArea({
     Promise.all(fileIds.map(async (id) => {
       try {
         const r = await window.mjcode.getSkill({ name: id });
-        return r.ok ? { name: id, content: r.content } : null;
+        if (r?.ok) return { name: id, content: r.content };
+        if (!skillMissRef.current.has(id)) {
+          skillMissRef.current.add(id);
+          console.warn('[chat] enabled skill not found (dropped from this run):', id, r?.error || '');
+          toast({ message: tGlobal('message.skillUnavailable', { name: id }) });
+        }
+        return null;
       } catch (err) {
         console.warn('[chat] skill load failed:', id, err);
         return null;

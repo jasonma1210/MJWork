@@ -1,6 +1,4 @@
-// IM 对接设置页（钉钉 / 飞书 / 企微）：用户自填各平台「自建应用 / 机器人」凭证 + 配对码/深链脚手架。
-// 范围（2026-10-25，用户明确「不直接实现完整功能」）：配置 CRUD + 配对码生成；完整 OAuth 授权与
-// 消息收发为后续。密钥加解密在主进程（credentialCrypto），本层只拿脱敏配置，绝不接触明文。
+// IM 对接设置页（钉钉 / 飞书 / 企微）：用户自填凭证、OAuth 授权、消息发送和官方申请入口。
 import { useEffect, useState } from 'react';
 import { useI18n } from '../../i18n';
 import InlineAlert from '../InlineAlert';
@@ -16,9 +14,15 @@ type ImConfig = { platform: string; fields: Record<string, MaskedField>; updated
 type ImListResp = { ok: boolean; schema: Record<string, PlatformSchema>; items: ImStatus[] };
 type SaveResp = { ok: boolean; error?: string; errors?: Record<string, string>; config?: ImConfig };
 type PairResp = { ok: boolean; error?: string; platform?: string; code?: string; url?: string; expiresAt?: number };
+type ActionResp = { ok?: boolean; error?: string; message?: string; status?: string; authorized?: boolean; authorizeUrl?: string; state?: string; nonce?: string; platform?: string };
 
 const PLATFORMS = ['dingtalk', 'feishu', 'wecom'] as const;
 type PlatformId = (typeof PLATFORMS)[number];
+const OFFICIAL_LINKS: Record<PlatformId, string> = {
+  dingtalk: 'https://open.dingtalk.com/',
+  feishu: 'https://open.feishu.cn/',
+  wecom: 'https://work.weixin.qq.com/wework_admin/frame#apps',
+};
 const PAIRING_TTL_MIN = 10;
 
 export default function ImTab() {
@@ -32,6 +36,10 @@ export default function ImTab() {
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [feedback, setFeedback] = useState<Record<string, { ok: boolean; text: string }>>({});
   const [pairing, setPairing] = useState<Record<string, { code: string; url: string }>>({});
+  const [message, setMessage] = useState<Record<string, string>>({});
+  const [recipient, setRecipient] = useState<Record<string, string>>({});
+  const [acting, setActing] = useState<Record<string, boolean>>({});
+  const [cbUrl, setCbUrl] = useState<Record<string, string>>({});
 
   async function refresh() {
     if (!mj || typeof mj.imList !== 'function') { setLoadErr(t('im.bridgeNotReady')); return; }
@@ -74,6 +82,57 @@ export default function ImTab() {
     } catch (e) { say(p, false, String((e as Error)?.message || e)); }
   }
 
+  async function runAction(p: PlatformId, action: 'oauth' | 'send') {
+    if (!mj) return;
+    const fn = action === 'oauth' ? mj.imOauthStart : mj.imSend;
+    if (typeof fn !== 'function') { say(p, false, t('im.bridgeNotReady')); return; }
+    setActing((a) => ({ ...a, [`${p}:${action}`]: true }));
+    try {
+      const payload = action === 'send' ? { platform: p, message: { recipient: recipient[p] || '', content: message[p] || '' } } : { platform: p };
+      const r = (await fn(payload)) as ActionResp;
+      if (r?.ok !== false) {
+        if (action === 'oauth' && r.authorizeUrl) window.open(r.authorizeUrl, '_blank', 'noopener,noreferrer');
+        say(p, true, t(action === 'oauth' ? 'im.oauthStartOk' : 'im.sendSuccess'));
+      } else say(p, false, r.error || t(action === 'oauth' ? 'im.oauthFailed' : 'im.sendFailed'));
+    } catch (e) { say(p, false, String((e as Error)?.message || e)); }
+    finally { setActing((a) => ({ ...a, [`${p}:${action}`]: false })); }
+  }
+
+  // 手工回落：平台只把 code 回跳到已登记回调地址、深链也可能不触发时，用户把地址栏 URL 粘回来。
+  // 只从 URL 里取 state/code，换 token 仍在主进程做（appSecret 不下渲染层）。
+  async function completeOAuth(p: PlatformId) {
+    if (!mj || typeof mj.imOauthCallback !== 'function') { say(p, false, t('im.bridgeNotReady')); return; }
+    let params: { state: string; code: string };
+    try {
+      const u = new URL(cbUrl[p] || '');
+      const state = u.searchParams.get('state') || '';
+      const code = u.searchParams.get('code') || '';
+      if (!state || !code) throw new Error('missing');
+      params = { state, code };
+    } catch { say(p, false, t('im.callbackInvalid')); return; }
+    setActing((a) => ({ ...a, [`${p}:oauth`]: true }));
+    try {
+      const r = (await mj.imOauthCallback({ platform: p, params })) as ActionResp;
+      if (r?.ok) { say(p, true, t('im.oauthSuccess')); setCbUrl((prev) => ({ ...prev, [p]: '' })); await refresh(); }
+      else say(p, false, r?.error || t('im.oauthFailed'));
+    } catch (e) { say(p, false, String((e as Error)?.message || e)); }
+    finally { setActing((a) => ({ ...a, [`${p}:oauth`]: false })); }
+  }
+
+  // 深链自动回落：主进程收 open-url / second-instance 后广播 `im:oauth-result`（见 main/imProtocol.js）。
+  // 订阅后立即刷新状态，用户不用再手动点一次。
+  useEffect(() => {
+    if (!mj || typeof mj.imOnOAuthResult !== 'function') return undefined;
+    const off = mj.imOnOAuthResult((raw: unknown) => {
+      const r = (raw || {}) as { ok?: boolean; platform?: string; error?: string };
+      const p = (r.platform || '') as PlatformId;
+      const known = (PLATFORMS as readonly string[]).includes(p);
+      if (known) say(p, !!r.ok, r.ok ? t('im.oauthSuccess') : (r.error || t('im.oauthFailed')));
+      void refresh();
+    });
+    return () => { if (typeof off === 'function') off(); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function remove(p: PlatformId) {
     if (!mj) return;
     await mj.imDelete({ platform: p });
@@ -113,6 +172,7 @@ export default function ImTab() {
                 {st?.pairingActive && (
                   <span className="text-xs px-2 py-1 rounded-full border border-border text-text2">{t('im.statusPairing')}</span>
                 )}
+                <a className="text-xs text-accent underline ml-auto" href={OFFICIAL_LINKS[p]} target="_blank" rel="noreferrer">{t('im.officialLink')}</a>
               </div>
               {fb && fb.text && (
                 <div className="mb-3">
@@ -140,10 +200,21 @@ export default function ImTab() {
               <div className="flex flex-wrap items-center gap-2 mt-2">
                 <Button variant="primary" size="md" loading={!!saving[p]} onClick={() => save(p)}>{t('im.save')}</Button>
                 <Button variant="ghost" size="md" disabled={!st?.configured} onClick={() => pair(p)}>{t('im.pair')}</Button>
+                <Button variant="ghost" size="md" disabled={!st?.configured || !!acting[`${p}:oauth`]} onClick={() => runAction(p, 'oauth')}>{t('im.oauth')}</Button>
                 {st?.configured && (
                   <Button variant="danger-ghost" size="md" onClick={() => remove(p)}>{t('im.delete')}</Button>
                 )}
               </div>
+              {st?.configured && <div className="flex gap-2 mt-3">
+                <input className="w-1/3 bg-surface border border-border rounded-lg px-3 py-2 text-sm" value={recipient[p] || ''} onChange={(e) => setRecipient((m) => ({ ...m, [p]: e.target.value }))} placeholder={t('im.recipientPlaceholder')} />
+                <input className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-sm" value={message[p] || ''} onChange={(e) => setMessage((m) => ({ ...m, [p]: e.target.value }))} placeholder={t('im.messagePlaceholder')} />
+                <Button variant="ghost" size="md" disabled={!message[p] || !!acting[`${p}:send`]} onClick={() => runAction(p, 'send')}>{t('im.send')}</Button>
+              </div>}
+
+              {st?.configured && <div className="flex gap-2 mt-2">
+                <input className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-sm" value={cbUrl[p] || ''} onChange={(e) => setCbUrl((m) => ({ ...m, [p]: e.target.value }))} placeholder={t('im.callbackPlaceholder')} autoComplete="off" />
+                <Button variant="ghost" size="md" disabled={!cbUrl[p] || !!acting[`${p}:oauth`]} onClick={() => completeOAuth(p)}>{t('im.completeOAuth')}</Button>
+              </div>}
 
               {pr && (
                 <div className="mt-4 rounded-xl border border-border p-3 bg-surface">

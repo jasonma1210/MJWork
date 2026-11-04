@@ -106,8 +106,11 @@ const sheet = panel.slice(panel.indexOf('async function submit('), panel.indexOf
 await check('C1 主体=助手 ⇒ 提交前查 runtime，通过后走 onDispatchAssistant', () => {
   assert.match(panel, /ecosystemEmployeeRuntime\?\.\(\{\s*id:\s*emp\.id\s*\}\)/,
     '派给助手前未查 runtime（不能只信目录页的旧结论）');
-  assert.match(panel, /onDispatchAssistant\?\.\(\{\s*employee:\s*emp,\s*goal:\s*g\s*\}\)/,
-    'onDispatchAssistant 载荷不完整（缺 employee/goal）');
+  // 2026-11-04：载荷必须带 `runtime: rt.rolePreset`。只传 employee 时下游
+  // sessionExtras.expert.runtime 恒为空 —— 员工人格与工具子集不生效还是次要的，
+  // **审批档与沙箱档会被跳过**（applyRolePreset 是唯一落地口），等于权限被悄悄放宽。
+  assert.match(panel, /onDispatchAssistant\?\.\(\{\s*employee:\s*emp,\s*goal:\s*g,\s*runtime:\s*rt\.rolePreset\s*\}\)/,
+    'onDispatchAssistant 载荷不完整（缺 employee/goal，或丢了 runtime ⇒ 员工配置不生效）');
 });
 
 await check('C2 主体=团队 ⇒ 走 onDispatchTeam（App 注入 teams:dispatch），载荷含 teamId/goal', () => {
@@ -199,8 +202,11 @@ await check('D4 派单必须一次成型：无会话时直接建会话并自动�
   // 2026-11-03（用户反馈 1）：旧路径是 setActiveThread(null) + setInitialPrompt(goal)，
   // 而 ChatArea 在「无会话」时只能把目标预填进输入框 —— 用户落到对话页后必须再点一次发送。
   // 新路径：无会话且有目标 ⇒ 直接建会话，目标与助手随 extras 落档，进页即自动执行。
-  assert.match(body, /newThreadInProjectRef\.current\?\.\(null,\s*goal,\s*detail\)/,
-    '无会话派单未一次成型（会退化成「预填 + 再点一次发送」）');
+  // 2026-11-04：第三参必须是 **ComposerExtras**（`{ expert: detail }`）。此前直接把 detail
+  // 本体递进去，ChatArea 恢复时做 `{ ...EMPTY_EXTRAS, ...saved }` 会摊出 title_cn/mission 等
+  // 员工字段，而 `expert` 仍为空 —— 会话建了、员工没生效，且全程无报错。
+  assert.match(body, /newThreadInProjectRef\.current\?\.\(null,\s*goal,\s*\{\s*expert:\s*detail\s*\}\)/,
+    '无会话派单未一次成型，或第三参不是 { expert: detail }（员工会恒为空）');
   assert.match(body, /if \(needThread && goal\)/, '缺少「无会话且有目标」的分支判定');
   // 有会话时不得为了派单另开一个会话（原地换助手是 2026-10-27 定下的落点语义）
   assert.match(body, /if \(needThread\) setActiveThread\(null\)/, '有会话时应原地注入，不得清空会话');

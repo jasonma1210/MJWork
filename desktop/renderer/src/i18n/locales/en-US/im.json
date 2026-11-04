@@ -1,7 +1,7 @@
 {
   "title": "IM Integration",
-  "desc": "Enter your DingTalk / Feishu / WeCom custom-app credentials to prepare for mobile IM access (this version only stores credentials and issues pairing codes; messaging is not available yet).",
-  "scopeNote": "Config + pairing-code stage for now: credentials stay on this machine (OS keychain-encrypted); full OAuth authorization and messaging arrive in a later release.",
+  "desc": "Enter DingTalk / Feishu / WeCom custom-app credentials, save them securely on this machine, then authorize via OAuth and send a test message.",
+  "scopeNote": "Secrets are stored only on this machine and encrypted by OS secure storage. Open each platform's official portal first to create an app, then fill in the fields below.",
   "bridgeNotReady": "Main-process bridge not ready — restart the app and retry.",
   "platform": {
     "dingtalk": "DingTalk",
@@ -33,10 +33,23 @@
   "cryptoUnavailable": "Secure storage unavailable on this machine — refusing to save the secret in plaintext",
   "pairNeedConfig": "Save the config before generating a pairing code",
   "pairFailed": "Failed to generate pairing code",
-  "pairingIntro": "Use the pairing code / link below in your mobile IM to connect (full OAuth authorization comes in a later release):",
+  "pairingIntro": "Use the pairing code / link below to connect a mobile IM client:",
   "copyCode": "Copy code",
   "copyLink": "Copy link",
   "copied": "Copied",
   "copyFailed": "Copy failed — please select manually",
-  "pairingExpire": "The pairing code is valid for {min} minutes; regenerate if expired."
+  "pairingExpire": "The pairing code is valid for {min} minutes; regenerate if expired.",
+  "officialLink": "Official application portal",
+  "oauth": "OAuth authorize",
+  "send": "Send",
+  "messagePlaceholder": "Enter a test message",
+  "recipientPlaceholder": "Recipient ID (user or group)",
+  "oauthSuccess": "Authorized. Token stored encrypted.",
+  "oauthStartOk": "Authorization link opened. Finish it in the browser; this page will pick up the result automatically.",
+  "oauthFailed": "Authorization failed",
+  "callbackPlaceholder": "If the browser did not redirect back, paste the full URL here",
+  "completeOAuth": "Complete authorization",
+  "callbackInvalid": "Missing state / code in the URL. Paste the full callback URL.",
+  "sendSuccess": "Message sent",
+  "sendFailed": "Message failed"
 }

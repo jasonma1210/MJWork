@@ -77,6 +77,7 @@
   "revertConfirm": "撤回",
   "reverted": "已撤回 {n} 个文件的改动",
   "revertFailed": "撤回失败：{error}",
+  "skillUnavailable": "技能「{name}」已启用但读不到正文（技能目录里没有它），本轮不会加载。请到生态中心检查该技能是否已被删除或改名。",
   "logAria": "对话内容",
   "diagramShowSource": "查看图表源码"
 }

@@ -31,7 +31,7 @@ const require = createRequire(import.meta.url);
 const ROOT = path.resolve(import.meta.dirname, '..');
 
 const {
-  toToolDefs, sortedToolDefs, isBlockedToolDef, mergeToolDefs,
+  toToolDefs, sortedToolDefs, isBlockedToolDef, mergeToolDefs, excludeServerTools,
   MAX_TOOL_DESCRIPTION_CHARS, MAX_INPUT_SCHEMA_BYTES, MAX_INPUT_SCHEMA_DEPTH,
   TOOL_DESCRIPTION_TRUNCATION_SUFFIX,
 } = await import(path.join(ROOT, 'shared/mcpToolDefs.mjs'));
@@ -385,5 +385,58 @@ await checkAsync('⑥ 磁盘侧收敛：saveManifest 落盘前截断 description
     eq(mcpNames[0], 'mcp__guard__fine_tool');
   });
 }
+
+// ── 会话级连接器排除（2026-11-04）──────────────────────────────────────────
+// 「+」菜单把某个连接器移出本会话后，它**仍然全局已连接**（断开会把持久化配置一起删），
+// 只能靠剔除工具表来表达。这里钉四件事：按服务名命中、含 `__` 的服务名不被裸切、
+// 空/未给排除表原样放行、解不出服务名的非 MCP 工具不被误删。
+check('⑧ excludeServerTools 按服务名剔除，且不按 `__` 裸切服务名', () => {
+  const defs = sortedToolDefs([
+    { server: 'alpha', tools: [{ name: 'search', description: 'd', inputSchema: { type: 'object' } }] },
+    { server: 'my__svc', tools: [{ name: 'x', description: 'd', inputSchema: { type: 'object' } }] },
+  ]);
+  eq(defs.length, 2, '夹具应产出 2 个工具');
+  const alphaName = defs.find((d) => d.function.name.includes('alpha')).function.name;
+  const svcName = defs.find((d) => d.function.name !== alphaName).function.name;
+
+  const keptAlpha = excludeServerTools(defs, ['alpha']);
+  eq(keptAlpha.length, 1, '排除 alpha 后应剩 1 个');
+  eq(keptAlpha[0].function.name, svcName, '剩下的应是 my__svc 的工具');
+
+  // 关键反向：服务名自带 `__`，裸切会得到 `my`（永远命中不了）
+  const keptSvc = excludeServerTools(defs, ['my__svc']);
+  eq(keptSvc.length, 1, '含 `__` 的服务名必须能命中');
+  eq(keptSvc[0].function.name, alphaName, '剩下的应是 alpha 的工具');
+  // 裸切形态（`my`）不得命中 —— 否则说明实现退化成了朴素切分
+  eq(excludeServerTools(defs, ['my']).length, 2, '裸切服务名不应命中任何工具');
+
+  eq(excludeServerTools(defs, []).length, 2, '空排除表不得过滤');
+  eq(excludeServerTools(defs, undefined).length, 2, '未给排除表不得过滤');
+  eq(excludeServerTools([{ type: 'function', function: { name: 'read_file' } }], ['alpha']).length, 1,
+    '解不出服务名的内置工具不得被误删');
+});
+
+// ⑧ 只证明「过滤器本身对」。这一条证明「它真被接在链上」——纯函数全绿而调用点没接，
+// 正是本项目反复出现的「实现了但没生效」（等价于没实现）。
+check('⑨ 会话级排除真接到运行链：渲染层下发 → 主进程在意图预热合并之后剔除', () => {
+  const hook = fs.readFileSync(path.join(ROOT, 'renderer/src/hooks/useAgentRun.ts'), 'utf8');
+  ok(/mcpExcludeServers:\s*sessionExtras\?\.mcpExcludeServers/.test(hook), 'useAgentRun 未下发 mcpExcludeServers');
+
+  const runner = fs.readFileSync(path.join(ROOT, 'main/agentRunner.js'), 'utf8');
+  const mergeIdx = runner.indexOf('mergeToolDefs(payload.mcpTools');
+  const exclIdx = runner.indexOf('excludeServerTools(mcpMerged');
+  ok(mergeIdx > 0, '找不到合并意图预热的调用点');
+  ok(exclIdx > mergeIdx, '排除必须在合并**之后**：先滤会让预热按「本轮没有它」重新连上并注入');
+  ok(/mcpTools:\s*mcpToolsForRun/.test(runner), 'engineParams.mcpTools 未改用剔除后的结果');
+
+  // 渲染层：Composer 的「×」必须写排除表（只清 mcpServers 就是原来那个假开关）
+  const composer = fs.readFileSync(path.join(ROOT, 'renderer/src/components/Composer.tsx'), 'utf8');
+  ok(/mcpExcludeServers:\s*\[\.\.\.new Set\(\[\.\.\.mcpExcluded, \.\.\.mcpServers\]\)\]/.test(composer),
+    'Composer 的移除按钮未写入 mcpExcludeServers');
+
+  // 契约：字段必须显式登记（拼错字段名 = 静默失效，全靠 passthrough 放行会把这类漂移藏起来）
+  const contract = fs.readFileSync(path.join(ROOT, 'shared-ipc/contract.mjs'), 'utf8');
+  ok(/mcpExcludeServers:\s*z\.array/.test(contract), 'agent:run 契约未登记 mcpExcludeServers');
+});
 
 console.log(`\n结果：${pass}/${total} 通过`);

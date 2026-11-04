@@ -11,7 +11,7 @@
 const { safeParseJson } = require('./jsonSafe');
 const crypto = require('crypto');
 
-const ARTIFACT_KINDS = ['document', 'spec', 'plan', 'custom'];
+const ARTIFACT_KINDS = ['document', 'spec', 'plan', 'custom', 'table'];
 const SNAPSHOT_POLICIES = ['per_patch', 'per_stage', 'manual'];
 
 // 保留章节：`__outline__` 存大纲 JSON（模型索引用），`root` 预留给摘要/索引

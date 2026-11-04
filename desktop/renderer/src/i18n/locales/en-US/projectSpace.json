@@ -37,7 +37,7 @@
   "kind_spec": "Technical spec",
   "kind_plan": "Plan",
   "kind_custom": "Custom",
-  "outline": "Initial sections (one per line)",
+  "kind_table": "Table",  "outline": "Initial sections (one per line)",
   "outlineHint": "Defaults follow the category; edit freely, up to 50 sections",
   "snapshotPolicy": "Snapshot policy",
   "snap_per_patch": "Every edit",

@@ -33,6 +33,7 @@
   "searchConnectors": "搜索连接器",
   "connectFailed": "连接失败",
   "connected": "已连接",
+  "sessionExcluded": "已移出本会话",
   "needsConfig": "待配置",
   "clickToConnect": "点击连接",
   "needsAuth": "需授权",

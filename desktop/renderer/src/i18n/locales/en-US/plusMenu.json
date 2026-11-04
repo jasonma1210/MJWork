@@ -33,6 +33,7 @@
   "searchConnectors": "Search connectors",
   "connectFailed": "Connection failed",
   "connected": "Connected",
+  "sessionExcluded": "Removed from session",
   "needsConfig": "Setup pending",
   "clickToConnect": "Click to connect",
   "needsAuth": "Auth needed",

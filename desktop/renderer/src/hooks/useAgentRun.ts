@@ -805,6 +805,10 @@ export default function useAgentRun(d: UseAgentRunDeps) {
         // T4-3：角色模板运行时预设（生态中心「用此角色开会话」写入 expert.runtime）——
         // 主进程据此过滤工具子集并取「角色与用户设置更严格的」审批档/沙箱
         rolePreset: sessionExtras?.expert?.runtime || undefined,
+        // 2026-11-04：本会话移出的连接器（「+」菜单里点掉的）。连接是进程级全局状态，
+        // 「本会话不用」只能表达为减项；主进程在**合并完意图预热后**才剔除，
+        // 否则预热会把被排除的服务按「本轮没有它」重新连上并注入（见 agentRunner.excludeSessionServers）。
+        mcpExcludeServers: sessionExtras?.mcpExcludeServers?.length ? sessionExtras.mcpExcludeServers : undefined,
         planMode,
         // M6（设计文档 §2/§2.5）：自动判定 single / plan。开启后主进程在启动前做一次
         // 独立小调用（输出 5 个字符，8s 看门狗）；判为 plan（含「拿不准」）就把本轮按

@@ -64,6 +64,10 @@ contextBridge.exposeInMainWorld('mjcode', {
   imSave: (payload) => ipcRenderer.invoke('im:save', payload),
   imDelete: (payload) => ipcRenderer.invoke('im:delete', payload),
   imPair: (payload) => ipcRenderer.invoke('im:pair', payload),
+  imOauthStart: (payload) => ipcRenderer.invoke('im:oauthStart', payload),
+  imOauthCallback: (payload) => ipcRenderer.invoke('im:oauthCallback', payload),
+  imSend: (payload) => ipcRenderer.invoke('im:send', payload),
+  imOnOAuthResult: (callback) => { const fn = (_event, result) => callback(result); ipcRenderer.on('im:oauth-result', fn); return () => ipcRenderer.removeListener('im:oauth-result', fn); },
   gitApplyHunk: (payload) => ipcRenderer.invoke('tool:gitApplyHunk', payload),
   // P0-E：GitHub 最小闭环（gh CLI）
   githubStatus: () => ipcRenderer.invoke('github:status'),

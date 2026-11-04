@@ -192,6 +192,10 @@
  *          三包版本同步由 `test/release-update.test.js` 与 `scripts/preflight-release.mjs` P1 双重守护。
  *          注：本条钉值会随**每次发版**推进，若下次忘记同步，harness-r7 会红 ——
  *          这是刻意的（版本号变更必须显式留痕，不能静默漂移）。
+ *      · 0.8.9-beta 发版批（2026-11-04，前端视觉改版 v3「刻度·青玉」+ IM 对接正式实现 + 数字员工/MCP/Skill 注入链路修复）—— 同一条版本钉值**原地重写**（总数仍 76）：
+ *        → A15b：`0.8.8-beta` → **`0.8.9-beta`**。
+ *          触发：前端全站视觉改版（单一 theme.css token 源 + 五主题）、IM 配置/配对/OAuth 回调/Token 交换/消息收发正式实现、数字员工与 MCP/Skill 加入会话的内容描述修复（用户可感知，patch 推进）；
+ *          三包版本同步由 `test/release-update.test.js` 与 `scripts/preflight-release.mjs` P1 双重守护。
  *
  * 5) 检索类断言一律在 `stripComments()` 后的**代码正文**上计数：注释里出现标识符既能让
  *    「应当成立」的断言假红，也能让「应当不成立」的断言假绿（注释喂饱）。
@@ -817,7 +821,7 @@ function httpHeaderSegments() {
   const proto = stripComments(read('desktop/main/mcpProtocol.js'));
   okTrue('A15a', "已修复：CLIENT_INFO version 不再硬编码 '1.0'（与 package.json 同源）",
     !/CLIENT_INFO\s*=\s*Object\.freeze\(\{[^}]*version:\s*'1\.0'/s.test(proto));
-  ok('A15b', 'desktop/package.json version', JSON.parse(read('desktop/package.json')).version, '0.8.8-beta');
+  ok('A15b', 'desktop/package.json version', JSON.parse(read('desktop/package.json')).version, '0.8.9-beta');
   okTrue('A15c', 'mcpClient 每次 initialize 都发 clientInfo',
     /clientInfo:\s*\{\s*\.\.\.CLIENT_INFO\s*\}/.test(stripComments(read('desktop/main/mcpClient.js'))));
 }

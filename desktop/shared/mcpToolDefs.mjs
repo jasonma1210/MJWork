@@ -40,7 +40,7 @@ import { detectPromptInjection } from './untrustedContent.mjs';
 // 第八轮 F-005 / B1-B-05：工具名**拼名**收敛到 codec（与 agent-core 的反解严格互逆）。
 // 改前这里是内联 `` `mcp__${s}__${t.name}` ``，而 agent-core 反解时把名字按 `__` 切分取服务名 ——
 // 二者不互逆，server 名含 `__` 时调用会静默打到另一个服务上。详见 shared/mcpNameCodec.mjs 文件头。
-import { buildToolName } from './mcpNameCodec.mjs';
+import { buildToolName, decodeToolName } from './mcpNameCodec.mjs';
 
 export { MAX_TOOL_DESCRIPTION_CHARS, MAX_INPUT_SCHEMA_BYTES, MAX_INPUT_SCHEMA_DEPTH };
 
@@ -181,6 +181,34 @@ export function mergeToolDefs(base = [], additions = []) {
 
 /** 后缀再导出：测试与调用方断言「截断后长度」时必须与实现同源，不得二次硬编码。 */
 export { TOOL_DESCRIPTION_TRUNCATION_SUFFIX };
+
+/**
+ * 按服务名剔除工具定义（2026-11-04：会话级连接器排除）。
+ *
+ * 背景：连接器一旦连上就是**进程级全局**状态，「本会话不用某个连接器」无法用「断开」表达
+ * （`mcp:disconnect` 会连 mcp-servers.json 里的持久化配置一起删，点一下就等于永久丢配置），
+ * 只能表达为对工具表的**减项**。调用点必须在「意图预热合并之后」：预热按「本轮 mcpTools
+ * 里没有谁」决定要连谁，先滤会让被排除的服务以「未连接」姿态被重新连上并注入，排除形同虚设。
+ *
+ * 服务名一律经 codec **反解**（不可按 `__` 裸切，理由见 shared/mcpNameCodec.mjs 文件头）。
+ * 解不出服务名的定义**保留**：宁可多给一个工具，也不静默吞掉用户的连接器。
+ *
+ * @param {Array} defs  已合并的工具定义
+ * @param {string[]} serverNames  要剔除的服务名（空/非法 ⇒ 原样返回）
+ * @returns {Array} 新数组（不修改入参）
+ */
+export function excludeServerTools(defs, serverNames) {
+  const list = Array.isArray(defs) ? defs : [];
+  const blocked = new Set((Array.isArray(serverNames) ? serverNames : []).map((n) => String(n || '')).filter(Boolean));
+  if (!blocked.size) return list;
+  return list.filter((t) => {
+    const name = t && t.function && t.function.name;
+    const server = name ? decodeToolName(name) : null;
+    const s = server && server.server;
+    return !s || !blocked.has(s);
+  });
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // F-014 / A16c：结构化输出的**结果侧**策略（用户裁决第三条路：「校验走结构化，展示走文本」）

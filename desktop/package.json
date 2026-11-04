@@ -1,6 +1,6 @@
 {
   "name": "mj-code-desktop",
-  "version": "0.8.8-beta",
+  "version": "0.8.9-beta",
   "description": "MJ Nexus - local-first AI agent desktop workspace",
   "main": "main/main.js",
   "scripts": {
@@ -13,6 +13,8 @@
     "dist:linux": "npm run build --prefix renderer && electron-builder --linux",
     "start": "electron .",
     "test": "node test/run-all.mjs",
+    "test:sandbox:linux": "node -e \"if (process.platform !== 'linux') { console.error('Linux 沙箱真机验证必须在 Linux runner 执行，当前平台=' + process.platform); process.exit(2); }\" && node test/sandbox-crossplatform.test.js",
+    "test:sandbox:macos": "node -e \"if (process.platform !== 'darwin') { console.error('macOS Seatbelt 真机验证必须在 macOS runner 执行，当前平台=' + process.platform); process.exit(2); }\" && MJCODE_REQUIRE_REAL_SANDBOX=1 node test/sandbox.test.js",
     "eval:check": "node eval/run-eval.mjs --check",
     "eval": "node eval/run-eval.mjs",
     "eval:hard": "node eval/run-eval.mjs --tasks eval/tasks-hard.json",
@@ -75,6 +77,14 @@
     ],
     "asarUnpack": [
       "**/node_modules/sql.js/dist/sql-wasm.wasm"
+    ],
+    "protocols": [
+      {
+        "name": "MJ Nexus IM OAuth",
+        "schemes": [
+          "mjcode"
+        ]
+      }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

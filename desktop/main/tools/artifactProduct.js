@@ -20,16 +20,14 @@ const { versionValue } = require('../artifactStore');
 // 产物形态（与三个文档工具一一对应）
 const PRODUCTS = { DOCX: 'docx', XLSX: 'xlsx', PPTX: 'pptx' };
 
-// 工件 kind → 可渲染的产物形态（单一事实来源）。
-// 现状：工件库的 kind 词汇表是「叙述型文档的子类」（document/spec/plan/custom），
-// 四个都是长文正文，因此都能成文（docx）与成稿（pptx）；**没有**任何一个 kind 表达
-// 表格型内容，故 xlsx 不在任何 kind 的白名单里 —— 给 xlsx 传工件一律 fail-closed，
-// 而不是把段落硬塞进单元格。要真正支持表格工件，需要工件库先引入表格型 kind。
+// 工件 kind → 可渲染的产物形态（单一事实来源）。叙述型 kind 仅支持 docx/pptx；
+// table 是唯一的表格型 kind，xlsx 渲染要求章节正文符合严格 JSON 表格 schema。
 const KIND_PRODUCTS = {
   document: ['docx', 'pptx'],
   spec: ['docx', 'pptx'],
   plan: ['docx', 'pptx'],
   custom: ['docx', 'pptx'],
+  table: ['xlsx'],
 };
 
 // pptx 单页要点上限：超过会让版式溢出（pptxgenjs 不会自动分页），余下内容转演讲者备注
@@ -164,8 +162,30 @@ function sectionsToPptxSlides(sections) {
   return slides;
 }
 
+function sectionsToXlsxSheets(sections) {
+  const sheets = [];
+  for (const s of Array.isArray(sections) ? sections : []) {
+    const raw = String(s.content == null ? '' : s.content).trim();
+    if (!raw) continue;
+    let table;
+    try { table = JSON.parse(raw); } catch { return { ok: false, code: 'ARTIFACT_TABLE_SCHEMA_INVALID', error: `表格章节「${String(s.title || s.key || '')}」必须是 JSON` }; }
+    if (!table || typeof table !== 'object' || Array.isArray(table) || !Array.isArray(table.rows)) {
+      return { ok: false, code: 'ARTIFACT_TABLE_SCHEMA_INVALID', error: `表格章节「${String(s.title || s.key || '')}」必须符合 {header?: string[], rows: any[][]} schema` };
+    }
+    const header = table.header == null ? null : table.header;
+    if (header !== null && (!Array.isArray(header) || header.some((v) => typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean'))) {
+      return { ok: false, code: 'ARTIFACT_TABLE_SCHEMA_INVALID', error: `表格章节「${String(s.title || s.key || '')}」的 header 必须是一维标量数组` };
+    }
+    if (table.rows.some((row) => !Array.isArray(row) || row.some((v) => v !== null && typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean'))) {
+      return { ok: false, code: 'ARTIFACT_TABLE_SCHEMA_INVALID', error: `表格章节「${String(s.title || s.key || '')}」的 rows 必须是二维标量数组` };
+    }
+    sheets.push({ name: String(table.name || s.title || s.key || `Sheet${sheets.length + 1}`), ...(header ? { header } : {}), rows: table.rows, ...(Array.isArray(table.widths) ? { widths: table.widths } : {}) });
+  }
+  return sheets.length ? { ok: true, sheets } : { ok: false, code: 'ARTIFACT_TABLE_SCHEMA_INVALID', error: '表格工件没有可渲染的章节' };
+}
+
 module.exports = {
   PRODUCTS, KIND_PRODUCTS, PPTX_MAX_BULLETS,
   setArtifactStoreProvider, resolveArtifactStore,
-  loadArtifactForProduct, sectionsToDocBlocks, sectionsToPptxSlides,
+  loadArtifactForProduct, sectionsToDocBlocks, sectionsToPptxSlides, sectionsToXlsxSheets,
 };

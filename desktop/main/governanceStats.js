@@ -18,6 +18,7 @@
 //   hooks          pre.runs / pre.denied / pre.unavailable / post.runs / post.unavailable
 //   intentPrewarm  runs（有意图）/ noIntent / nativeCovered / targets / connected / toolsAdded / misses
 //   skills         requested / loaded / missed
+//   mcpSession     excluded（本会话移出的连接器被剔除的工具定义数）
 
 'use strict';
 

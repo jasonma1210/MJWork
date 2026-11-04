@@ -33,7 +33,7 @@
   "skillsTip": "会话级技能：{skills}（点击移除）",
   "skillsCount": "{n} 技能",
   "removeSkills": "移除会话级技能",
-  "connectorsTip": "会话级连接器：{names}（点击移除）",
+  "connectorsTip": "本会话加入的连接器：{names}（点击移出本会话；不会删除该连接器的配置）",
   "connectorsCount": "{n} 连接",
   "removeConnectors": "移除会话级连接器",
   "agentsMdTip": "项目规范：{path}",

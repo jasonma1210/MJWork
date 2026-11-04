@@ -258,8 +258,8 @@ async function toolXlsxCreate(args = {}) {
       error: 'artifactId 与 sheets 不能同时给：工作表只能有一个来源。要按工件渲染就删掉 sheets，要手写表格就删掉 artifactId。',
     };
   }
-  // P0-2：工件 → 表格的桥只对「声明支持 xlsx 的 kind」开放。当前工件库的 kind 全是叙述型，
-  // 因此这里必然 fail-closed —— 这是刻意的：把段落硬摊进单元格是静默降级，宁可明确拒绝。
+  // 工件 → 表格仅允许 table kind；正文必须由 artifactProduct 按严格 JSON 表格 schema 解析，
+  // 叙述型工件与未知 kind 继续 fail-closed，避免把段落静默摊进单元格。
   if (String(args.artifactId || '').trim()) {
     const src = artifactProduct.loadArtifactForProduct({
       artifactId: args.artifactId,
@@ -268,12 +268,33 @@ async function toolXlsxCreate(args = {}) {
       store: deps?.getArtifactStore?.(),
     });
     if (src.ok !== true) return src;
-    // 走到这里说明工件库新增了表格型 kind，但表格渲染尚未实现：明确报错，不返回「成功但没落盘」
-    return {
-      ok: false,
-      code: 'ARTIFACT_PRODUCT_NOT_IMPLEMENTED',
-      error: `工件 ${src.artifactId}@${src.version} 可渲染为表格，但表格渲染尚未实现；请改用 sheets 直接传内容`,
-    };
+    const rendered = artifactProduct.sectionsToXlsxSheets(src.sections);
+    if (rendered.ok !== true) return rendered;
+    const sheets = rendered.sheets;
+    const gate = await gateWrite(TOOL_KEYS.xlsx_create, args, absPath);
+    if (gate.ok === false) return gate;
+    try {
+      const wb = new ExcelJS.Workbook();
+      wb.creator = 'MJ Code';
+      wb.created = new Date();
+      let rowsTotal = 0;
+      sheets.forEach((s, i) => {
+        const ws = wb.addWorksheet(String(s.name || `Sheet${i + 1}`).slice(0, 31));
+        const header = Array.isArray(s.header) ? s.header.map((h) => String(h ?? '')) : null;
+        const rows = Array.isArray(s.rows) ? s.rows : [];
+        if (header) { const hr = ws.addRow(header); hr.font = { bold: true }; hr.eachCell((cell) => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } }; }); }
+        rows.forEach((r) => ws.addRow(r));
+        rowsTotal += rows.length;
+        if (header) ws.views = [{ state: 'frozen', ySplit: 1 }];
+        if (Array.isArray(s.widths)) s.widths.forEach((w, ci) => { ws.getColumn(ci + 1).width = Number(w) || 12; });
+        else if (s.autoWidth !== false) applyAutoWidth(ws, Math.max((header || []).length, ...rows.map((r) => r.length), 1));
+      });
+      const buf = await wb.xlsx.writeBuffer();
+      return await writeArtifact(TOOL_KEYS.xlsx_create, args, absPath, Buffer.from(buf), gate.asked, { artifactId: src.artifactId, version: src.version, sheets: sheets.length, rows: rowsTotal });
+    } catch (e) {
+      audit(TOOL_KEYS.xlsx_create, absPath, `error: ${e.message}`, 'error');
+      return { ok: false, error: `生成 Excel 表格失败：${e.message}` };
+    }
   }
   if (!sheets.length) return { ok: false, error: 'sheets 必填（至少一个工作表；或改用 artifactId 从工件渲染）' };
 

@@ -50,8 +50,12 @@ export interface AssistantDispatchProps {
   onAutoRun: (goal: string) => void;
   /** 主体=团队：确定性派活（复用 teams:dispatch） */
   onDispatchTeam?: (p: { teamId: string; goal: string }) => Promise<{ ok?: boolean; tasks?: number; error?: string; code?: string } | undefined>;
-  /** 主体=助手：复用 recruit-expert 链路（落当前会话，见 App） */
-  onDispatchAssistant?: (p: { employee: Employee; goal: string }) => void;
+  /** 主体=助手：复用 recruit-expert 链路（落当前会话，见 App）。
+   *  `runtime` 必须带出去：它是 `rolePreset` 本体（systemPrompt / toolNames / approvalMode /
+   *  sandboxPolicy / skillNames / model）。只传 employee 的话，下游 `sessionExtras.expert.runtime`
+   *  恒为空 —— 员工的人格与工具子集不生效还是次要的，**审批档与沙箱档会被跳过**，
+   *  等于雇了一个「只读 + 完全信任」的员工，运行时却拿到默认档的全部工具。 */
+  onDispatchAssistant?: (p: { employee: Employee; goal: string; runtime?: unknown }) => void;
   /** 从目录/建团回填的预选主体 */
   initialSubject?: Subject;
   initialEmployeeId?: string;
@@ -156,7 +160,11 @@ export default function AssistantDispatch({
       setErr(t('assistant.dispatch.assistantUnavailable', { name: emp.title_cn || emp.name || emp.id }));
       return;
     }
-    onDispatchAssistant?.({ employee: emp, goal: g });
+    // 这里取到的 runtime 就是后续要生效的 rolePreset，必须原样带出去。
+    // 曾经丢在这一行：员工照常「派发成功」、会话照常打开，但 rolePreset 恒为空 —— 静默降级成
+    // 一个普通会话，连审批/沙箱都退回默认档，且没有任何报错（同族缺陷见
+    // test/employee-runtime-chain.test.mjs 的文件头说明）。
+    onDispatchAssistant?.({ employee: emp, goal: g, runtime: rt.rolePreset });
     setNotice(t('assistant.dispatch.assistantDispatched', { name: emp.title_cn || emp.name || emp.id }));
     setGoal('');
   }

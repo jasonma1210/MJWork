@@ -291,7 +291,8 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
           {/* 步骤 1：欢迎 */}
           {step === 0 && (
             <div className="text-center">
-              <h1 className="text-3xl font-semibold mb-3">{t('onboarding.welcomeHeading')}</h1>
+              {/* v3：宋体只留给「仪式感」的两屏（欢迎 / 完成）。步骤标题属于控件标题，走无衬线 */}
+              <h1 className="text-3xl font-semibold mb-3 font-serif">{t('onboarding.welcomeHeading')}</h1>
               <p className="text-text2 text-sm mb-8">{t('onboarding.welcomeSub')}</p>
               <button onClick={next} className="bg-accent-solid text-on-accent px-6 py-3 rounded-xl text-sm">{t('onboarding.startSetup')}</button>
             </div>
@@ -621,7 +622,7 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
               <div className="w-14 h-14 rounded-2xl bg-accent-bg flex items-center justify-center mx-auto mb-4">
                 <IconCheck size={28} className="text-accent" />
               </div>
-              <h2 className="text-2xl font-semibold mb-2">{t('onboarding.readyTitle')}</h2>
+              <h2 className="text-2xl font-semibold mb-2 font-serif">{t('onboarding.readyTitle')}</h2>
               <p className="text-text2 text-sm mb-3">{t('onboarding.readySub')}</p>
               <p className="text-xs text-text2 mb-8">
                 {t('onboarding.readySummary', {

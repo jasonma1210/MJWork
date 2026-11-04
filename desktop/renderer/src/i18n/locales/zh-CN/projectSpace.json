@@ -37,7 +37,7 @@
   "kind_spec": "技术规格",
   "kind_plan": "计划",
   "kind_custom": "自定义",
-  "outline": "初始章节（每行一章）",
+  "kind_table": "表格",  "outline": "初始章节（每行一章）",
   "outlineHint": "按分类带出默认章节，可自行调整，最多 50 章",
   "snapshotPolicy": "版本快照规则",
   "snap_per_patch": "每次修改",

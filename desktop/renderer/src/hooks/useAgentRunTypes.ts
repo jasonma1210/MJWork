@@ -79,6 +79,10 @@ export interface ApprovalSettings {
 export interface SessionExtras {
   expert?: ExpertPromptSource & { runtime?: unknown };
   skillIds?: string[];
+  /** 本会话手动加入的连接器（仅回显用；工具集来自 mcp:listTools 的已连接服务） */
+  mcpServers?: string[];
+  /** 本会话显式移出的连接器：连接是进程级全局状态，「本会话不用」只能是减项，由主进程剔除 */
+  mcpExcludeServers?: string[];
   candidateRoster?: { teamId?: number | string };
 }
 

@@ -33,7 +33,7 @@
   "skillsTip": "Session skills: {skills} (click to remove)",
   "skillsCount": "{n} skills",
   "removeSkills": "Remove session skills",
-  "connectorsTip": "Session connectors: {names} (click to remove)",
+  "connectorsTip": "Connectors joined in this session: {names} (click to remove from this session; the connector's config is kept)",
   "connectorsCount": "{n} connectors",
   "removeConnectors": "Remove session connectors",
   "agentsMdTip": "Project spec: {path}",

@@ -81,6 +81,30 @@ check('① EcosystemModal 取 ecosystem:employeeRuntime 并派发 recruit-expert
   must(src, /!r\?\.ok \|\| !r\.rolePreset/, '预设缺失时的 fail-closed 判断');
 });
 
+// ── ①b 助理工作台派单：同一链路，但入口是 AssistantDispatch ─────────────
+// 为什么单列一条：①守的只有生态中心那一个入口。助理页「派给助手」走的是另一条
+// 组装路径（AssistantDispatch → onDispatchAssistant → App.onDispatchEmployee →
+// recruit-expert），它与①共用后半段，但**前半段各自组装 detail**。实测（2026-11-04）
+// 这条路径两处同时断：dispatchAssistant 拿到 rolePreset 后丢弃，App 又把整个 detail
+// 当 ComposerExtras 落档（ChatArea 恢复时 `{...EMPTY_EXTRAS, ...saved}` 摊不出 expert）。
+// 结果是「派发成功、会话已建、员工不生效、审批沙箱退回默认档」——比没做更糟。
+check('①b 助理页派单同样转发 rolePreset（断了 → 派单成功但员工不生效，且审批/沙箱退回默认档）', () => {
+  const disp = readCode('renderer/src/components/AssistantDispatch.tsx');
+  must(disp, /ecosystemEmployeeRuntime\?\.\(\s*\{\s*id:/, 'ecosystem:employeeRuntime 桥方法调用');
+  must(disp, /!rt\?\.ok \|\| !rt\.rolePreset/, '预设缺失时的 fail-closed 判断');
+  must(disp, /onDispatchAssistant\?\.\(\{\s*employee:\s*emp,\s*goal:\s*g,\s*runtime:\s*rt\.rolePreset\s*\}\)/,
+    'onDispatchAssistant 携带 runtime: rt.rolePreset');
+
+  const app = readCode('renderer/src/App.jsx');
+  must(app, /onDispatchEmployee=\{\(\{\s*employee,\s*goal,\s*runtime\s*\}\)/, 'onDispatchEmployee 解构出 runtime');
+  must(app, /'mjcode:recruit-expert',\s*\{\s*detail:\s*\{[^}]*\.\.\.\(runtime/, 'runtime 并入 recruit-expert 的 detail');
+  // 新会话分支的第三个实参必须是 ComposerExtras（{ expert: detail }），不是 detail 本体
+  must(app, /newThreadInProjectRef\.current\?\.\(null, goal, \{ expert: detail \}\)/,
+    '新会话按 ComposerExtras 形状落档 { expert: detail }');
+  mustNot(app, /newThreadInProjectRef\.current\?\.\(null, goal, detail\)/,
+    '把 detail 本体当 ComposerExtras（expert 会恒为空）');
+});
+
 // ── ② App：监听招募 → 切新会话 → 转发 enable-expert ──────────────────────
 check("② App.jsx 监听 recruit-expert 并转发 enable-expert（断了 → 招募后 rolePreset 恒为空 → 员工实际不生效）", () => {
   const src = readCode('renderer/src/App.jsx');

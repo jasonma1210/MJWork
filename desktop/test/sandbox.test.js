@@ -61,9 +61,12 @@ check('守卫：拦截原因含提示文案', sandbox.checkCommandGuard('read-on
 check('守卫：无命令串不崩', sandbox.checkCommandGuard('read-only', undefined, 'linux', false).blocked === false);
 
 // ── 真实沙箱写入边界（darwin 且 sandbox-exec 存在时执行）──
+const requireRealSandbox = process.env.MJCODE_REQUIRE_REAL_SANDBOX === '1';
+let realSandboxStatus = 'NOT RUN';
 if (process.platform === 'darwin' && fs.existsSync(sandbox.SANDBOX_EXEC)) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-sb-'));
   try {
+    realSandboxStatus = 'RUN';
     // 沙箱内项目目录写：应成功
     const profile = sandbox.buildSeatbeltProfile('workspace-write', repo);
     execFileSync(sandbox.SANDBOX_EXEC, ['-p', profile, '/bin/zsh', '-c', 'echo ok > inside.txt'], { cwd: repo, timeout: 15000 });
@@ -88,12 +91,20 @@ if (process.platform === 'darwin' && fs.existsSync(sandbox.SANDBOX_EXEC)) {
     check('沙箱拒绝项目目录外写入', blocked);
     if (fs.existsSync('/tmp/mjcode-sb-escape-marker')) fs.rmSync('/tmp/mjcode-sb-escape-marker');
   } catch (err) {
-    console.log(`⚠ 真实沙箱探测跳过（环境限制）: ${err.message}`);
+    // 宿主可能禁止 sandbox_apply（例如受限容器）；默认测试记为 BLOCKED，不把未运行算 PASS。
+    realSandboxStatus = 'BLOCKED';
+    console.error(`⚠ Seatbelt 真机探测 BLOCKED（宿主拒绝执行）: ${err.message}`);
+    if (requireRealSandbox) fail++;
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
 } else {
-  console.log('⚠ 非 darwin 或 sandbox-exec 缺失，跳过真实沙箱边界探测');
+  console.log('⚠ Seatbelt 真机探测 NOT RUN（非 darwin 或 sandbox-exec 缺失）');
+  if (requireRealSandbox) fail++;
+}
+
+if (realSandboxStatus !== 'RUN') {
+  console.log(`SANDBOX_REAL_STATUS=${realSandboxStatus}`);
 }
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);

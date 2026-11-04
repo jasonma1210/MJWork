@@ -1,9 +1,9 @@
 {
-  "dark": "Dark",
-  "light": "Light",
-  "midnight": "Midnight",
+  "dark": "Graphite",
+  "light": "Paper",
+  "midnight": "Ink",
   "forest": "Forest",
-  "sunset": "Sunset",
+  "sunset": "Dusk",
   "accentDefault": "Theme default",
   "accentPurple": "Purple",
   "accentBlue": "Blue",

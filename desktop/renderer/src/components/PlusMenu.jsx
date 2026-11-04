@@ -66,7 +66,8 @@ function roleIcon(category) {
  * @typedef {object} PlusMenuExtras
  * @property {any} [expert] 数字员工（三处调用方形状各异：unknown / ComposerExpert / 目录对象）
  * @property {string[]} [skillIds]
- * @property {string[]} [mcpServers]
+ * @property {string[]} [mcpServers] 本会话加入过的连接器（回显用）
+ * @property {string[]} [mcpExcludeServers] 本会话移出的连接器（连接是进程级全局状态，只能用减项表达）
  */
 
 /**
@@ -264,11 +265,35 @@ export default function PlusMenu({
 
   if (!open) return null;
 
+  // 本会话可用连接器数 = 「已加入」− 「已移出」。徽标显示差集而不是 mcpServers.length，
+  // 否则移出后数字纹丝不动，用户看不出这个开关到底有没有生效。
+  const sessionConnectorCount = (extras?.mcpServers || [])
+    .filter((n) => !(extras?.mcpExcludeServers || []).includes(n)).length;
+
   // 技能单选（T5）：skillIds 字段保留数组（旧存档兼容），点击替换首个启用项；
   // 旧多值存档仅首个视为选中，再次点击首个 = 清空
   function toggleSkill(id) {
     const cur = extras?.skillIds || [];
     onExtrasChange?.({ ...extras, skillIds: cur[0] === id ? [] : [id] });
+  }
+
+  // 连接器的「本会话」开关（2026-11-04）：连接本身是进程级全局状态，没法按会话隔离，
+  // 所以这里只动 extras.mcpExcludeServers（减项），由主进程在合并完意图预热后剔除。
+  // 不提供「断开」：mcp:disconnect 会把 mcp-servers.json 里该服务的配置一起删掉，
+  // 拿它当「本会话不用」用 = 用户点一下勾就永久丢配置。
+  function toggleSession(name) {
+    const ex = extras?.mcpExcludeServers || [];
+    const joined = extras?.mcpServers || [];
+    if (ex.includes(name)) {
+      // 加回本会话：清掉排除项，并补进「已加入」列表（回显与 Composer 徽标都读它）
+      onExtrasChange?.({
+        ...extras,
+        mcpExcludeServers: ex.filter((x) => x !== name),
+        mcpServers: joined.includes(name) ? joined : [...joined, name],
+      });
+      return;
+    }
+    onExtrasChange?.({ ...extras, mcpExcludeServers: [...ex, name] });
   }
 
   async function connectServer(payload) {
@@ -277,7 +302,14 @@ export default function PlusMenu({
       const r = await window.mjcode.mcpConnect(payload);
       if (r?.ok) {
         const cur = extras?.mcpServers || [];
-        if (!cur.includes(payload.name)) onExtrasChange?.({ ...extras, mcpServers: [...cur, payload.name] });
+        // 连上即视为「本会话要用」：此前把它移出会话的排除项必须一并清掉，
+        // 否则用户重新连接后仍然拿不到工具（排除项还在，主进程照旧剔除）。
+        const ex = (extras?.mcpExcludeServers || []).filter((x) => x !== payload.name);
+        onExtrasChange?.({
+          ...extras,
+          mcpExcludeServers: ex,
+          mcpServers: cur.includes(payload.name) ? cur : [...cur, payload.name],
+        });
       } else {
         setConnectErr(r?.error || tr('plusMenu.connectFailed'));
       }
@@ -294,7 +326,12 @@ export default function PlusMenu({
       const r = await window.mjcode?.mcpReconnect?.({ name });
       if (r?.ok) {
         const cur = extras?.mcpServers || [];
-        if (!cur.includes(name)) onExtrasChange?.({ ...extras, mcpServers: [...cur, name] });
+        // 同 connectServer：重连成功即视为本会话要用，清掉同名排除项
+        onExtrasChange?.({
+          ...extras,
+          mcpExcludeServers: (extras?.mcpExcludeServers || []).filter((x) => x !== name),
+          mcpServers: cur.includes(name) ? cur : [...cur, name],
+        });
         // 通知 App 重建工具集（既有通道：生态中心连接/断开也用同一个事件）
         window.dispatchEvent(new Event('mjcode:mcp-tools-dirty'));
       } else {
@@ -325,7 +362,7 @@ export default function PlusMenu({
             badge={extras?.skillIds?.length ? tr('plusMenu.skillCount', { n: extras.skillIds.length }) : null}
             onClick={() => setPanel('skills')} />
           <MenuRow Icon={IconPlug} label={tr('plusMenu.connectors')} hasSub
-            badge={extras?.mcpServers?.length ? tr('plusMenu.connectorCount', { n: extras.mcpServers.length }) : null}
+            badge={sessionConnectorCount ? tr('plusMenu.connectorCount', { n: sessionConnectorCount }) : null}
             onClick={() => setPanel('connectors')} />
           {/* M5 / T5-4：军团派活（选团队 → 缺统筹补齐 → 派活三件 → 创建 run）。
               2026-10-29：与菜单里的「项目空间」原本并列，会被误读为两个开工入口；项目空间入口
@@ -439,13 +476,15 @@ export default function PlusMenu({
               const vals = cfgVals[c.id] || {};
               const plan = buildLaunchPlan(c, vals);
               const connected = connectedServers.includes(c.name);
-              const inSession = extras?.mcpServers?.includes(c.name);
+              const excluded = (extras?.mcpExcludeServers || []).includes(c.name);
+              // inSession = 已连接 **且** 没被本会话移出（连接器没有「会话内单独连接」这回事）
+              const inSession = connected && !excluded;
               // 已写进 mcp-servers.json = 已配置（不依赖目录 install 信息；ima 这类 manual 条目也适用）
               const configured = savedNameSet.has(String(c.name));
               const busy = reconnecting === c.name;
               const cfgOpen = cfgId === c.id; // 命名避开 props 参数 open，防遮蔽
               const status = busy ? tr('plusMenu.connecting')
-                : connected ? tr('plusMenu.connected')
+                : connected ? (excluded ? tr('plusMenu.sessionExcluded') : tr('plusMenu.connected'))
                 : configured ? tr('plusMenu.configured')
                 : plan.kind === 'ready' ? tr('plusMenu.clickToConnect')
                 : plan.kind === 'needs-auth' ? tr('plusMenu.needsAuth')
@@ -470,13 +509,15 @@ export default function PlusMenu({
                 <div key={c.id} className="border-b border-border last:border-0">
                   <button
                     onClick={() => {
-                      if (connected || busy) return;
+                      if (busy) return;
+                      // 已连接 = 本会话开关：点一下移出本会话，再点加回来（不动磁盘配置、不删服务）
+                      if (connected) { toggleSession(c.name); return; }
                       // 已配置（含目录外自定义服务）：按名重连，不需要再走目录启动计划
                       if (configured) { reconnectSaved(c.name); return; }
                       if (plan.kind === 'ready') { connectServer({ name: c.name, ...plan.payload }); return; }
                       setCfgId(cfgOpen ? null : c.id);
                     }}
-                    disabled={connected || busy}
+                    disabled={busy}
                     className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-hover disabled:opacity-60"
                   >
                     <IconPlug size={13} className={inSession ? 'text-accent shrink-0' : 'text-text2 shrink-0'} />

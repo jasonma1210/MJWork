@@ -94,7 +94,12 @@ export default function Composer({
   // 会话级扩展的两个列表：提成局部变量，既让「是否非空」判定与下面渲染的是同一份数据，
   // 也避免每处都写 `(extras?.skillIds || [])` 而各自发散。
   const skillIds = extras?.skillIds || [];
-  const mcpServers = extras?.mcpServers || [];
+  // 连接器：`mcpServers` 是「本会话加入过的」，`mcpExcludeServers` 是「本会话移出的」。
+  // 显示的是差集 —— 移出不是清空历史（清空会让「+」菜单里再也看不到它曾经加入过），
+  // 而是把名字记进排除表，由主进程在合并完意图预热后剔除（见 agentRunner.excludeSessionServers）。
+  const mcpExcluded = extras?.mcpExcludeServers || [];
+  const mcpJoined = extras?.mcpServers || [];
+  const mcpServers = mcpJoined.filter((n) => !mcpExcluded.includes(n));
   // 分步报告里的「下一步」：提前取出，让嵌套在 onClick 回调里的引用也能被类型收窄
   // （直接把 `planReport.next` 写在回调里，TS 会认为属性可能在被调用时已变）。
   const planNext = planReport?.next || null;
@@ -337,7 +342,12 @@ export default function Composer({
             })}>
             <IconPlug size={11} />
             {t('composer.connectorsCount', { n: mcpServers.length })}
-            <button onClick={() => onExtrasChange?.({ ...(extras || {}), mcpServers: [] })} aria-label={t('composer.removeConnectors')} className="hover:opacity-70">
+            <button onClick={() => onExtrasChange?.({
+              ...(extras || {}),
+              // 记进排除表而不是清空 mcpServers：清空后「+」菜单里的勾选态会一起消失，
+              // 用户既看不出自己移出过什么，也无法「再点一下加回来」。
+              mcpExcludeServers: [...new Set([...mcpExcluded, ...mcpServers])],
+            })} aria-label={t('composer.removeConnectors')} className="hover:opacity-70">
               <IconX size={10} />
             </button>
           </span>

@@ -44,11 +44,27 @@ function listSkills(skillsDir) {
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// 读取单个技能完整内容
+// 解析「技能名 → 目录名」。**两条键都认**：目录名优先，其次 frontmatter 的 name。
+// 为什么必须双路（2026-11-04 审查实锤）：listSkills 下发的是 `{ name: meta.name || dir, dir }`，
+// 而渲染层的启用集 enabledSkills 存的是**用户看到的那个名字**。手写/导入的技能包经常
+// 目录叫 `code-review`、frontmatter 叫 `Code Review Helper` —— 只按目录拼路径时
+// `skills:get` 直接返回 null，技能从清单里静默消失（引擎侧看不到它，模型自然也不会加载），
+// 用户界面上却仍是「已启用」。创建技能时两者一致，所以这条只在导入场景暴露，更隐蔽。
+function resolveSkillDir(skillsDir, name) {
+  const key = String(name || '').trim();
+  if (!key) return null;
+  // ① 目录名直查（含路径安全判定，防 ../ 穿越；isSafeSkillDirName 是函数声明，已提升）
+  if (isSafeSkillDirName(key) && fs.existsSync(path.join(skillsDir, key, 'SKILL.md'))) return key;
+  // ② frontmatter name 兜底（大小写敏感：name 是用户可见的标识，不做模糊匹配以免误命中）
+  const hit = listSkills(skillsDir).find((s) => s.name === key);
+  return hit ? hit.dir : null;
+}
+
+// 读取单个技能完整内容（name 可为目录名或 frontmatter name）
 function getSkill(skillsDir, name) {
-  const file = path.join(skillsDir, name, 'SKILL.md');
-  if (!fs.existsSync(file)) return null;
-  return fs.readFileSync(file, 'utf8');
+  const dir = resolveSkillDir(skillsDir, name);
+  if (!dir) return null;
+  return fs.readFileSync(path.join(skillsDir, dir, 'SKILL.md'), 'utf8');
 }
 
 // 按技能名批量读取内容（数字员工 starter_skills 的运行时挂载用）：
@@ -161,5 +177,5 @@ function isSafeSkillDirName(name) {
 }
 
 module.exports = {
-  parseFrontmatter, listSkills, getSkill, loadSkillContents, createSkill, updateSkill, deleteSkill,
+  parseFrontmatter, listSkills, getSkill, resolveSkillDir, loadSkillContents, createSkill, updateSkill, deleteSkill,
 };

@@ -441,8 +441,17 @@ function startAgentRun(payload, sender) {
     // 位置有意选在此处：此处已能拿到本轮会话文本（payload.messages）与主进程 mcp 能力，
     // 且尚未把 mcpTools 交给引擎；失败 fail-open 返回空数组，绝不阻塞本轮启动。
     // N5：合并工具定义（按 function.name 去重、base 优先）同样取自 shared 单一实现。
-    const { mergeToolDefs } = await intentMcp.loadMcpToolDefs();
+    const { mergeToolDefs, excludeServerTools } = await intentMcp.loadMcpToolDefs();
     const dynamicMcpTools = await intentPrewarmToolDefs(payload);
+    // 会话级连接器排除必须在**合并之后**（2026-11-04）：连接是进程级全局状态，
+    // 「本会话不用某个连接器」只能表达为减项；若在渲染层先滤掉，意图预热会按
+    // 「本轮 mcpTools 里没有它」把该服务重新连上并注入 —— 排除形同虚设。
+    const mcpMerged = mergeToolDefs(payload.mcpTools || [], dynamicMcpTools);
+    const mcpToolsForRun = excludeServerTools(mcpMerged, payload.mcpExcludeServers);
+    // N9 观测：与 intentPrewarm 同一计数面，否则「排除了多少个」在真机上无从查证
+    if (mcpToolsForRun.length !== mcpMerged.length) {
+      governanceStats.incr('mcpSession', 'excluded', mcpMerged.length - mcpToolsForRun.length);
+    }
     // T3-7：引擎可序列化参数与回调群抽为共享对象——in-process 与子进程两条路径同源，
     // 杜绝「改一处漏一处」的路径漂移（子进程路径经 RPC 传 params，回调在主进程侧执行）。
     const engineParams = {
@@ -450,8 +459,9 @@ function startAgentRun(payload, sender) {
       // 详见 resolveRunHistory 的注释——刷新前后必须发给模型同一份 prompt。
       messages: resolveRunHistory(payload),
       model: payload.model,
-      // 渲染层本已重建的 mcpTools 在前，意图预热补入的在后；按 function.name 去重（base 优先）。
-      mcpTools: mergeToolDefs(payload.mcpTools || [], dynamicMcpTools),
+      // 渲染层本已重建的 mcpTools 在前，意图预热补入的在后；按 function.name 去重（base 优先），
+      // 最后剔除用户在本会话里显式移出的连接器（mcpExcludeServers）。
+      mcpTools: mcpToolsForRun,
       // M3 §8.6：知识片段追加在 BASE_PROMPT 之后（appendSystemPrompt 是**追加**语义，
       // 不是替换——替换会丢掉「能用哪些工具 / 默认目录 / 路径怎么给」整段，见 append-system-prompt 事故）。
       // 未选知识时为 undefined，引擎侧行为与注入前完全一致（零影响）。

@@ -15,7 +15,10 @@ export interface ComposerProject {
 export interface ComposerExtras {
   expert?: { name?: string; title_cn?: string; mission?: string } | null;
   skillIds?: string[];
+  /** 本会话**手动加入**的连接器（连接器一旦连上就是进程级全局状态，这里只作回显） */
   mcpServers?: string[];
+  /** 本会话**显式移出**的连接器：连接无法按会话隔离，只能表达为减项（agentRunner 侧剔除） */
+  mcpExcludeServers?: string[];
 }
 
 /** 选中的军团（编制）：徽标只回显，派活参数由 ChatArea 在发送时补缺省 */

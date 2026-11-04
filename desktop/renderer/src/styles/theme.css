@@ -3,254 +3,280 @@
 @tailwind utilities;
 
 /* ══════════════════════════════════════════════════════════════
-   换肤系统（v2）
+   换肤系统（v3 —— 「刻度 · 青玉」，2026-11-04 全站视觉改版）
    --------------------------------------------------------------
-   约定（2026-10-17 视觉修复）：
+   约定（必须遵守，改色只改本文件）：
    · 每个颜色 token 提供 **两份**：`--x`（hex/rgba，给 CSS、SVG、JS 用）
      与 `--x-rgb`（`r g b` 三元组，给 Tailwind 的 `/opacity` 用）。
-     原因：Tailwind v3 无法对 `var(--hex)` 应用透明度修饰符，
-     `bg-accent/10`、`border-accent/40` 这类类会**整个不生成**，
-     带 `border` 的元素随即回退到 preflight 的 #e5e7eb（暗底上的亮白细边）。
-   · 新增/改色只改本文件，组件内一律禁止十六进制（ui-conventions 门禁）。
+     Tailwind v3 无法对 `var(--hex)` 应用透明度修饰符，`border-accent/40`
+     这类类会**整个不生成**，带 border 的元素随即回退到 preflight 的 #e5e7eb。
+   · 组件内一律禁止十六进制（ui-conventions 门禁，基线 0）。
    · 角色分工固定：`accent` = 文字/图标/描边；`accent-solid` = 实心按钮底；
      `on-accent` = 实心底上的字；`*-soft` 只作前景，`*-bg` 只作背景。
+
+   ── v3 改版的三条主张（与 v2 的差别都写在这里，避免下次又被「顺手调色」）──
+   ① **中性色从暖灰改冷石灰**：v2 是 #17171A/#E8E8E3（偏黄绿），长时间看发闷，
+      且与高饱和强调色同屏时整体显脏。v3 收到几乎无彩度的冷石灰（#111416/#E8EDEB），
+      让唯一的彩色（玉）成为画面上**唯一**的注意力出口。
+      刻意**不偏蓝**：项目此前明确否决过蓝调界面（v2 注释「绝不出现蓝」），
+      故冷感靠「低彩度 + 微绿偏移」实现，不靠蓝通道。
+   ② **强调色只干一件事：标记「可点」**。v2 的苔绿 #7FA98F 在底上只有 6.79:1，
+      比次要文字 #B7B7B0 的 8.87:1 **还暗** —— 密集界面里「哪能点」反而比「哪是说明」
+      更不显眼，只能靠猜。v3 提到 #43BFA2（暗）/ #17715E（亮），
+      对 bg 实算 7.91:1 / 5.45:1 —— 深色档高于自身 text2（7.20:1），
+      「可点」第一次在明度上压过「次要说明」。浅色档做不到（5.45 < 7.28）：
+      深色字压在浅底上时主色必然比中灰字暗，那里改靠**色相 + 实心底**区分（同一份
+      中性灰阶下，唯一带彩度的就是可点项），这也是浅色主题必须配 accent-solid 的原因。
+      语义色严格各归其位：玉=可交互、绿=成功、琥珀=注意、珊瑚=危险、钢灰=信息。
+      （info 刻意不用蓝，同上一条；它只出现 8 处，中性钢灰足够。）
+   ③ **五套主题收敛成同一族**：v2 的 midnight/forest/sunset 各自带紫/荧光绿/橙，
+      等于五个产品。v3 一律「石灰底 + 玉」——主题只回答「底多深、多暖」，
+      不回答「产品是什么颜色」；个人化交给设置里的自定义强调色（mj_accent）。
    ══════════════════════════════════════════════════════════════ */
 
-/* ── 暗色（默认，对齐 MJWork 原型 dark：背景 #17171A / 面板 #1E1E21 / 墨色 #E8E8E3 / 苔绿主色 #7FA98F）── */
+/* ── 石墨（默认，冷石灰 / 中性档）──
+   五套主题的底色刻意拉开距离：只换强调色等于没换（用户看不出区别就认为功能坏了）。
+   底色两两 RGB 欧氏距离下限 10（现算最小 12.1 = 石墨↔深林，最大 24.3 = 石墨↔墨青）；
+   ⑫ 钉住距离、⑨ 保证设置页色卡等于这里的真实 token。 */
 :root {
-  --theme-bg: #17171A;            --theme-bg-rgb: 23 23 26;
-  --theme-sidebar: #1B1B1E;       --theme-sidebar-rgb: 27 27 30;
-  --theme-surface: #1E1E21;       --theme-surface-rgb: 30 30 33;
-  --surface-input: #15151A;       --surface-input-rgb: 21 21 26;
-  --theme-border: #2C2C30;        --theme-border-rgb: 44 44 48;
-  --border-strong: #3A3A3E;       --border-strong-rgb: 58 58 62;
-  --surface-raise: #242428;       --surface-raise-rgb: 36 36 40;
+  --theme-bg: #131719;            --theme-bg-rgb: 19 23 25;
+  --theme-sidebar: #171C1E;       --theme-sidebar-rgb: 23 28 30;
+  --theme-surface: #1C2224;       --theme-surface-rgb: 28 34 36;
+  --surface-input: #0F1214;       --surface-input-rgb: 15 18 20;
+  --theme-border: #2B3235;        --theme-border-rgb: 43 50 53;
+  --border-strong: #3E484B;       --border-strong-rgb: 62 72 75;
+  --surface-raise: #22282A;       --surface-raise-rgb: 34 40 42;
 
-  --theme-text: #E8E8E3;          --theme-text-rgb: 232 232 227;
-  --theme-text-secondary: #B7B7B0; --theme-text2-rgb: 183 183 176;
-  --theme-text-disabled: #8B8B84;  --theme-text-disabled-rgb: 139 139 132;
+  --theme-text: #E8EDEB;          --theme-text-rgb: 232 237 235;
+  --theme-text-secondary: #9BA6A4; --theme-text2-rgb: 155 166 164;
+  --theme-text-disabled: #6B7674;  --theme-text-disabled-rgb: 107 118 116;
 
-  --theme-accent: #7FA98F;        --theme-accent-rgb: 127 169 143;
-  --theme-accent-solid: #7FA98F;  --theme-accent-solid-rgb: 127 169 143;
-  --theme-on-accent: #14171A;     --theme-on-accent-rgb: 20 23 26;
-  --theme-accent-soft: #A8C9B5;   --theme-accent-soft-rgb: 168 201 181;
+  --theme-accent: #43BFA2;        --theme-accent-rgb: 67 191 162;
+  --theme-accent-solid: #2FA98D;  --theme-accent-solid-rgb: 47 169 141;
+  /* 实心玉底上的字用近黑而不是白：白字在 accent 上只有 2.3:1、在 accent-solid 上 2.9:1，
+     近黑在 accent-solid 上有 6.6:1。这一对不是手挑的，lib/color.ts 的 readableSolid
+     会为任意自定义色重算（见 test/theme-accent.test.mjs ③⑤） */
+  --theme-on-accent: #06110E;     --theme-on-accent-rgb: 6 17 14;
+  --theme-accent-soft: #8AD9C6;   --theme-accent-soft-rgb: 138 217 198;
 
-  --theme-hover: #242428;         --theme-hover-rgb: 36 36 40;
-  --theme-code-bg: #1A1A1E;
-  /* 选中态：苔绿淡底 + 苔绿字（去除旧蓝调，对齐原型「绝不出现蓝」） */
-  --theme-select-bg: rgba(127, 169, 143, 0.16);
-  --theme-select-fg: #A8C9B5;     --theme-select-fg-rgb: 168 201 181;
+  --theme-hover: #22282A;         --theme-hover-rgb: 34 40 42;
+  --theme-code-bg: #0F1214;
+  --theme-select-bg: rgba(67, 191, 162, 0.16);
+  --theme-select-fg: #8AD9C6;     --theme-select-fg-rgb: 138 217 198;
 }
 
+/* ── 纸白（冷白纸，不是米黄纸：米黄 + 宋体 = 杂志感，会与代码内容打架）── */
 [data-theme="light"] {
-  --theme-bg: #F3F3EF;            --theme-bg-rgb: 243 243 239;
-  --theme-sidebar: #ECECE6;       --theme-sidebar-rgb: 236 236 230;
+  --theme-bg: #F5F6F6;            --theme-bg-rgb: 245 246 246;
+  --theme-sidebar: #EFF1F1;       --theme-sidebar-rgb: 239 241 241;
   --theme-surface: #FFFFFF;       --theme-surface-rgb: 255 255 255;
-  --surface-input: #F0F0EA;       --surface-input-rgb: 240 240 234;
-  --theme-border: #E2E2DC;        --theme-border-rgb: 226 226 220;
-  --border-strong: #CFCFC5;       --border-strong-rgb: 207 207 197;
+  --surface-input: #F0F2F2;       --surface-input-rgb: 240 242 242;
+  --theme-border: #E1E5E5;        --theme-border-rgb: 225 229 229;
+  --border-strong: #C9CFCF;       --border-strong-rgb: 201 207 207;
   --surface-raise: #FFFFFF;       --surface-raise-rgb: 255 255 255;
 
-  --theme-text: #141412;          --theme-text-rgb: 20 20 18;
-  --theme-text-secondary: #4C4C46; --theme-text2-rgb: 76 76 70;
-  --theme-text-disabled: #7B7B72;  --theme-text-disabled-rgb: 123 123 114;
+  --theme-text: #12161A;          --theme-text-rgb: 18 22 26;
+  --theme-text-secondary: #4A5356; --theme-text2-rgb: 74 83 86;
+  --theme-text-disabled: #7C8588;  --theme-text-disabled-rgb: 124 133 136;
 
-  --theme-accent: #2E4B3C;        --theme-accent-rgb: 46 75 60;
-  --theme-accent-solid: #2E4B3C;  --theme-accent-solid-rgb: 46 75 60;
-  --theme-on-accent: #F5F5EF;     --theme-on-accent-rgb: 245 245 239;
-  --theme-accent-soft: #3E6350;   --theme-accent-soft-rgb: 62 99 80;
+  --theme-accent: #17715E;        --theme-accent-rgb: 23 113 94;
+  --theme-accent-solid: #17715E;  --theme-accent-solid-rgb: 23 113 94;
+  --theme-on-accent: #F1FAF7;     --theme-on-accent-rgb: 241 250 247;
+  --theme-accent-soft: #2A8F78;   --theme-accent-soft-rgb: 42 143 120;
 
-  --theme-hover: #ECECE6;         --theme-hover-rgb: 236 236 230;
-  --theme-code-bg: #F6F6F2;
-  --theme-select-bg: rgba(46, 75, 60, 0.10);
-  --theme-select-fg: #2E4B3C;     --theme-select-fg-rgb: 46 75 60;
+  --theme-hover: #EDF0F0;         --theme-hover-rgb: 237 240 240;
+  --theme-code-bg: #F1F4F4;
+  --theme-select-bg: rgba(23, 113, 94, 0.11);
+  --theme-select-fg: #17715E;     --theme-select-fg-rgb: 23 113 94;
 }
 
+/* ── 墨青（最深一档：近墨黑，OLED / 夜间专注用）── */
 [data-theme="midnight"] {
-  --theme-bg: #0a0e1a;            --theme-bg-rgb: 10 14 26;
-  --theme-sidebar: #0f1525;       --theme-sidebar-rgb: 15 21 37;
-  --theme-surface: #162033;       --theme-surface-rgb: 22 32 51;
-  --surface-input: #111a2b;       --surface-input-rgb: 17 26 43;
-  --theme-border: #24365a;        --theme-border-rgb: 36 54 90;
-  --border-strong: #2a3a5c;       --border-strong-rgb: 42 58 92;
-  --surface-raise: #1b2640;       --surface-raise-rgb: 27 38 64;
+  --theme-bg: #06090A;            --theme-bg-rgb: 6 9 10;
+  --theme-sidebar: #090D0F;       --theme-sidebar-rgb: 9 13 15;
+  --theme-surface: #0D1416;       --theme-surface-rgb: 13 20 22;
+  --surface-input: #040607;       --surface-input-rgb: 4 6 7;
+  --theme-border: #172326;        --theme-border-rgb: 23 35 38;
+  --border-strong: #264043;       --border-strong-rgb: 38 64 67;
+  --surface-raise: #121B1D;       --surface-raise-rgb: 18 27 29;
 
-  --theme-text: #e0e6f0;          --theme-text-rgb: 224 230 240;
-  --theme-text-secondary: #7c8bae; --theme-text2-rgb: 124 139 174;
-  --theme-text-disabled: #5f6e8c;  --theme-text-disabled-rgb: 95 110 140;
+  --theme-text: #DDE9E6;          --theme-text-rgb: 221 233 230;
+  --theme-text-secondary: #8B9E9B; --theme-text2-rgb: 139 158 155;
+  --theme-text-disabled: #5D6E6B;  --theme-text-disabled-rgb: 93 110 107;
 
-  --theme-accent: #818cf8;        --theme-accent-rgb: 129 140 248;
-  --theme-accent-solid: #4f46e5;  --theme-accent-solid-rgb: 79 70 229;
-  --theme-on-accent: #ffffff;     --theme-on-accent-rgb: 255 255 255;
-  --theme-accent-soft: #a5b4fc;   --theme-accent-soft-rgb: 165 180 252;
+  --theme-accent: #4FD0B2;        --theme-accent-rgb: 79 208 178;
+  --theme-accent-solid: #3BB89B;  --theme-accent-solid-rgb: 59 184 155;
+  --theme-on-accent: #04100D;     --theme-on-accent-rgb: 4 16 13;
+  --theme-accent-soft: #96E2CF;   --theme-accent-soft-rgb: 150 226 207;
 
-  --theme-hover: #1a2742;         --theme-hover-rgb: 26 39 66;
-  --theme-code-bg: #0d1424;
-  --theme-select-bg: rgba(96, 140, 255, 0.20);
-  --theme-select-fg: #c7d8ff;     --theme-select-fg-rgb: 199 216 255;
+  --theme-hover: #121B1D;         --theme-hover-rgb: 18 27 29;
+  --theme-code-bg: #040607;
+  --theme-select-bg: rgba(79, 208, 178, 0.15);
+  --theme-select-fg: #96E2CF;     --theme-select-fg-rgb: 150 226 207;
 }
 
+/* ── 深林（绿石灰：比石墨暖、更「潮」，不是荧光绿主题）── */
 [data-theme="forest"] {
-  --theme-bg: #0c120e;            --theme-bg-rgb: 12 18 14;
-  --theme-sidebar: #111a14;       --theme-sidebar-rgb: 17 26 20;
-  --theme-surface: #16241c;       --theme-surface-rgb: 22 36 28;
-  --surface-input: #101a14;       --surface-input-rgb: 16 26 20;
-  --theme-border: #27412f;        --theme-border-rgb: 39 65 47;
-  --border-strong: #2a4433;       --border-strong-rgb: 42 68 51;
-  --surface-raise: #1b2a1f;       --surface-raise-rgb: 27 42 31;
+  --theme-bg: #0A1E15;            --theme-bg-rgb: 10 30 21;
+  --theme-sidebar: #0E2419;       --theme-sidebar-rgb: 14 36 25;
+  --theme-surface: #132B20;       --theme-surface-rgb: 19 43 32;
+  --surface-input: #071710;       --surface-input-rgb: 7 23 16;
+  --theme-border: #1C3628;        --theme-border-rgb: 28 54 40;
+  --border-strong: #2C4E3B;       --border-strong-rgb: 44 78 59;
+  --surface-raise: #172F23;       --surface-raise-rgb: 23 47 35;
 
-  --theme-text: #dce8dd;          --theme-text-rgb: 220 232 221;
-  --theme-text-secondary: #86a68d; --theme-text2-rgb: 134 166 141;
-  --theme-text-disabled: #5e7a66;  --theme-text-disabled-rgb: 94 122 102;
+  --theme-text: #E3EDE7;          --theme-text-rgb: 227 237 231;
+  --theme-text-secondary: #95A79F; --theme-text2-rgb: 149 167 159;
+  --theme-text-disabled: #64766D;  --theme-text-disabled-rgb: 100 118 109;
 
-  --theme-accent: #22c55e;        --theme-accent-rgb: 34 197 94;
-  --theme-accent-solid: #15803d;  --theme-accent-solid-rgb: 21 128 61;
-  --theme-on-accent: #ffffff;     --theme-on-accent-rgb: 255 255 255;
-  --theme-accent-soft: #86efac;   --theme-accent-soft-rgb: 134 239 172;
+  --theme-accent: #4CBF8E;        --theme-accent-rgb: 76 191 142;
+  --theme-accent-solid: #3AA877;  --theme-accent-solid-rgb: 58 168 119;
+  --theme-on-accent: #04130C;     --theme-on-accent-rgb: 4 19 12;
+  --theme-accent-soft: #8FD9B6;   --theme-accent-soft-rgb: 143 217 182;
 
-  --theme-hover: #1a2e22;         --theme-hover-rgb: 26 46 34;
-  --theme-code-bg: #0e1811;
-  --theme-select-bg: rgba(96, 140, 255, 0.16);
-  --theme-select-fg: #c7d8ff;     --theme-select-fg-rgb: 199 216 255;
+  --theme-hover: #172F23;         --theme-hover-rgb: 23 47 35;
+  --theme-code-bg: #071710;
+  --theme-select-bg: rgba(76, 191, 142, 0.15);
+  --theme-select-fg: #8FD9B6;     --theme-select-fg-rgb: 143 217 182;
 }
 
+/* ── 暮石（暖石灰：色温偏棕，强调色仍是玉 —— 「暖底 + 玉」而不是「暖底 + 橙」）── */
 [data-theme="sunset"] {
-  --theme-bg: #1a0f0a;            --theme-bg-rgb: 26 15 10;
-  --theme-sidebar: #241612;       --theme-sidebar-rgb: 36 22 18;
-  --theme-surface: #2e1c16;       --theme-surface-rgb: 46 28 22;
-  --surface-input: #24150f;       --surface-input-rgb: 36 21 15;
-  --theme-border: #4a3026;        --theme-border-rgb: 74 48 38;
-  --border-strong: #4a3026;       --border-strong-rgb: 74 48 38;
-  --surface-raise: #38231b;       --surface-raise-rgb: 56 35 27;
+  --theme-bg: #17120E;            --theme-bg-rgb: 23 18 14;
+  --theme-sidebar: #1C1713;       --theme-sidebar-rgb: 28 23 19;
+  --theme-surface: #231C16;       --theme-surface-rgb: 35 28 22;
+  --surface-input: #120E0A;       --surface-input-rgb: 18 14 10;
+  --theme-border: #322A22;        --theme-border-rgb: 50 42 34;
+  --border-strong: #4A3E32;       --border-strong-rgb: 74 62 50;
+  --surface-raise: #29211A;       --surface-raise-rgb: 41 33 26;
 
-  --theme-text: #f0e0d8;          --theme-text-rgb: 240 224 216;
-  --theme-text-secondary: #b0907f; --theme-text2-rgb: 176 144 127;
-  --theme-text-disabled: #7d6255;  --theme-text-disabled-rgb: 125 98 85;
+  --theme-text: #EFE7DE;          --theme-text-rgb: 239 231 222;
+  --theme-text-secondary: #AC9E8E; --theme-text2-rgb: 172 158 142;
+  --theme-text-disabled: #7B6E60;  --theme-text-disabled-rgb: 123 110 96;
 
-  --theme-accent: #f97316;        --theme-accent-rgb: 249 115 22;
-  --theme-accent-solid: #c2410c;  --theme-accent-solid-rgb: 194 65 12;
-  --theme-on-accent: #ffffff;     --theme-on-accent-rgb: 255 255 255;
-  --theme-accent-soft: #fdba74;   --theme-accent-soft-rgb: 253 186 116;
+  --theme-accent: #5BBFA4;        --theme-accent-rgb: 91 191 164;
+  --theme-accent-solid: #45A98D;  --theme-accent-solid-rgb: 69 169 141;
+  --theme-on-accent: #08120F;     --theme-on-accent-rgb: 8 18 15;
+  --theme-accent-soft: #96D8C6;   --theme-accent-soft-rgb: 150 216 198;
 
-  --theme-hover: #33201a;         --theme-hover-rgb: 51 32 26;
-  --theme-code-bg: #21120c;
-  --theme-select-bg: rgba(96, 140, 255, 0.18);
-  --theme-select-fg: #c7d8ff;     --theme-select-fg-rgb: 199 216 255;
+  --theme-hover: #29211A;         --theme-hover-rgb: 41 33 26;
+  --theme-code-bg: #120E0A;
+  --theme-select-bg: rgba(91, 191, 164, 0.16);
+  --theme-select-fg: #96D8C6;     --theme-select-fg-rgb: 150 216 198;
 }
 
 /* ── 语义层（L2）：组件唯一可用层，禁止在组件内写十六进制色 ── */
 :root {
-  --sem-success: #4ade80;         --sem-success-rgb: 74 222 128;
-  --sem-danger: #D8655C;          --sem-danger-rgb: 216 101 92;
-  --sem-danger-solid: #c4342a;    --sem-danger-solid-rgb: 196 52 42;
-  --sem-warn: #C79A52;            --sem-warn-rgb: 199 154 82;
-  --sem-info: #8ab4f8;            --sem-info-rgb: 138 180 248;
-  --sem-overlay: rgba(0, 0, 0, 0.6);
-  --sem-accent: #7FA98F;          --sem-accent-rgb: 127 169 143;
-  --sem-focus: #7FA98F;          --sem-focus-rgb: 127 169 143;
+  /* 成功用「偏黄的绿」而不是玉青：与 accent 拉开 70° 色相差，
+     否则徽标里「成功」和「可点击」在小尺寸下会分不清 */
+  --sem-success: #74C65B;         --sem-success-rgb: 116 198 91;
+  --sem-danger: #E4695E;          --sem-danger-rgb: 228 105 94;
+  --sem-danger-solid: #C0392B;    --sem-danger-solid-rgb: 192 57 43;
+  --sem-warn: #D9A24B;            --sem-warn-rgb: 217 162 75;
+  --sem-info: #8E9AA0;            --sem-info-rgb: 142 154 160;
+  --sem-overlay: rgba(6, 8, 9, 0.62);
+  --sem-accent: #43BFA2;          --sem-accent-rgb: 67 191 162;
+  --sem-focus: #43BFA2;           --sem-focus-rgb: 67 191 162;
   /* 淡底（Tailwind v3 对纯 CSS 变量色不支持 /opacity，故单独提供底色 token） */
-  --sem-accent-bg: rgba(127, 169, 143, 0.14);
-  --sem-danger-bg: rgba(216, 101, 92, 0.13);
-  --sem-success-bg: rgba(74, 222, 128, 0.15);
-  --sem-warn-bg: rgba(199, 154, 82, 0.14);
-  --sem-info-bg: rgba(138, 180, 248, 0.12);
-  /* 开关圆点（components/ui/Switch.tsx 专用，P1-9 问题 #4）：
-     此前 7 处开关的滑块都写死 `bg-white`，在浅色主题的 `bg-hover` 轨道上几乎同色（看不见）。
-     拆成「填充 + 描边」两份 token：暗色沿用原视觉（白点 + 主题边框色），
-     浅色把描边加深一档保证可辨——不新增十六进制，只新增 token。 */
-  --sem-knob: #ffffff;            --sem-knob-rgb: 255 255 255;
-  --sem-knob-ring: #2E4B3C;       --sem-knob-ring-rgb: 46 75 60;
-  /* 注：`-rgb` 变体当前**无消费方**（Switch 只用 hex 版）。保留它们是为了满足
-     「每个颜色 token 必须 hex + rgb 双份」的纪律——一旦有人用 /opacity 修饰符
-     （rgb(var(--x-rgb) / .5)）就能直接复用，不必再补。宁留不删。 */
-}
-
-[data-theme="midnight"] {
-  --sem-success: #34d399;         --sem-success-rgb: 52 211 153;
-  --sem-danger: #f87171;          --sem-danger-rgb: 248 113 113;
-  --sem-danger-solid: #b91c1c;    --sem-danger-solid-rgb: 185 28 28;
-  --sem-warn: #fbbf24;            --sem-warn-rgb: 251 191 36;
-  --sem-info: #93c5fd;            --sem-info-rgb: 147 197 253;
-  --sem-overlay: rgba(0, 0, 0, 0.65);
-  --sem-accent: #818cf8;          --sem-accent-rgb: 129 140 248;
-  --sem-focus: #93c5fd;           --sem-focus-rgb: 147 197 253;
-  --sem-accent-bg: rgba(129, 140, 248, 0.14);
-  --sem-danger-bg: rgba(248, 113, 113, 0.13);
-  --sem-success-bg: rgba(52, 211, 153, 0.14);
-  --sem-warn-bg: rgba(251, 191, 36, 0.14);
-  --sem-info-bg: rgba(147, 197, 253, 0.12);
-  --sem-knob: #ffffff;            --sem-knob-rgb: 255 255 255;
-  --sem-knob-ring: #24365a;       --sem-knob-ring-rgb: 36 54 90;
-}
-
-[data-theme="forest"] {
-  --sem-success: #4ade80;         --sem-success-rgb: 74 222 128;
-  --sem-danger: #f87171;          --sem-danger-rgb: 248 113 113;
-  --sem-danger-solid: #b91c1c;    --sem-danger-solid-rgb: 185 28 28;
-  --sem-warn: #fbbf24;            --sem-warn-rgb: 251 191 36;
-  --sem-info: #7dd3fc;            --sem-info-rgb: 125 211 252;
-  --sem-overlay: rgba(0, 0, 0, 0.65);
-  --sem-accent: #22c55e;          --sem-accent-rgb: 34 197 94;
-  --sem-focus: #7dd3fc;           --sem-focus-rgb: 125 211 252;
-  --sem-accent-bg: rgba(34, 197, 94, 0.13);
-  --sem-danger-bg: rgba(248, 113, 113, 0.13);
-  --sem-success-bg: rgba(74, 222, 128, 0.14);
-  --sem-warn-bg: rgba(251, 191, 36, 0.14);
-  --sem-info-bg: rgba(125, 211, 252, 0.12);
-  --sem-knob: #ffffff;            --sem-knob-rgb: 255 255 255;
-  --sem-knob-ring: #27412f;       --sem-knob-ring-rgb: 39 65 47;
-}
-
-[data-theme="sunset"] {
-  --sem-success: #34d399;         --sem-success-rgb: 52 211 153;
-  --sem-danger: #f97066;          --sem-danger-rgb: 249 112 102;
-  --sem-danger-solid: #b3271e;    --sem-danger-solid-rgb: 179 39 30;
-  --sem-warn: #fbbf24;            --sem-warn-rgb: 251 191 36;
-  --sem-info: #93c5fd;            --sem-info-rgb: 147 197 253;
-  --sem-overlay: rgba(0, 0, 0, 0.65);
-  --sem-accent: #f97316;          --sem-accent-rgb: 249 115 22;
-  --sem-focus: #93c5fd;           --sem-focus-rgb: 147 197 253;
-  --sem-accent-bg: rgba(249, 115, 22, 0.14);
-  --sem-danger-bg: rgba(249, 112, 102, 0.13);
-  --sem-success-bg: rgba(52, 211, 153, 0.14);
-  --sem-warn-bg: rgba(251, 191, 36, 0.14);
-  --sem-info-bg: rgba(147, 197, 253, 0.12);
-  --sem-knob: #ffffff;            --sem-knob-rgb: 255 255 255;
-  --sem-knob-ring: #4a3026;       --sem-knob-ring-rgb: 74 48 38;
+  --sem-accent-bg: rgba(67, 191, 162, 0.14);
+  --sem-danger-bg: rgba(228, 105, 94, 0.13);
+  --sem-success-bg: rgba(116, 198, 91, 0.14);
+  --sem-warn-bg: rgba(217, 162, 75, 0.14);
+  --sem-info-bg: rgba(142, 154, 160, 0.13);
+  /* 开关圆点（components/ui/Switch.tsx 专用）：拆「填充 + 描边」两份，
+     浅色主题白点在浅轨道上会看不见，故描边单独加深。 */
+  --sem-knob: #FFFFFF;            --sem-knob-rgb: 255 255 255;
+  --sem-knob-ring: #17715E;       --sem-knob-ring-rgb: 23 113 94;
 }
 
 [data-theme="light"] {
-  --sem-success: #16a34a;         --sem-success-rgb: 22 163 74;
+  --sem-success: #1F7A34;         --sem-success-rgb: 31 122 52;
   --sem-danger: #B3261E;          --sem-danger-rgb: 179 38 30;
-  --sem-danger-solid: #dc2626;    --sem-danger-solid-rgb: 220 38 38;
-  --sem-warn: #A9761F;            --sem-warn-rgb: 169 118 31;
-  --sem-info: #1d4ed8;            --sem-info-rgb: 29 78 216;
-  --sem-overlay: rgba(0, 0, 0, 0.35);
-  --sem-accent: #2E4B3C;          --sem-accent-rgb: 46 75 60;
-  --sem-focus: #2E4B3C;          --sem-focus-rgb: 46 75 60;
-  --sem-accent-bg: rgba(46, 75, 60, 0.10);
-  --sem-danger-bg: rgba(179, 38, 30, 0.10);
-  --sem-success-bg: rgba(22, 163, 74, 0.12);
-  --sem-warn-bg: rgba(169, 118, 31, 0.12);
-  --sem-info-bg: rgba(29, 78, 216, 0.10);
-  /* 浅色主题：白点在 #e8e8e8 轨道上看不见（问题 #4 的根因）→ 描边单独加深到 --border-strong 档 */
-  --sem-knob: #ffffff;            --sem-knob-rgb: 255 255 255;
-  --sem-knob-ring: #c9c9c9;       --sem-knob-ring-rgb: 201 201 201;
+  --sem-danger-solid: #C0392B;    --sem-danger-solid-rgb: 192 57 43;
+  --sem-warn: #8A5A12;            --sem-warn-rgb: 138 90 18;
+  --sem-info: #4A5356;            --sem-info-rgb: 74 83 86;
+  --sem-overlay: rgba(18, 22, 26, 0.38);
+  --sem-accent: #17715E;          --sem-accent-rgb: 23 113 94;
+  --sem-focus: #17715E;           --sem-focus-rgb: 23 113 94;
+  --sem-accent-bg: rgba(23, 113, 94, 0.10);
+  --sem-danger-bg: rgba(179, 38, 30, 0.09);
+  --sem-success-bg: rgba(31, 122, 52, 0.10);
+  --sem-warn-bg: rgba(138, 90, 18, 0.10);
+  --sem-info-bg: rgba(74, 83, 86, 0.09);
+  --sem-knob: #FFFFFF;            --sem-knob-rgb: 255 255 255;
+  --sem-knob-ring: #C9CFCF;       --sem-knob-ring-rgb: 201 207 207;
 }
 
-/* ── 圆角四档 + 两档扩展（sm/小控件 · md/按钮输入框 · lg/卡片 · xl/模态）
-   Tailwind 的 borderRadius 直接引用这些变量，改一处即全局生效 ── */
+[data-theme="midnight"] {
+  --sem-success: #7CCB62;         --sem-success-rgb: 124 203 98;
+  --sem-danger: #E97267;          --sem-danger-rgb: 233 114 103;
+  --sem-danger-solid: #B23A2C;    --sem-danger-solid-rgb: 178 58 44;
+  --sem-warn: #DCAA55;            --sem-warn-rgb: 220 170 85;
+  --sem-info: #8B9E9B;            --sem-info-rgb: 139 158 155;
+  --sem-overlay: rgba(4, 8, 9, 0.66);
+  --sem-accent: #4FD0B2;          --sem-accent-rgb: 79 208 178;
+  --sem-focus: #4FD0B2;           --sem-focus-rgb: 79 208 178;
+  --sem-accent-bg: rgba(79, 208, 178, 0.14);
+  --sem-danger-bg: rgba(233, 114, 103, 0.13);
+  --sem-success-bg: rgba(124, 203, 98, 0.13);
+  --sem-warn-bg: rgba(220, 170, 85, 0.13);
+  --sem-info-bg: rgba(143, 163, 160, 0.13);
+  --sem-knob: #FFFFFF;            --sem-knob-rgb: 255 255 255;
+  --sem-knob-ring: #172326;       --sem-knob-ring-rgb: 23 35 38;
+}
+
+[data-theme="forest"] {
+  --sem-success: #7BC95F;         --sem-success-rgb: 123 201 95;
+  --sem-danger: #E4695E;          --sem-danger-rgb: 228 105 94;
+  --sem-danger-solid: #B63B2E;    --sem-danger-solid-rgb: 182 59 46;
+  --sem-warn: #D6A24F;            --sem-warn-rgb: 214 162 79;
+  --sem-info: #95A79F;            --sem-info-rgb: 149 167 159;
+  --sem-overlay: rgba(5, 9, 7, 0.64);
+  --sem-accent: #4CBF8E;          --sem-accent-rgb: 76 191 142;
+  --sem-focus: #4CBF8E;           --sem-focus-rgb: 76 191 142;
+  --sem-accent-bg: rgba(76, 191, 142, 0.14);
+  --sem-danger-bg: rgba(228, 105, 94, 0.13);
+  --sem-success-bg: rgba(123, 201, 95, 0.13);
+  --sem-warn-bg: rgba(214, 162, 79, 0.13);
+  --sem-info-bg: rgba(152, 168, 160, 0.13);
+  --sem-knob: #FFFFFF;            --sem-knob-rgb: 255 255 255;
+  --sem-knob-ring: #21302A;       --sem-knob-ring-rgb: 33 48 42;
+}
+
+[data-theme="sunset"] {
+  --sem-success: #79C463;         --sem-success-rgb: 121 196 99;
+  --sem-danger: #E2685C;          --sem-danger-rgb: 226 104 92;
+  --sem-danger-solid: #B93C2C;    --sem-danger-solid-rgb: 185 60 44;
+  --sem-warn: #D39E4C;            --sem-warn-rgb: 211 158 76;
+  --sem-info: #AC9E8E;            --sem-info-rgb: 172 158 142;
+  --sem-overlay: rgba(8, 6, 4, 0.64);
+  --sem-accent: #5BBFA4;          --sem-accent-rgb: 91 191 164;
+  --sem-focus: #5BBFA4;           --sem-focus-rgb: 91 191 164;
+  --sem-accent-bg: rgba(91, 191, 164, 0.14);
+  --sem-danger-bg: rgba(226, 104, 92, 0.13);
+  --sem-success-bg: rgba(121, 196, 99, 0.13);
+  --sem-warn-bg: rgba(211, 158, 76, 0.13);
+  --sem-info-bg: rgba(167, 156, 142, 0.13);
+  --sem-knob: #FFFFFF;            --sem-knob-rgb: 255 255 255;
+  --sem-knob-ring: #322A22;       --sem-knob-ring-rgb: 50 42 34;
+}
+
+/* ── 圆角 / 阴影 / 动效 / 字体 / 层级 ──
+   v3 只动两档圆角：lg（卡片）10 → 12、xl（浮层）14 → 16。
+   sm/md 刻意不动 —— Button/Input 全部走 rounded-md，改了等于全站按钮换形，
+   收益是 1px 的观感差，不值得冒这份回归风险。 */
 :root {
   --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
-  --radius-2xl: 16px;
-  --radius-3xl: 20px;
-  /* 阴影三档（light 主题另乘 0.6 定义） */
-  --shadow-menu: 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.30);
-  --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.55);
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 18px;
+  --radius-3xl: 22px;
+  /* 阴影三档：v3 收紧扩散半径 —— 发丝线负责结构，阴影只负责「浮起来」，
+     不再兼任「卡片边界」。深色下比 v2 更收敛，浅色下更淡。 */
+  --shadow-menu: 0 2px 8px rgba(4, 6, 7, 0.30);
+  --shadow-pop: 0 12px 32px rgba(4, 6, 7, 0.42), 0 1px 3px rgba(4, 6, 7, 0.28);
+  --shadow-modal: 0 20px 52px rgba(4, 6, 7, 0.50);
   /* 动效（硬约束：禁弹跳曲线，收敛三档） */
   --dur-fast: 100ms;
   --dur-base: 150ms;
@@ -264,34 +290,21 @@
 [data-platform="darwin"] { --titlebar-inset: 80px; }
 
 [data-theme="light"] {
-  --shadow-menu: 0 4px 12px rgba(20, 20, 18, 0.10);
-  --shadow-pop: 0 14px 36px rgba(20, 20, 18, 0.16), 0 2px 8px rgba(20, 20, 18, 0.08);
-  --shadow-modal: 0 24px 60px rgba(20, 20, 18, 0.20);
+  --shadow-menu: 0 2px 8px rgba(18, 22, 26, 0.08);
+  --shadow-pop: 0 12px 30px rgba(18, 22, 26, 0.13), 0 1px 3px rgba(18, 22, 26, 0.07);
+  --shadow-modal: 0 20px 50px rgba(18, 22, 26, 0.17);
 }
 
-/* ── 阶段 0 token 补丁（2026-10-24 追加）：纯增量，零既有值改动 ──
-   依据：deliverables/mjwork-one-person-company/styles/tokens.css，
-         docs/MJWork-前端按原型统一改造-方案与取舍-2026-10-24.md §4（差异表）/ §6（阶段 0）。
-   纪律三条：
-     1) 只**新增**，不动既有 token。刻意不碰：--shadow-pop / --shadow-menu / --shadow-modal
-        的现有值、5 套主题的 --theme-* / --radius-* / --z-* / --dur-*、主色与默认明暗。
-     2) 新增颜色 token 一律「本体 + -rgb 三元组」双份 —— Tailwind v3 无法对 var(--hex)
-        应用 /opacity，bg-x/10 这类类会**整个不生成**，带 border 的元素回调到 preflight
-        的 #e5e7eb（暗色界面上的莫名亮白细边）。
-     3) -rgb 必须是**空格分隔的 r g b**（如 `13 13 13`），不能是 rgba(...)、也不能是逗号分隔。 */
+/* ── 填充三档：hover / 选中 / 按下 分层用（中性半透明，五套主题通用）── */
 :root {
-  /* 填充三档：解决「hover 与选中态只能二选一」。既有只有 --theme-hover 一档，
-     同一张列表里 hover 铺满与 selected 底色必然互抢。深色主题取白色半透明、
-     浅色主题取黑色半透明（中性色，故 5 套主题下都成立；不做固定色相，
-     以便与用户自选强调色共存）。 */
   --sem-fill-1: rgba(255, 255, 255, 0.04);  --sem-fill-1-rgb: 255 255 255;
   --sem-fill-2: rgba(255, 255, 255, 0.07);  --sem-fill-2-rgb: 255 255 255;
   --sem-fill-3: rgba(255, 255, 255, 0.12);  --sem-fill-3-rgb: 255 255 255;
-  /* 衬线字族：原型最强的观感来源之一 —— 标题用衬线、UI chrome 用无衬线是最省成本的
-     「产品气质」分层。全仓 font-serif 此前零命中 ⇒ 纯增量，零回归面。 */
+  /* 衬线字族：v3 起**只用于阅读与仪式感**（对话正文、文档预览、欢迎页），
+     不再全局套 h1–h6 —— 控件标题用宋体是 v2 的破绽（模态框标题与正文不同族，
+     且 Onboarding 里 text-3xl 的宋体读起来像杂志封面而不是产品界面）。 */
   --font-serif: 'Songti SC', 'STSong', 'Noto Serif CJK SC', serif;
-  /* 动效曲线：只取 ease-out。原型另有 --ease-spring（弹跳）被**刻意不引入** ——
-     本文件明令「禁弹跳曲线」，且下方 prefers-reduced-motion 已全局降级。 */
+  /* 动效曲线：只取 ease-out（弹跳曲线仍禁） */
   --ease-out: cubic-bezier(.16, 1, .3, 1);
   /* 布局尺寸：**已评估并否决，勿直接启用**（本轮只留 token，不接任何消费方）。
      否决原因不是门禁 —— 没有任何测试断言 h-11 或侧栏宽度；真实原因有两条：
@@ -305,15 +318,14 @@
   --ref-sidebar-w: 232px;
   --ref-topbar-h: 56px;
   --view-max: 1280px;
-  /* 暖调浮层阴影：原型 --shadow-pop 是暖黑 rgba(20,20,18,...)，现有是纯黑 ——
-     **同名不同色相基**，直接覆盖会波及所有 popover。故另开名字，由新页面按需选用。 */
-  --shadow-pop-warm: 0 14px 36px rgba(20, 20, 18, 0.16), 0 2px 8px rgba(20, 20, 18, 0.08);
+  /* 暖调浮层阴影：暮石主题若要用暖影，另开名字（同名覆盖会波及所有 popover）。 */
+  --shadow-pop-warm: 0 12px 32px rgba(20, 17, 14, 0.34), 0 1px 3px rgba(20, 17, 14, 0.24);
 }
 
 [data-theme="light"] {
-  --sem-fill-1: rgba(26, 26, 26, 0.04);  --sem-fill-1-rgb: 26 26 26;
-  --sem-fill-2: rgba(26, 26, 26, 0.07);  --sem-fill-2-rgb: 26 26 26;
-  --sem-fill-3: rgba(26, 26, 26, 0.12);  --sem-fill-3-rgb: 26 26 26;
+  --sem-fill-1: rgba(18, 22, 26, 0.035);  --sem-fill-1-rgb: 18 22 26;
+  --sem-fill-2: rgba(18, 22, 26, 0.06);   --sem-fill-2-rgb: 18 22 26;
+  --sem-fill-3: rgba(18, 22, 26, 0.10);   --sem-fill-3-rgb: 18 22 26;
 }
 
 /* ── 层级层（L3）：禁止裸 z-index ──
@@ -344,11 +356,7 @@
      它与上面的 `:focus-visible`（同为 0-1-0）争的是同一条声明，靠书写顺序决胜；
      一旦某个文件顺序变化，焦点环就静默消失——实测全站 68 处 `outline-none`。
    ─ 用「元素选择器 + 伪类」（0-1-1）稳压 utility 类（0-1-0），不依赖顺序。
-   ─ 2026-11-03 二次调整（用户反馈 4「输入框点进去有一圈黑框，去掉」）：
-     原方案是 2px 实色 outline（--sem-focus），在浅色主题里读起来就是「输入框里套了一圈黑框」，
-     且与组件自己的 `focus:border-accent` 叠成三重指示，视觉重量过载。
-     改为**边框换主色 + 3px 同色淡环**：焦点依然一眼可见（键盘用户不受影响），
-     但描边从硬线条降为容器级的柔和提示。 */
+   ─ v3：淡环改为 3px 同色 --sem-accent-bg，边框换主色 —— 焦点一眼可见，但不画硬黑框。 */
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
@@ -374,29 +382,35 @@ body {
   /* 显式中日韩回退链：Windows 上 -apple-system/Segoe UI 缺中文字形时不再随机回落 */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-size: 13px;
+  /* v3：等宽数字。全仓大量「token 数 / 耗时 / 版本号 / 模型参数」在列表与表格里纵向排列，
+     比例数字会让小数点与位数错位，读起来像没对齐。一行属性解决，无组件改动。 */
+  font-variant-numeric: tabular-nums;
   background: var(--theme-bg);
   color: var(--theme-text);
   overflow: hidden;
 }
 
-/* MJWork 原型：标题用衬线（Songti SC），与 13px 的 UI chrome 明确分层 —— 产品气质的主要来源 */
-h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); font-weight: 600; }
+/* v3 起**不再**全局给 h1–h6 套宋体（v2 的做法会让模态框标题、面板标题、设置分区标题
+   一起变成宋体，与 13px 无衬线正文不同族，控件因此读起来「不像控件」）。
+   宋体只留给阅读与仪式感：对话正文、文档预览、欢迎页标题 —— 见下方各自的规则。 */
+h1, h2, h3, h4, h5, h6 { font-weight: 600; }
 
 /* 选中文字：用 accent 淡底，避免系统默认蓝与主题冲突 */
 ::selection { background: var(--sem-accent-bg); color: var(--theme-text); }
 
-/* 滚动条：滚动容器保留沟槽位，内容变长时不再横向抖动 */
+/* 滚动条：滚动容器保留沟槽位，内容变长时不再横向抖动。
+   v3：滑块改用 --sem-fill-3 —— 原来的 --theme-border 在新冷灰底上几乎看不见（尤其石墨/墨青）。 */
 [class*="overflow-y-auto"], [class*="overflow-auto"], [class*="overflow-y-scroll"] { scrollbar-gutter: stable; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--theme-border); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--sem-fill-3); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 
 /* 消息气泡（旧类保留：外部引用与回归断言仍在用） */
 .msg-user {
   background: var(--theme-surface);
   border: 1px solid var(--theme-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 12px 16px;
 }
 .msg-assistant { padding: 4px 0; }
@@ -408,6 +422,8 @@ h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); font-weight: 600; }
   color: var(--theme-text);
   overflow-wrap: anywhere;
 }
+/* 阅读态标题用宋体：这是宋体在本产品里唯一「该出现」的地方之一（另一处是文档预览） */
+.msg-prose h1, .msg-prose h2, .msg-prose h3 { font-family: var(--font-serif); }
 /* 次要正文：思考过程 / 工具输出等「过程性内容」，必须与正式答复在视觉上分层
  * （用户需求 2026-10-30）：字号降一档 15 → 13px，颜色由 --theme-text 降到 --theme-text-secondary（浅灰）。
  * 标题同样整体降档，否则思考里出现 `## xxx` 时会比答复标题还大，分层立刻失效。 */
@@ -415,7 +431,10 @@ h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); font-weight: 600; }
   font-size: 13px;
   line-height: 1.65;
   color: var(--theme-text-secondary);
+  /* 过程性内容回到无衬线：它是「日志」，不是「文章」 */
+  font-family: inherit;
 }
+.msg-prose-quiet h1, .msg-prose-quiet h2, .msg-prose-quiet h3 { font-family: inherit; }
 .msg-prose-quiet h1 { font-size: 16px; }
 .msg-prose-quiet h2 { font-size: 15px; }
 .msg-prose-quiet h3 { font-size: 14px; }
@@ -439,7 +458,8 @@ h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); font-weight: 600; }
 /* ── Markdown 表格（GFM）与公式（KaTeX）──
    2026-11-03（用户反馈 6）：回复里的表格此前只用浏览器默认样式 —— 没有边框、没有内边距，
    三列以上就挤成一团无法对照；公式则根本不解析，`$...$` 原样显示成美元符号。
-   表格规则同时覆盖对话正文（.msg-prose）与文件预览（.markdown-body）两处容器。 */
+   表格规则同时覆盖对话正文（.msg-prose）与文件预览（.markdown-body）两处容器。
+   v3：表头改为「发丝底 + 无竖线」，竖线只留行分隔 —— 密集表格里满格网格会把数据压没。 */
 .msg-prose table, .markdown-body table {
   border-collapse: collapse;
   width: 100%;
@@ -457,7 +477,7 @@ h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); font-weight: 600; }
   vertical-align: top;
 }
 .msg-prose th, .markdown-body th {
-  background: var(--theme-hover);
+  background: var(--sem-fill-2);
   font-weight: 600;
   /* 表头不换行：列宽由内容决定时，窄列的表头折行会让整张表看着高低不齐 */
   white-space: nowrap;
@@ -477,7 +497,7 @@ h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); font-weight: 600; }
 
 /* Markdown 排版（旧规则，供 .msg-assistant 等容器沿用） */
 .msg-assistant p, .msg-user p { margin: 4px 0; line-height: 1.6; }
-.msg-assistant h1, .msg-assistant h2, .msg-assistant h3 { margin: 12px 0 6px; }
+.msg-assistant h1, .msg-assistant h2, .msg-assistant h3 { margin: 12px 0 6px; font-family: var(--font-serif); }
 .msg-assistant ul, .msg-assistant ol { margin: 4px 0 4px 20px; }
 .msg-assistant li { margin: 2px 0; }
 .msg-assistant blockquote {
@@ -489,9 +509,9 @@ h1, h2, h3, h4, h5, h6 { font-family: var(--font-serif); font-weight: 600; }
 
 /* 代码块 */
 pre {
-  background: var(--theme-code-bg, #1a1a1a);
+  background: var(--theme-code-bg, #0D1012);
   border: 1px solid var(--theme-border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 12px;
   overflow-x: auto;
   font-size: 13px;
@@ -500,16 +520,14 @@ pre {
 }
 code { font-family: var(--font-mono); }
 :not(pre) > code {
-  background: var(--theme-hover);
+  background: var(--sem-fill-2);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   color: var(--theme-text);
 }
 
-/* 输入框
-   （2026-11-03 删除 `textarea:focus { outline: none }`：它会把键盘焦点的最后一道可视提示关掉，
-     焦点样式统一由上面的 :focus-visible 组承担。） */
+/* 输入框（焦点样式统一由上方 :focus-visible 组承担，此处不覆盖） */
 
 /* 启动页进度线：宽度 160px 的容器内从左生长（scaleX，不触发重排） */
 @keyframes splash-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
@@ -529,9 +547,13 @@ code { font-family: var(--font-mono); }
 
 /* ── Markdown 预览排版（右侧文件预览 / 应用内 md 文件查看）──
    仅作用于 .markdown-body 容器：对话气泡沿用上方既有的 .msg-assistant 规则，
-   二者互不影响（预览栏正文不套气泡，字号与行距按阅读态给到更宽松的值）。 */
+   二者互不影响（预览栏正文不套气泡，字号与行距按阅读态给到更宽松的值）。
+   v3：标题恢复宋体 —— 文档预览是「读文档」，与对话正文同一套声音。 */
 .markdown-body { color: var(--theme-text); font-size: 14px; line-height: 1.7; }
 .markdown-body > :first-child { margin-top: 0; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  font-family: var(--font-serif);
+}
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
 .markdown-body h4, .markdown-body h5, .markdown-body h6 {
   margin: 18px 0 8px; font-weight: 600; line-height: 1.35;
@@ -556,5 +578,5 @@ code { font-family: var(--font-mono); }
 .markdown-body hr { border: 0; border-top: 1px solid var(--theme-border); margin: 16px 0; }
 .markdown-body table { border-collapse: collapse; margin: 12px 0; display: block; overflow-x: auto; }
 .markdown-body th, .markdown-body td { border: 1px solid var(--theme-border); padding: 6px 10px; text-align: left; }
-.markdown-body th { background: var(--theme-hover); font-weight: 600; }
-.markdown-body img { max-width: 100%; border-radius: 8px; }
+.markdown-body th { background: var(--sem-fill-2); font-weight: 600; }
+.markdown-body img { max-width: 100%; border-radius: var(--radius-md); }

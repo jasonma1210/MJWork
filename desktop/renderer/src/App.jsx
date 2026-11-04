@@ -227,7 +227,10 @@ export default function App() {
       setShowSettings(false);
       setShowEcosystem(false);
       if (needThread && goal) {
-        newThreadInProjectRef.current?.(null, goal, detail);
+        // 第三个参数是 **ComposerExtras**（见 composerTypes.ts），不是 detail 本身：
+        // ChatArea 恢复时做 `{ ...EMPTY_EXTRAS, ...saved }`，直接塞 detail 只会把员工的
+        // title_cn/mission 摊到 extras 顶层，`expert` 仍为空 ⇒ 同一条「派了但不生效」Bug。
+        newThreadInProjectRef.current?.(null, goal, { expert: detail });
         return;
       }
       if (needThread) setActiveThread(null);
@@ -559,10 +562,12 @@ export default function App() {
         {showAssistant && <ErrorBoundary compact><AssistantPage
   tab={assistantTab} onTab={(t) => navDispatch({ type: 'assistantTab', tab: t })} threadId={activeThreadId} projectPath={activeProject?.path} projectId={activeProject?.id || null} onOpenFile={openFileInPane} onPickProject={() => setShowProjectPicker(true)}
   onAutoRun={(goal) => { newThreadInProject(null, goal); }}
-  onDispatchEmployee={({ employee, goal }) => {
+  onDispatchEmployee={({ employee, goal, runtime }) => {
     // 复用生态中心「用此角色开会话」的既有链路（mjcode:recruit-expert），
     // 不在助理页另起第二条派活实现；rolePreset 由主进程返回，渲染层不构造。
-    window.dispatchEvent(new CustomEvent('mjcode:recruit-expert', { detail: { ...employee, goal } }));
+    // runtime 必须转进 detail：ChatArea 写 sessionExtras.expert=detail，useAgentRun 再取
+    // detail.runtime 当 rolePreset。丢在这里与丢在 AssistantDispatch 是同一个后果（员工不生效、无报错）。
+    window.dispatchEvent(new CustomEvent('mjcode:recruit-expert', { detail: { ...employee, goal, ...(runtime ? { runtime } : {}) } }));
   }}
   onDispatchTeam={async ({ teamId, goal }) => window.mjcode?.teamsDispatch?.({
     teamId, goal, threadId: activeThreadId, projectPath: activeProject?.path || '' })}

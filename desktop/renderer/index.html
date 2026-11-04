@@ -62,12 +62,16 @@
     /* TH6b：theme.css（经 main.jsx import 的外部样式）加载前的预绘背景，消除冷启动白屏/闪变。
        背景由上方内联主题脚本写出的 data-theme 驱动；这些 hex 必须与 styles/theme.css
        各 [data-theme] 的 --theme-bg 保持一致，改主题底色时两处同改。
+       v3（2026-11-04）：此前这里写的是 #0d0d0d，而 theme.css 的默认底色是 #17171A ——
+       冷启动会先黑一下再跳到暖灰，属于「两处同改」纪律被漏掉的一次。现已对齐到 v3 的一组
+       （石墨 #131719 / 纸白 #F5F6F6 / 墨青 #06090A / 深林 #0A1E15 / 暮石 #17120E），
+       并由 test/theme-accent.test.mjs ⑩ 逐条比对 —— 以后再漏会红。 
        用内联 <style>（CSP style-src 已允许 'unsafe-inline'）而非改上面脚本——那会动其 sha256 使 CSP 拦截。 */
-    html { background: #0d0d0d; color-scheme: dark; }
-    html[data-theme="light"] { background: #ffffff; color-scheme: light; }
-    html[data-theme="midnight"] { background: #0a0e1a; }
-    html[data-theme="forest"] { background: #0c120e; }
-    html[data-theme="sunset"] { background: #1a0f0a; }
+    html { background: #131719; color-scheme: dark; }
+    html[data-theme="light"] { background: #F5F6F6; color-scheme: light; }
+    html[data-theme="midnight"] { background: #06090A; }
+    html[data-theme="forest"] { background: #0A1E15; }
+    html[data-theme="sunset"] { background: #17120E; }
   </style>
 </head>
 <body>

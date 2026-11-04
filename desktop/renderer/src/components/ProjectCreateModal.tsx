@@ -18,7 +18,7 @@ import { useI18n } from '../i18n';
 const CATEGORIES = ['prd', 'tech', 'marketing', 'custom'] as const;
 const TEMPLATES = ['prd', 'tech', 'marketing', 'custom', 'existing'] as const;
 const QUOTA_TIERS = ['light', 'standard', 'large', 'custom'] as const;
-const ARTIFACT_KINDS = ['document', 'spec', 'plan', 'custom'] as const;
+const ARTIFACT_KINDS = ['document', 'spec', 'plan', 'custom', 'table'] as const;
 const SNAPSHOT_POLICIES = ['per_patch', 'per_stage', 'manual'] as const;
 
 type Category = typeof CATEGORIES[number];

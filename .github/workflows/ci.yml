@@ -114,6 +114,7 @@ jobs:
       - name: Linux sandbox smoke (real bwrap isolation)
         working-directory: desktop
         run: |
+          npm run test:sandbox:linux
           node -e "
           const l = require('./main/sandboxLinux');
           const s = l.linuxSandboxStatus();
@@ -149,6 +150,23 @@ jobs:
         run: |
           cd server && for f in $(find src -type f -name '*.js' -not -path '*/node_modules/*'); do node --check "$f" || exit 1; done
           cd ../desktop && for f in $(find main agent-core eval scripts shared shared-ipc chrome-extension -type f \( -name '*.js' -o -name '*.mjs' \) -not -path '*/node_modules/*'); do node --check "$f" || exit 1; done
+
+  # macOS Seatbelt 真机门禁：不能仅依赖 Ubuntu job 的静态 profile 断言。
+  # sandbox.test.js 在非 macOS 上明确跳过真实边界；此 job 在 macOS runner 上执行真实写入/拒绝验证，
+  # 且 sandbox-exec 已存在但运行失败时测试会失败，不会把未验证记为 PASS。
+  verify-macos-sandbox:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Desktop install
+        working-directory: desktop
+        run: npm ci
+      - name: macOS Seatbelt smoke (real isolation)
+        working-directory: desktop
+        run: npm run test:sandbox:macos
 
   # ═══════════════════════════════════════════
   #  发布 job（P0-G）：tag（v*）触发，三平台 matrix 打包

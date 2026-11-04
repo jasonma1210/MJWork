@@ -566,7 +566,10 @@ function openDb(dataDir) {
 //      （探测为一次性子进程成本 ~1s，换取「永不因驱动崩溃而失能任务编排子系统」）
 const PROBE_SRC = `
 try {
-  if (process.platform === 'darwin') { try { require('electron').app.dock.hide(); } catch {} }
+  if (process.platform === 'darwin') {
+    try { require('electron').app.dock.hide(); }
+    catch { process.stderr.write('[db-probe] Electron dock hide unavailable\\n'); }
+  }
   const Database = require(process.env.MJ_PROBE_MODULE);
   const db = new Database(':memory:');
   db.exec('CREATE TABLE t(x)');
