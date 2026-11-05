@@ -3,6 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 const { writeFileDurable } = require('../data/durableWrite');
+const liveDb = require('../db/liveDb');
+const { mirrorSnapshot } = require('./localMirror');
 
 // P1-M：本地数据韧性——此前 local-data.json 一损坏就静默重置为空库，
 // 用户的全部线程/消息/凭证无声消失（且无任何提示）。三级防线：
@@ -40,6 +42,11 @@ class LocalStore {
     // Agent 工具循环高峰每秒多条消息，同步写会卡死主进程事件循环（连带冻结 IPC 流式转发与审批响应）。
     this._flushTimer = null; // 挂起的合并刷盘定时器
     this._dirty = false;     // 有未落盘的内存变更
+    // ST1（2026-11-05）：影子副本的库句柄。本实例比库先构造（openDbAsync 是异步的），
+    // 故向 liveDb 订阅「库已就绪」，而不是让 main.js 传参（那边 code 行数已钉死）。
+    this._mirrorDb = null;
+    this.mirrorError = null; // 最近一次影子写入失败原因（诊断面；成功即清空）
+    liveDb.subscribe((db) => { this._mirrorDb = db || null; });
     this.data = this.load();
   }
 
@@ -191,10 +198,35 @@ class LocalStore {
       }
       this.pendingBakRepair = false;
       this.dailyBackup();
+      // ST1 第一阶段：JSON 落盘成功后再写 SQLite 影子副本。
+      // fail-open 是刻意的：此刻 JSON 已是唯一事实源且已 fsync 完成，影子副本失败
+      // 不能把「已保存」改写成「保存失败」——那会让用户去重试一件已经成功的事。
+      // 但必须留痕（见 mirrorNow 的 catch）：否则 SQLite 悄悄是空的，等 cut-over 才发现。
+      this.mirrorNow();
       return { ok: true };
     } catch (e) {
       console.error('[localStore] 持久化异常:', e.message);
       return { ok: false, error: e.message };
+    }
+  }
+
+  // ST1 第一阶段（2026-11-05）：把当前内存态镜像进 SQLite。
+  // 返回 {ok:true, ...统计} / {ok:false, error}；**结果不影响 flush 的 ok**（见 flush 注释）。
+  // 库未就绪时返回 {ok:false, error:'db-not-ready'} 且不告警——启动早期的正常状态，
+  // 每次 flush 都打一条日志会把真正的失败淹掉。
+  mirrorNow() {
+    const db = this._mirrorDb;
+    if (!db) return { ok: false, error: 'db-not-ready' };
+    try {
+      const res = mirrorSnapshot(db, this.data);
+      this.mirrorError = null;
+      return res;
+    } catch (e) {
+      // C-001：必须引用错误并留痕。影子副本是「双事实源」的第一道证据，
+      // 它坏了却不报，表现就是「一切正常」——直到 cut-over 那天发现 SQLite 是空的。
+      this.mirrorError = (e && e.message) || String(e);
+      console.warn('[localStore] 影子写入 SQLite 失败（JSON 已保存，本地数据仍可用）:', this.mirrorError);
+      return { ok: false, error: this.mirrorError };
     }
   }
 

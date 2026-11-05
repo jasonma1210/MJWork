@@ -308,6 +308,115 @@ check('导出：不存在的会话返回 ok:false', sR3.exportThreadMarkdown(999
   check('scheduleFlush 到期自动落盘（无需 flushSync）', new LocalStore(dirTimer).listMessages(tT.id).length === 1);
   sT.flushSync();
 
+  // ── ST1（2026-11-05）：JSON → SQLite 影子写入 + 双读对照 ──
+  // 这一段的判据刻意都是「具体数字 + 具体字段」，而不是只看「对照返回 null」：
+  // 两侧同时为空时对照也返回 null，那种断言会在「镜像根本没跑」时依然全绿。
+  const dirMirror = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-mirror-'));
+  const sM = new LocalStore(dirMirror);
+  const { openDbAsync } = require('../main/db/index');
+  const liveDb = require('../main/db/liveDb');
+  const { readSnapshot, diffSnapshots } = require('../main/store/localMirror');
+  const dbM = await openDbAsync(path.join(dirMirror, 'dbdata'), { driver: 'node-sqlite' });
+  liveDb.publish(dbM);
+
+  const tM = sM.createThread({ title: '影子', cwd: '/tmp/m' });
+  sM.addMessage({ threadId: tM.id, role: 'user', content: '你好', tokensInput: 3, modelName: 'm1' });
+  sM.addMessage({ threadId: tM.id, role: 'assistant', content: '收到', toolCalls: [{ id: 'c1', name: 'read' }], modelName: 'm1' });
+  sM.addProvider({ name: 'P', base_url: 'https://x', keyEncrypted: 'ENC(mirror)', modelId: 'm1' });
+  sM.addProject({ path: '/tmp/proj-mirror', name: 'proj-m' });
+  sM.setPreference('mirror.flag', true);
+  sM.flushSync();
+
+  const tablesM = dbM.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
+  check('ST1：v19 迁移建出五张本地事实表',
+    ['threads', 'messages', 'providers', 'projects', 'preferences'].every((n) => tablesM.includes(n)),
+    tablesM.filter((n) => ['threads', 'messages', 'providers', 'projects', 'preferences'].includes(n)).join(','));
+
+  const snapM = readSnapshot(dbM);
+  // 「不为空 + 数量相等」两条一起断：只断相等会让「两边都 0」这种镜像没跑的情形通过。
+  check('ST1：消息镜像不为空且条数与 JSON 一致',
+    snapM.messages.length > 0 && snapM.messages.length === sM.data.messages.length,
+    `sqlite=${snapM.messages.length} json=${sM.data.messages.length}`);
+  check('ST1：线程/凭证/项目/偏好四类数量与 JSON 一致',
+    snapM.threads.length === sM.data.threads.length && snapM.threads.length === 1
+    && snapM.providers.length === sM.data.providers.length && snapM.providers.length === 1
+    && snapM.projects.length === sM.data.projects.length && snapM.projects.length === 1
+    && Object.keys(snapM.preferences).length === 1);
+  check('ST1：字段级双读对照无差异', diffSnapshots(sM.data, snapM) === null,
+    JSON.stringify(diffSnapshots(sM.data, snapM)));
+  // 下面几条都刻意写成「取值失败也算红」而不是直接下标/属性访问：
+  // 变异实测发现 `find(...).toolCalls` 在镜像为空时抛 TypeError，整条套件中断，
+  // 后面的断言一条都跑不到——于是「红了 2 条」掩盖了「其实还有 3 条该红」。
+  // 断言之间必须互不牵连，否则红点数量本身就是在骗人。
+  const assistantRow = snapM.messages.find((m) => m.role === 'assistant') || null;
+  check('ST1：toolCalls 以 JSON 往返后形状不变',
+    assistantRow !== null
+    && JSON.stringify(assistantRow.toolCalls) === JSON.stringify([{ id: 'c1', name: 'read' }]),
+    assistantRow ? JSON.stringify(assistantRow.toolCalls) : '缺少 assistant 行');
+  // 凭证：加密串必须真的落到 SQLite（否则 cut-over 后密钥丢失），但不得进渲染层可读的 listProviders
+  check('ST1：keyEncrypted 已进 SQLite 影子表',
+    (snapM.providers[0] || {}).keyEncrypted === 'ENC(mirror)');
+  check('ST1：listProviders 仍不泄露 keyEncrypted（影子写入未改变原有隔离）',
+    !JSON.stringify(sM.listProviders()).includes('ENC(mirror)'));
+
+  // 归档 / 压缩（replaceMessages 换新 id）/ 彻底删除：三条都会让 SQLite 侧出现「消失的 id」
+  sM.archiveThread(tM.id);
+  sM.replaceMessages(tM.id, [{ role: 'user', content: '压缩后', createdAt: Date.now() }]);
+  const tDel = sM.createThread({ title: '待删', cwd: '/tmp/del' });
+  sM.addMessage({ threadId: tDel.id, role: 'user', content: '这条要没' });
+  sM.flushSync();
+  sM.purgeThread(tDel.id);
+  sM.flushSync();
+  const snapM2 = readSnapshot(dbM);
+  check('ST1：归档/压缩/彻底删除后仍与 JSON 完全一致', diffSnapshots(sM.data, snapM2) === null,
+    JSON.stringify(diffSnapshots(sM.data, snapM2)));
+  check('ST1：彻底删除的线程连消息一起从 SQLite 消失',
+    snapM2.messages.every((m) => m.threadId !== tDel.id) && snapM2.threads.every((t) => t.id !== tDel.id));
+
+  // 增量精确性：这是「按 id 集合增量」的核心断言，也是它相对全量 reconcile 的收益所在。
+  const noop = sM.mirrorNow();
+  check('ST1：无变更时重复镜像零写入', noop.ok && noop.messagesInserted === 0 && noop.messagesDeleted === 0,
+    `inserted=${noop.messagesInserted} deleted=${noop.messagesDeleted}`);
+  sM.addMessage({ threadId: tM.id, role: 'user', content: '再来一条' });
+  const one = sM.mirrorNow();
+  check('ST1：新增一条消息只写一行（不是全量重写）', one.ok && one.messagesInserted === 1 && one.messagesDeleted === 0,
+    `inserted=${one.messagesInserted}`);
+
+  // 负样本：对照器必须真能判出差异，否则「对照无差异」是一句空话。
+  // 目标 id 取自 **JSON 侧**而不是 SQLite 回读结果：若镜像整体为空，从回读结果取 id 会拿到
+  // undefined 并抛错、把整条套件打断（已在变异 M2 下实测到），断言反而失去了独立信号。
+  const tamperId = sM.data.messages[sM.data.messages.length - 1].id;
+  dbM.prepare('UPDATE messages SET content = ? WHERE id = ?').run('被篡改', tamperId);
+  const tampered = diffSnapshots(sM.data, readSnapshot(dbM));
+  check('ST1：对照器能判出字段级差异（负样本）',
+    tampered !== null && tampered.problems.some((p) => p.collection === 'messages' && p.changedCount === 1),
+    tampered ? JSON.stringify(tampered.problems[0].changed) : '对照器空转');
+
+  // 删除方向单独断言。为什么需要单独一条：变异实测发现「不写消息」（M1）与「删除方向取反」（M2）
+  // 在「总数一致」这条断言下收敛成同一症状（SQLite 侧就是没有消息），无法区分
+  // 「根本没写进去」和「写进去又被误删」。这里直接改内存态、不经过任何业务方法，
+  // 让删除分支拿到自己的信号：只应删 1 条、不应插任何行。
+  const dropId = sM.data.messages[sM.data.messages.length - 1].id;
+  sM.data.messages = sM.data.messages.filter((m) => m.id !== dropId);
+  const delRes = sM.mirrorNow();
+  check('ST1：内存态少一条消息时镜像精确删一条且不插行（删除方向独立信号）',
+    delRes.ok && delRes.messagesDeleted === 1 && delRes.messagesInserted === 0,
+    `deleted=${delRes.messagesDeleted} inserted=${delRes.messagesInserted}`);
+
+  // fail-open：影子副本失败不得把「JSON 已保存」改写成「保存失败」
+  liveDb.publish({ transaction() { return () => { throw new Error('mirror-boom'); }; } });
+  const boom = sM.flushSync();
+  check('ST1：影子写入失败时 flush 仍报告成功', boom.ok === true);
+  check('ST1：影子失败原因被记录（不是静默）', /mirror-boom/.test(String(sM.mirrorError)));
+
+  // 库未就绪是启动早期的正常状态：不告警、不影响 flush
+  liveDb._reset();
+  const sNoDb = new LocalStore(fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-nodb-')));
+  check('ST1：库未就绪时 mirrorNow 返回 db-not-ready 且不算失败',
+    sNoDb.mirrorNow().error === 'db-not-ready' && sNoDb.flushSync().ok === true);
+
+  fs.rmSync(dirMirror, { recursive: true, force: true });
+
   fs.rmSync(dirNoBak, { recursive: true, force: true });
   fs.rmSync(dirBak, { recursive: true, force: true });
   fs.rmSync(dirMig, { recursive: true, force: true });

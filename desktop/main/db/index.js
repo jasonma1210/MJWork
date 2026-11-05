@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 const { openSqliteJsDb } = require('./sqljsDb');
 const { openNodeSqliteDb } = require('./nodeSqliteDb');
 const dbStatus = require('../store/dbStatus');
+const liveDb = require('./liveDb');
 
 // ── 幂等加列（X4）──
 // 背景：老库可能「列已存在、user_version 却没推进」（早期无事务包装的版本、手工还原/拷库）。
@@ -537,6 +538,91 @@ const MIGRATIONS = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_quota_consumptions_model ON quota_consumptions(project_id, model);');
     },
   },
+  {
+    // ST1 第一阶段（2026-11-05）：给「本地事实源」建表，供 shadow write 使用。
+    //
+    // 现状：线程 / 消息 / 凭证 / 项目 / 偏好全在 `userData/local-data.json`（3.5MB 实测，
+    // 43 线程 / 1873 消息 / 3 凭证 / 8 项目）。本库此前只承载任务编排与团队/知识库，
+    // 于是同一份「项目」概念在两边各有一套（`project_spaces` 与本表 `projects` 不是同一实体：
+    // 前者是「项目空间」，绑定 thread/team/artifact；后者是侧栏的工作区条目）。
+    //
+    // 为什么先建表而不直接切读写：ADR 规定的迁移是五阶段
+    // 「shadow write → 双读对照 → cut-over」，JSON 保留为回滚快照。
+    // 本迁移只让「能写进去」，读路径一行未动——切读之前 JSON 仍是唯一事实源，
+    // 所以这一步失败也只影响影子副本，不会让用户丢数据。
+    //
+    // 列严格对应真实数据里**实际出现过**的键（2026-11-05 全量枚举，非猜测）：
+    //   threads   10 个恒在 + archived(21/43) + parentThreadId/forkFromMessageId(4/43)
+    //   messages  10 个恒在            providers 7 个恒在 + source/fileKey(2/3)
+    //   projects  4 个恒在             preferences 4 个键（值可为 string/object/boolean）
+    // 不留 extra_json 兜底列：留了就等于承认「还有没枚举到的字段」，反而让漂移无从发现。
+    //
+    // **刻意不加 FOREIGN KEY**：本库 PRAGMA foreign_keys=ON，而 JSON 侧从未保证引用完整性
+    // （历史库存在 messages.thread_id 指向已不存在线程的情况）。影子阶段的第一要务是
+    // 「绝不因为数据脏而拒绝写入」——加外键会让一条脏行卡住整批镜像，把影子副本变成负债。
+    // 引用完整性留到 cut-over 前的清洗阶段单独处理。
+    version: 19,
+    name: 'local-fact-tables',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS threads (
+          id                   INTEGER PRIMARY KEY,
+          title                TEXT NOT NULL DEFAULT '',
+          cwd                  TEXT NOT NULL DEFAULT '',
+          project_path         TEXT NOT NULL DEFAULT '',
+          provider_id          INTEGER,
+          provider_name        TEXT NOT NULL DEFAULT '',
+          model_name           TEXT NOT NULL DEFAULT '',
+          status               TEXT NOT NULL DEFAULT 'idle',
+          archived             INTEGER NOT NULL DEFAULT 0,
+          parent_thread_id     INTEGER,
+          fork_from_message_id INTEGER,
+          created_at           INTEGER NOT NULL,
+          updated_at           INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_threads_project ON threads(project_path, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_threads_archived ON threads(archived, updated_at);
+
+        CREATE TABLE IF NOT EXISTS messages (
+          id            INTEGER PRIMARY KEY,
+          thread_id     INTEGER NOT NULL,
+          role          TEXT NOT NULL DEFAULT '',
+          content       TEXT NOT NULL DEFAULT '',
+          tool_calls    TEXT,
+          tool_call_id  TEXT,
+          tokens_input  INTEGER NOT NULL DEFAULT 0,
+          tokens_output INTEGER NOT NULL DEFAULT 0,
+          model_name    TEXT NOT NULL DEFAULT '',
+          created_at    INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, id);
+
+        CREATE TABLE IF NOT EXISTS providers (
+          id            INTEGER PRIMARY KEY,
+          name          TEXT NOT NULL DEFAULT '',
+          base_url      TEXT NOT NULL DEFAULT '',
+          key_encrypted TEXT,
+          model_id      TEXT,
+          source        TEXT,
+          file_key      TEXT,
+          models_json   TEXT NOT NULL DEFAULT '[]',
+          created_at    INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS projects (
+          path           TEXT PRIMARY KEY,
+          name           TEXT NOT NULL DEFAULT '',
+          created_at     INTEGER NOT NULL,
+          last_opened_at INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS preferences (
+          key        TEXT PRIMARY KEY,
+          value_json TEXT
+        );
+      `);
+    },
+  },
 ];
 
 function openDb(dataDir) {
@@ -699,6 +785,9 @@ async function openDbAsync(dataDir, { isPackaged = false, driver: driverOverride
     try {
       const db = await openWithDriver(name, dataDir, file);
       console.log(`[db] SQLite 驱动：${name}${explicit ? '（显式指定）' : ''}`);
+      // ST1：广播「库已就绪」，LocalStore 据此接上影子写入（它比库先构造）。
+      // 放在这里而不是 main.js：后者 code 行数已钉死（max-lines 棘轮，加一行即红）。
+      liveDb.publish(db);
       return db;
     } catch (e) {
       // 显式指定 / 最后一项失败 → 抛出，由 main.js 交 dbStatus（不静默失能）
