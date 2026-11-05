@@ -104,6 +104,19 @@ const hasRule = (r, id) => r.findings.some((f) => f.ruleId === id);
   const r = R('已提交', [E('shell', { command: 'git commit -m "x"', ok: false, exitCode: 1 })]);
   check('R4 shell 里 git commit 失败 → BLOCK', r.verdict === 'BLOCK');
 }
+{
+  // GUI 验证抓到的误报：一段讲 SQLite 崩溃恢复的纯文字回答（无任何写/提交动作）被判成
+  // 「声称提交但没提交」。这里的「已提交」是**事务已提交**，跟 git 无关。
+  // 变异靶：把 commitClaims 后面的 filter 删掉，本条立刻变成 BLOCK。
+  const r = R('重开时会回放 WAL 中已提交的事务，正文不会丢。', []);
+  check('R4 存储语境里的「已提交的事务」不算 git 提交声明', r.verdict === 'PASS');
+}
+{
+  // 反向正样本：同一句里只要还带 git 语境，抑制就不许生效——否则真声明会被放过。
+  const r = R('已提交到 git 仓库，事务回滚点已建好。', []);
+  check('R4 句中出现 git 语境时「已提交」仍判为提交声明 → BLOCK',
+    r.verdict === 'BLOCK' && hasRule(r, 'claim_commit_no_evidence'));
+}
 
 // ══ R5 claim_changes_diff_empty ═════════════════════
 {

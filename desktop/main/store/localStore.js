@@ -127,11 +127,35 @@ class LocalStore {
       this.sourceOfTruth = 'sqlite';
       console.log(`[localStore] 本次读源：SQLite（threads=${fromDb.threads.length} messages=${fromDb.messages.length} providers=${fromDb.providers.length}）`);
       this.crossCheckAgainstJson(fromDb);
+      this.reclaimThreadStatus(fromDb);
       return fromDb;
     }
     this.sourceOfTruth = 'json';
     console.log('[localStore] 本次读源：JSON（SQLite 副本不可用 / 为空 / 已用 MJ_STORE_SOURCE=json 强制回退）');
-    return this.loadFromJson();
+    const fromJson = this.loadFromJson();
+    this.reclaimThreadStatus(fromJson);
+    return fromJson;
+  }
+
+  // N2（GUI 验证 2026-11-05 抓到）：上次进程是被强杀的（kill -9 / 断电 / 崩溃）时，
+  // `running` 与 `awaiting_approval` 会永久的留在数据里——重启后没有任何 run 在跑、也没有
+  // 审批卡在等，但侧栏会一直显示「N 运行中」（实测库里积了 10 条，最早一条是几天前的）。
+  // 崩溃恢复只补正文、不补运行状态，所以运行状态必须在这里统一归位一次。
+  //
+  // 归 `idle` 而不是 `done`：`done` 是"这个会话已经结束"的产品语义，会把一段没说完的对话
+  // 标成完成；`idle` 只表示"现在没有任务在跑"，跟用户对这条会话的预期一致。
+  reclaimThreadStatus(snap) {
+    let n = 0;
+    for (const t of (snap && snap.threads) || []) {
+      if (t.status === 'running' || t.status === 'awaiting_approval') { t.status = 'idle'; n++; }
+    }
+    // 置脏让下一次刷盘把归位结果写回库；不在这里主动调度 flush：
+    // 构造期起定时器会在测试里留下悬挂句柄，而启动路径本来就会 flush 一次。
+    if (n) {
+      this._dirty = true;
+      console.log(`[localStore] 上次异常退出：${n} 个会话的运行状态已归位为 idle（崩溃不会自己收尾）`);
+    }
+    return n;
   }
 
   // 从 SQLite 装载。返回 null = 这次该走 JSON（逃生口 / 库没就绪 / 副本为空 / 读失败）。
@@ -148,11 +172,12 @@ class LocalStore {
       console.warn('[localStore] 从 SQLite 装载失败，退回 JSON（本地数据仍可用）:', (e && e.message) || String(e));
       return null;
     }
-    const hasData = snap && (
-      (snap.threads && snap.threads.length) || (snap.messages && snap.messages.length)
-      || (snap.providers && snap.providers.length) || (snap.projects && snap.projects.length)
-      || Object.keys(snap.preferences || {}).length
-    );
+    // 判据只看**用户数据本体**（threads / messages），不看 providers / projects / preferences。
+    // 为什么：构造实验里副本只剩 preferences 就被判成"有数据"，界面 0 会话，紧接着**同一次启动**
+    // 的 flush 把空数据写回 JSON 回滚快照（50 线程 / 1905 消息 → 0 / 0，`.bak` 也被轮转成空）。
+    // 一次误判就销毁了唯一的回滚点——数据源判据是最后一道防线。
+    // 旁路数据（providers / preferences）在 JSON 里同样有一份，判空回落不会丢任何东西。
+    const hasData = snap && ((snap.threads && snap.threads.length) || (snap.messages && snap.messages.length));
     if (!hasData) return null; // 升级后的首启：v19 刚建表，副本还是空的
     // seq 必须按「已用过的最大 id + 1」重建。副本里没有 seq 这一列，
     // 直接拿 EMPTY.seq(=1) 会让新消息的 id 与历史 id 撞号——那是数据损坏，不是显示问题。

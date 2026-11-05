@@ -86,6 +86,16 @@ export const CLAIM_TEST_PASS_RE = new RegExp(CLAIM_TEST_PASS_SRC, 'i');
 const CLAIM_COMMIT_SRC = '(?:已|已经)\\s*(?:提交|commit)|committed|commit\\s+[0-9a-f]{7,40}\\b';
 export const CLAIM_COMMIT_RE = new RegExp(CLAIM_COMMIT_SRC, 'i');
 
+// 「已提交」在技术正文里还有另一个完全不同的意思：**数据库事务已提交**。
+// 把这种句子当成「声称 git commit」，会让一段纯文字回答收到「但本轮没有成功的 git_commit 记录」
+// 的阻断告警——用户看到一条跟正文毫无关系的批评，实际以「回放 WAL 中已提交的事务」复现过。
+// 判据落在整句：句中同时出现「存储/事务」语境词、且没有任何 git 语境词，才算非 git 语义。
+// 刻意不写成"句中有事务词就一律忽略"：『已提交到 git 仓库，事务回滚点已建』这种句子必须仍然命中。
+const NON_GIT_COMMIT_SRC = '(?:事务|transaction|\\bWAL\\b|checkpoint|SQLite|数据库)';
+const GIT_CONTEXT_SRC = '(?:\\bgit\\b|仓库|分支|push|推送|origin\\/|\\bHEAD\\b|\\bPR\\b|pull\\s+request|\\bcommit\\b)';
+const NON_GIT_COMMIT_RE = new RegExp(NON_GIT_COMMIT_SRC, 'i');
+const GIT_CONTEXT_RE = new RegExp(GIT_CONTEXT_SRC, 'i');
+
 // apply_patch 的路径提取（补丁文本里没有 path 字段，只能从 patch 头取）
 export const PATCH_PATH_RE = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/;
 const PATCH_PATH_SRC = '^\\*\\*\\* (?:Update|Add|Delete) File: (.+)$|^\\+\\+\\+ b\\/(.+)$';
@@ -336,7 +346,9 @@ export function reconcile({
 
   const writeClaims = collectClaims(text, CLAIM_WRITE_SRC);
   const testClaims = collectClaims(text, CLAIM_TEST_PASS_SRC);
-  const commitClaims = collectClaims(text, CLAIM_COMMIT_SRC);
+  // 「数据库事务已提交」不是 git 提交声明：句中有存储语境、且没有 git 语境时丢弃（见常量处注释）。
+  const commitClaims = collectClaims(text, CLAIM_COMMIT_SRC)
+    .filter((c) => !(NON_GIT_COMMIT_RE.test(c.sentence) && !GIT_CONTEXT_RE.test(c.sentence)));
   stats.claims = writeClaims.length + testClaims.length + commitClaims.length;
 
   // ── R1 claim_write_no_evidence：说改了 → 必须有成功写入证据 ──

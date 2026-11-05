@@ -232,6 +232,44 @@ try {
     `inDb=${inDb} jsonBefore=${/热路径甲/.test(jsonBefore)} jsonAfter=${/热路径甲/.test(jsonAfter)} lastJsonAt ${atBefore}->${store3._lastJsonAt}`);
   streamDraft.adopt('run-hot', thread.id, { role: 'assistant', content: '热路径甲热路径乙' }, store3);
 
+  // ⑮ 读源判据只认**用户数据本体**（threads / messages），不认 providers / projects / preferences。
+  //    这条是 GUI 验证反过来暴露的：构造实验里副本被判成"有数据"、实际 0 会话，界面空白，
+  //    紧接着**同一次启动**的 flush 把空数据写回 JSON 回滚快照（实测 50 线程 / 1905 消息 → 0 / 0，
+  //    `.bak` 也被轮转成空）。判据误判一次就销毁唯一的回滚点。
+  //    变异靶：把 loadFromSqlite 的 hasData 改回「providers/projects/preferences 任一非空即算」，
+  //    本条的 sourceOfTruth 立刻变成 'sqlite'、threads 变成 0，两条断言同时红。
+  // 注意顺序：seed2 必须在 liveDb 断开之后构造。否则它会从**上一个库**装载（liveDb 还 publish 着
+  // 前一个 dir 的库），把别人的会话读进自己的 JSON——我第一版就踩了这个，断言红成 threads=2。
+  liveDb._reset();
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-src-'));
+  const seed2 = new LocalStore(dir2);
+  const t2 = seed2.createThread({ title: '判据会话', cwd: '/tmp/judge' });
+  seed2.addMessage({ threadId: t2.id, role: 'user', content: '正文不是旁路数据' });
+  seed2.setPreference('theme', 'dark');
+  seed2.flushSync();
+  const db2 = await openDbAsync(path.join(dir2, 'dbdata'), { driver: 'node-sqlite' });
+  liveDb.publish(db2);
+  // 初始镜像是 setImmediate 补的：等它两拍落地，再做 DELETE，否则镜像会把刚删的行又写回去
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  // 只清用户数据本体，旁路表（providers / projects / preferences）原样留着
+  db2.exec('DELETE FROM threads; DELETE FROM messages;');
+  const s2 = new LocalStore(dir2);
+  check('V10：副本只剩旁路数据（preferences）时必须回落 JSON，不得当空库读',
+    s2.sourceOfTruth === 'json' && s2.listThreads().length === 1,
+    `源=${s2.sourceOfTruth} threads=${s2.listThreads().length} [${(s2.data.threads || []).map((x) => x.title).join('/')}]`);
+  // ⑯ 归位逻辑有**两个调用点**（SQLite 分支 / JSON 分支）。只测 JSON 分支等于只覆盖一半：
+  //    生产默认走 SQLite，恰恰是没被测的那一半。这条专门走 SQLite 分支。
+  db2.exec("INSERT INTO threads (id,title,cwd,status,archived,created_at,updated_at) VALUES (9001,'残留运行态','/tmp/x','running',0,1,1)");
+  const s3 = new LocalStore(dir2);
+  const st3 = ((s3.data.threads || []).find((x) => x.id === 9001) || {}).status;
+  check('N2：SQLite 读源分支同样归位（两个调用点都必须被覆盖）',
+    s3.sourceOfTruth === 'sqlite' && st3 === 'idle', `源=${s3.sourceOfTruth} status=${st3}`);
+  liveDb._reset();
+  try { db2.close(); } catch (e) { console.warn('[stream-draft] 关闭判据测试库失败:', e.message); }
+  try { fs.rmSync(dir2, { recursive: true, force: true }); } catch (e) { console.warn('[stream-draft] 清理判据目录失败:', e.message); }
+  liveDb.publish(db); // 复原：收尾还要用原库
+
   fs.rmSync(dir, { recursive: true, force: true });
 } catch (e) {
   console.error('[FAIL] 套件异常：', e && e.stack ? e.stack : e);

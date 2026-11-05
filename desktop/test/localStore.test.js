@@ -658,6 +658,32 @@ check('导出：不存在的会话返回 ok:false', sR3.exportThreadMarkdown(999
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(dirIdx, { recursive: true, force: true });
   fs.rmSync(dirRot, { recursive: true, force: true });
+  // ── N2（GUI 验证 2026-11-05）：强杀后运行状态必须归位 ──
+  // 被 kill -9 / 断电杀掉时，`running` / `awaiting_approval` 会永久留在数据里：重启后没有任何
+  // run 在跑、也没有审批卡在等，侧栏却一直显示「N 运行中」（实测库里积了 10 条，最早几天前）。
+  // 变异靶：删掉 load() 里对 reclaimThreadStatus 的调用，第 1 条立刻红（status 仍是 running）。
+  const dirStaleN2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-stale-'));
+  const sStaleN2 = new LocalStore(dirStaleN2);
+  const tStaleN2 = sStaleN2.createThread({ title: '被强杀的会话', cwd: '/tmp/stale' });
+  const tWaitN2 = sStaleN2.createThread({ title: '等审批的会话', cwd: '/tmp/stale' });
+  const tIdleN2 = sStaleN2.createThread({ title: '正常空闲的会话', cwd: '/tmp/stale' });
+  sStaleN2.setThreadStatus(tStaleN2.id, 'running');
+  sStaleN2.setThreadStatus(tWaitN2.id, 'awaiting_approval');
+  sStaleN2.flushSync();
+  const sReopenN2 = new LocalStore(dirStaleN2);
+  const st = (id) => (sReopenN2.data.threads.find((x) => x.id === id) || {}).status;
+  check('N2：重启后残留的运行态归位（running / awaiting_approval → idle）',
+    st(tStaleN2.id) === 'idle' && st(tWaitN2.id) === 'idle',
+    `running→${st(tStaleN2.id)} awaiting→${st(tWaitN2.id)}`);
+  // 反向正样本：归位不能顺手改别的状态（正常空闲的会话保持 idle，`done` 也不该被动）
+  check('N2：归位不误伤其它状态（idle 保持 idle）', st(tIdleN2.id) === 'idle', `idle→${st(tIdleN2.id)}`);
+  sStaleN2.setThreadStatus(tIdleN2.id, 'done');
+  sStaleN2.flushSync();
+  const sReopenN2b = new LocalStore(dirStaleN2);
+  const st2N2 = (sReopenN2b.data.threads.find((x) => x.id === tIdleN2.id) || {}).status;
+  check('N2：`done` 不被归位改写成 idle（只有运行态才归位）', st2N2 === 'done', `done→${st2N2}`);
+  fs.rmSync(dirStaleN2, { recursive: true, force: true });
+
   fs.rmSync(dirR3, { recursive: true, force: true });
   console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}：${pass}/${pass + fail} 项通过`);
   process.exit(fail === 0 ? 0 : 1);
