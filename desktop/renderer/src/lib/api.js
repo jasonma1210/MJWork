@@ -136,6 +136,20 @@ export const api = {
   exportThread: (id) => (localMode && window.mjcode?.localExportThread
     ? window.mjcode.localExportThread({ threadId: id })
     : Promise.resolve({ ok: false, code: 'UNAVAILABLE', error: t('runtime.exportNeedsLocal') })),
+  // ST4-④：数据库维护（本地能力，服务端无对应路由）。缺桥方法时返回结构化 UNAVAILABLE
+  // 而不是抛错——界面要能显示「此版本不支持」，不能白屏（与 searchMessages 同口径）。
+  dbBackupCreate: () => (window.mjcode?.dbBackupCreate
+    ? window.mjcode.dbBackupCreate()
+    : Promise.resolve({ ok: false, code: 'UNAVAILABLE', error: t('runtime.dbMaintUnavailable') })),
+  dbBackupExport: () => (window.mjcode?.dbBackupExport
+    ? window.mjcode.dbBackupExport()
+    : Promise.resolve({ ok: false, code: 'UNAVAILABLE', error: t('runtime.dbMaintUnavailable') })),
+  dbImportPick: () => (window.mjcode?.dbImportPick
+    ? window.mjcode.dbImportPick()
+    : Promise.resolve({ ok: false, code: 'UNAVAILABLE', error: t('runtime.dbMaintUnavailable') })),
+  dbImportCommit: (payload) => (window.mjcode?.dbImportCommit
+    ? window.mjcode.dbImportCommit(payload)
+    : Promise.resolve({ ok: false, code: 'UNAVAILABLE', error: t('runtime.dbMaintUnavailable') })),
   // P1-6：会话分支（仅本地模式；服务端无对应路由）——从某条历史消息处开一支新会话
   forkThread: (id, fromMessageId) => {
     if (!localMode) return Promise.reject(new Error(t('runtime.forkOnlineUnsupported')));

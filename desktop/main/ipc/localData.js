@@ -808,6 +808,11 @@ function register() {
     const m = memoryManager.promoteTeamMemoryToProject(id);
     return m ? { ok: true, item: m } : { ok: false, error: '记忆不存在、已失效或非团队层' };
   });
+
+  // ST4-④（2026-11-05）：数据库备份 / 导入的用户侧入口。
+  // 挂在这里而不是 main.js：后者 code 行数已钉死（max-lines 棘轮，加一行即红）；
+  // 且备份/导入与「会话导出」同属本地数据域，通道前缀 db: 由子模块自己声明。
+  require('./dbMaintenance').initDbMaintenanceIpc();
 }
 
 function initLocalDataIpc(d) {

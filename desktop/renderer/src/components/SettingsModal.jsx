@@ -14,7 +14,7 @@ import MemorySection from './MemorySection';
 import HooksSection from './HooksSection';
 // P1-4：Windows OS 级沙箱接线入口（仅 win32 渲染，组件内部另有平台守卫）
 import WindowsSandboxSetup from './WindowsSandboxSetup';
-import { IconCheck, IconCpu, IconGitBranch, IconGlobe, IconMemory, IconMessage, IconPalette, IconSettings, IconShield, IconTerminal, IconUser, IconX } from './icons';
+import { IconArchive, IconCheck, IconCpu, IconGitBranch, IconGlobe, IconMemory, IconMessage, IconPalette, IconSettings, IconShield, IconTerminal, IconUser, IconX } from './icons';
 import Switch from './ui/Switch';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
@@ -22,6 +22,8 @@ import Button from './ui/Button';
 import ModelsTab from './settings/ModelsTab';
 import NetworkTab from './settings/NetworkTab';
 import ImTab from './settings/ImTab';
+// ST4-④：数据与备份（备份 / 导出 / 导入）——此前只有后端、没有入口。
+import DataTab from './settings/DataTab';
 import { Section, OptionRow, Toggle } from './settings/shared';
 import THEMES from '../lib/themes.json';
 import ACCENT_CHOICES from '../lib/accentColors.json';
@@ -42,6 +44,7 @@ const NAV = [
     { id: 'general', icon: <IconSettings size={16} />, labelKey: 'settings.tabGeneral' },
     { id: 'appearance', icon: <IconPalette size={16} />, labelKey: 'settings.tabAppearance' },
     { id: 'models', icon: <IconCpu size={16} />, labelKey: 'settings.tabModels' },
+    { id: 'data', icon: <IconArchive size={16} />, labelKey: 'settings.tabData' },
   ]},
   { groupKey: 'settings.navGroupFeatures', items: [
     { id: 'ecosystem', icon: <IconUser size={16} />, labelKey: 'settings.tabEcosystem' },
@@ -483,6 +486,7 @@ export default function SettingsModal({
         />}
 
         {/* 网络配置 */}
+        {tab === 'data' && <DataTab />}
         {tab === 'network' && <NetworkTab onDirtyChange={setNetworkDirty} />}
         {tab === 'im' && <ImTab />}
 

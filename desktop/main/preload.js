@@ -10,6 +10,12 @@ contextBridge.exposeInMainWorld('mjcode', {
   getStreamTimeouts: () => ipcRenderer.invoke('app:stream-timeouts'),
   // X4：本地库状态（失败时状态条显式提示，不静默）
   dbStatus: () => ipcRenderer.invoke('db:status'),
+  // ST4-④：数据库维护（备份 / 导出 / 导入）。路径一律由主进程系统对话框产生，
+  // 渲染层不传也不该传任何路径；导入第二步只传一次性令牌。
+  dbBackupCreate: () => ipcRenderer.invoke('db:backup/create'),
+  dbBackupExport: () => ipcRenderer.invoke('db:backup/export'),
+  dbImportPick: () => ipcRenderer.invoke('db:import/pick'),
+  dbImportCommit: (payload) => ipcRenderer.invoke('db:import/commit', payload),
   getAppVersion: () => ipcRenderer.invoke('app:version'),
   openInIDE: (payload) => ipcRenderer.invoke('app:openInIDE', payload),
   // Model
