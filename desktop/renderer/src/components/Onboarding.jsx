@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import { humanizeError } from '../lib/api';
+// MD2：必填项判据外置为纯函数——Key 不在必填里（本机回环端点无 Key 可填），
+// 「要不要 Key」由主进程 localModel.credentialUsable 独家裁决，渲染层不复制端点判据。
+import { missingRequiredFields } from '../lib/onboardingForm';
 import { rememberModel } from '../lib/appState';
 import CreateProjectForm from './CreateProjectForm';
 import InlineAlert from './InlineAlert';
@@ -156,6 +159,8 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
       return true;
     } catch (err) {
       const msg = String(err.message || '');
+      // KEY_MISSING 单独给一条可行动的文案：主进程的原文已写明「本机端点无需 Key」，
+      // 但界面文案统一走 i18n key（不把主进程中文当 UI 文案直出），故由 key 承载同义信息。
       setTestResult(msg.startsWith('KEY_MISSING')
         ? { ok: false, text: t('onboarding.credNotLoaded') }
         : { ok: false, text: t('onboarding.connFailed', { msg: msg.slice(0, 120) }) });
@@ -167,7 +172,9 @@ export default function Onboarding({ globalProviders, userProviders, onFinish, o
 
   // 保存模型配置：写入 App 内置本机数据库（主进程 localStore + safeStorage 加密），不经过任何服务器
   async function submitCustomProvider() {
-    if (!form.name || !form.base_url || !form.api_key || !form.model_id) {
+    // MD2：只拦「存库必填」三项。Key 是否必需由主进程判（本机回环端点免 Key），
+    // 这里若继续拦 api_key，无 Key 的本机用户会被永久挡在保存按钮前 —— 首启不闭环。
+    if (missingRequiredFields(form).length > 0) {
       setError(t('onboarding.fillRequired'));
       return;
     }

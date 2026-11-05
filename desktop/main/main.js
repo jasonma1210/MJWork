@@ -657,9 +657,9 @@ initSandboxIpc();
 // ═══════════════════════════════════════════
 async function chatStreamOnce({ providerId, isGlobal = false, baseUrl, messages, model, tools, reasoningEffort }, sender, externalSignal, streamTag) {
   const secret = resolveSecret(providerId, isGlobal);
-  if (!secret || !secret.api_key) {
-    throw new Error('KEY_MISSING: 模型凭证未加载，请在本机模型设置中重新填写 API Key');
-  }
+  // MD2（2026-11-05）：本机回环端点免 Key（判据 localModel.credentialUsable，与超时档位共用 isLocalEndpoint）；
+  // baseUrl 优先于 secret.base_url，与下方 root 同序，否则「界面填本机、库里存远端」会判错那个。
+  if (!localModel.credentialUsable(secret, baseUrl)) throw new Error('KEY_MISSING: 模型凭证未加载，请在本机模型设置中重新填写 API Key（本机 127.0.0.1 / localhost 端点无需 Key）');
   const root = (baseUrl || secret.base_url || '').replace(/\/+$/, '');
   if (!root) throw new Error('BASE_URL_MISSING: 模型服务地址为空');
   // Backend-aware readiness：本机端点先确认「模型已在显存里」再把请求发出去——TCP 连得上 ≠ 模型可用。
@@ -715,7 +715,7 @@ async function chatStreamOnce({ providerId, isGlobal = false, baseUrl, messages,
       // 当供应商/网关（如 ollama 前置的 flint 类网关）关闭空闲 keep-alive 连接或不对复用连接流式转发时，
       // 首请求走新连接正常、次请求复用半关闭连接会出现「响应头已到但响应体 90s 不来」的假死。
       // 加 Connection: close 让 undici 不把连接放回池，每次强制新连接，消除整类故障。
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret.api_key}`, 'Connection': 'close' },
+      headers: { 'Content-Type': 'application/json', ...(secret.api_key ? { Authorization: `Bearer ${secret.api_key}` } : {}), 'Connection': 'close' },
       body: JSON.stringify(body),
       // 超时必须「真中断」（上层 withTimeout 只放弃等待，连接挂着则 finally 的 slot.release 不执行 → fg 槽位泄漏）。
       // 超时判定已交给 streamGuard（空闲语义），这里只负责把 abort 级联到 fetch。

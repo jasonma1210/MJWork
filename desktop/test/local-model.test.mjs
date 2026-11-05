@@ -360,6 +360,90 @@ await check('渲染层接线：本机模型加载进度有 toast 出口，且中
   }
 });
 
+// ─── ⑤ MD2（2026-11-05）：凭证判据「本机回环端点免 Key」 ─────────────────────
+// 缺陷形态：三处发消息入口 + 测试连接原先都无条件校验 `secret.api_key`，于是纯本机
+// Ollama / llama.cpp 用户**必须填一个假 Key** 才能发出第一条消息，而假 Key 会被真的
+// 拼成 `Authorization: Bearer sk-fake` 发出去。对「离线级 agent」这是开箱第一道拦路虎。
+//
+// 本组同时锁住**放宽的方向**与**不放宽的边界**：少了边界那几条，这个改动就等于
+// 「谁都不用 Key」，那是把一个体验缺陷换成安全缺陷。
+await check('credentialUsable：有 Key 时不论端点在哪都放行（远端/本机）', () => {
+  assert(localModel.credentialUsable({ api_key: 'sk-x', base_url: 'https://api.example.com' }, '') === true,
+    '有 Key + 远端应放行');
+  assert(localModel.credentialUsable({ api_key: 'sk-x', base_url: 'http://127.0.0.1:11434' }, '') === true,
+    '有 Key + 本机应放行');
+});
+
+await check('credentialUsable：无 Key + 回环地址放行（127.0.0.1 / localhost / ::1 / [::1] / 0.0.0.0）', () => {
+  for (const url of ['http://127.0.0.1:11434', 'http://localhost:8080/v1', 'http://[::1]:11434', 'http://0.0.0.0:8000']) {
+    assert(localModel.credentialUsable({ api_key: '', base_url: url }, url) === true, `${url} 应放行（MD2）`);
+  }
+});
+
+await check('credentialUsable：无 Key + 远端拒绝（这就是原来的正确行为，不能被放宽掉）', () => {
+  assert(localModel.credentialUsable({ api_key: '', base_url: 'https://api.deepseek.com' }, '') === false,
+    '远端无 Key 必须拒绝');
+});
+
+await check('credentialUsable：内网段不算本机（10.x / 192.168.x 可能是别人的机器）', () => {
+  for (const url of ['http://192.168.1.50:11434', 'http://10.0.0.7:8000', 'http://172.16.3.9:11434']) {
+    assert(localModel.credentialUsable({ api_key: '', base_url: url }, url) === false,
+      `${url} 是内网不是回环，无 Key 不得放行`);
+  }
+});
+
+await check('credentialUsable：secret 缺失 / 地址为空 / 非法 URL 一律拒绝（fail-closed）', () => {
+  assert(localModel.credentialUsable(null, 'http://127.0.0.1:11434') === false, 'secret=null 应拒绝');
+  assert(localModel.credentialUsable(undefined, '') === false, 'secret=undefined 应拒绝');
+  assert(localModel.credentialUsable({ api_key: '' }, '') === false, '空地址应拒绝（无可达端点）');
+  assert(localModel.credentialUsable({ api_key: '' }, 'not-a-url') === false, '非法 URL 应拒绝');
+  assert(localModel.credentialUsable({ api_key: '', base_url: 'llama.cpp' }, '') === false, '相对串应拒绝');
+});
+
+await check('credentialUsable：显式 baseUrl 优先于 secret.base_url（与 main.js root 同序）', () => {
+  // 界面填了本机、库里还存着远端 —— 判据必须跟本次要用的那一个，否则会误拒/误放
+  assert(localModel.credentialUsable({ api_key: '', base_url: 'https://api.example.com' }, 'http://127.0.0.1:11434') === true,
+    '本次用本机地址 ⇒ 应放行（而不是看库里那个远端）');
+  assert(localModel.credentialUsable({ api_key: '', base_url: 'http://127.0.0.1:11434' }, 'https://api.example.com') === false,
+    '本次用远端地址 ⇒ 应拒绝（而不是看库里那个本机）');
+});
+
+await check('credentialUsable：接线——四处模型通路 + testConnection 都改用它（禁止各写一套）', () => {
+  const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+  const mainSrc = read('main/main.js');
+  const schedSrc = read('main/scheduledChannels.js');
+  const ipcSrc = read('main/ipc/localData.js');
+  const cuaSrc = read('main/cuaHandlers.js');
+  // 正向：四处模型通路都必须接到同一个判据上。
+  // 第四处（CUA）容易被漏——只改三处就会留下「本机模型能聊天、一用 CUA 就 KEY_MISSING」，
+  // 那是同一类漂移换了个位置，比原来更难看（用户会以为 CUA 坏了而不是配置问题）。
+  for (const [label, src] of [['main.js', mainSrc], ['scheduledChannels.js', schedSrc],
+    ['localData.js（testConnection）', ipcSrc], ['cuaHandlers.js（CUA）', cuaSrc]]) {
+    assert(/credentialUsable\(/.test(src), `${label} 未接入 credentialUsable`);
+  }
+  // 反向：裸判必须消失，否则就是「两套判据并存」，必然漂移成一边能发一边不能
+  for (const [label, src] of [['main.js', mainSrc], ['scheduledChannels.js', schedSrc], ['cuaHandlers.js', cuaSrc]]) {
+    assert(!/!\s*secret\s*\|\|\s*!\s*secret\.api_key/.test(src), `${label} 仍残留裸判 !secret || !secret.api_key`);
+  }
+  // 反向：**每一处模型 Key 的 Authorization 构造**都必须带三目保护。
+  // 注意三点（都是写这个断言时踩到的）：
+  //  ① 不能写成「全文不得出现 Authorization: `Bearer ${secret.api_key}`」——条件展开里本来就有
+  //     这段字面量，那样断言无法区分「无条件发」与「条件发」，是个假断言（我第一版就写错了）；
+  //  ② 不能拿 'Connection': 'close' 当锚点——cuaChat 的 headers 没有它（用 AbortSignal.timeout）；
+  //  ③ 必须收窄到模型 Key：main.js:346 是**另一套鉴权**（`Bearer ${token}`，服务端 token），不归这里管。
+  for (const [label, src] of [['main.js', mainSrc], ['scheduledChannels.js', schedSrc], ['cuaHandlers.js', cuaSrc]]) {
+    const authz = src.split('\n')
+      .filter((l) => l.includes('Authorization:') && /(secret\.api_key|apiKey\b)/.test(l));
+    assert(authz.length > 0, `${label} 没找到模型 Key 的 Authorization 构造行——断言前提失效，别当成通过`);
+    const bare = authz.filter((l) => !/\?/.test(l));
+    assert(bare.length === 0,
+      `${label} 有 ${bare.length} 处模型 Key Authorization 无条件发送（无 Key 时会发出空/假 Bearer）`);
+  }
+  // testConnection 走的是 headers['Authorization'] = 形式（不是对象字面量），单独锁它的保护条件
+  assert(/if \(vault\?\.api_key\) headers\['Authorization'\]/.test(ipcSrc),
+    'testConnection 的 Authorization 缺 if (vault?.api_key) 保护');
+});
+
 try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* 清理失败不影响结论 */ }
 
 console.log(`\n结果：${pass}/${total} 通过`);

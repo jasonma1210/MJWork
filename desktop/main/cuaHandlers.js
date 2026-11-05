@@ -11,6 +11,9 @@
 //   窗口关闭重建后会换对象，传值会拿到旧窗口快照，send 静默失效。本文件内所有窗口访问
 //   一律经 getMainWindow() 现取。
 const path = require('path');
+// MD2（2026-11-05）：凭证判据与三处发消息入口同源。CUA 是第四条通路，若不同步，
+// 就会出现「本机模型能聊天、但一用 CUA 就 KEY_MISSING」——那是同一类漂移，只是换了位置。
+const localModel = require('./localModel');
 const { ipcMain, app, BrowserWindow, shell } = require('electron');
 
 module.exports = function createCuaHandlers(deps = {}) {
@@ -87,7 +90,8 @@ function requestCuaApproval(summary) {
 async function cuaChat(root, apiKey, model, messages) {
   const res = await fetch(`${root}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    // MD2：无 Key（本机回环端点）时不发 Authorization，避免发一个空的 Bearer 让本机服务困惑
+    headers: { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
     body: JSON.stringify({ model, messages, stream: false }),
     signal: AbortSignal.timeout(120000),
   });
@@ -142,7 +146,7 @@ async function toolComputerUse(args = {}, ctx = {}) {
   const isGlobal = !!m.provider?.isGlobal;
   const modelId = m.model?.model_id || m.model || '';
   const secret = resolveSecret(providerId, isGlobal);
-  if (!secret || !secret.api_key) { dispose(); return { ok: false, error: 'KEY_MISSING: 模型凭证未加载，请在本机模型设置中重新填写 API Key' }; }
+  if (!localModel.credentialUsable(secret, m.provider?.base_url)) { dispose(); return { ok: false, error: 'KEY_MISSING: 模型凭证未加载，请在本机模型设置中重新填写 API Key（本机 127.0.0.1 / localhost 端点无需 Key）' }; }
   const root = (m.provider?.base_url || secret.base_url || '').replace(/\/+$/, '');
   if (!root) { dispose(); return { ok: false, error: 'BASE_URL_MISSING: 模型服务地址为空' }; }
   if (!modelId) { dispose(); return { ok: false, error: 'MODEL_MISSING: 当前会话未指定模型' }; }
@@ -292,7 +296,7 @@ ipcMain.handle('cua:run', async (_, { objective, appName, approvalMode = 'on-req
   }
   // 凭证解析：与 model:chat 同款（本地优先）
   const secret = resolveSecret(providerId, isGlobal);
-  if (!secret || !secret.api_key) return bail({ ok: false, error: 'KEY_MISSING: 模型凭证未加载，请在本机模型设置中重新填写 API Key' });
+  if (!localModel.credentialUsable(secret, baseUrl)) return bail({ ok: false, error: 'KEY_MISSING: 模型凭证未加载，请在本机模型设置中重新填写 API Key（本机 127.0.0.1 / localhost 端点无需 Key）' });
   const root = (baseUrl || secret.base_url || '').replace(/\/+$/, '');
   if (!root) return bail({ ok: false, error: 'BASE_URL_MISSING: 模型服务地址为空' });
 

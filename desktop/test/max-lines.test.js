@@ -53,9 +53,14 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', 'assets']);
 //     体量已全部外置到 main/localModel.js（411 code 行），main.js 只留 5 个调用点。
 //   · agent-core/index.js 2844 → 2847（+3，isRetryableChatError 按 error.code 判本机就绪类错误）。
 //   · 新增 main/localModel.js 439 code 行，未进基线（< 800）。
+//
+// 2026-11-05 下调：main/main.js 1159 → 1157（−2，**收紧方向**，无需理由也能过，但记一下）。
+//   MD2 去假 Key：`if (!secret || !secret.api_key) { throw … }`（4 行）改为
+//   `if (!localModel.credentialUsable(...)) throw …` 单行判断 + 2 行注释，**增删各 4 行、行号零偏移**
+//   （main.js 有大量文档行号引用，行号一偏 doc-fact-check 就会红）。判据体量外置到 localModel.js。
 const BASELINE_800 = {
   'main/computerUse.js': 1002,
-  'main/main.js': 1159,
+  'main/main.js': 1157,
   'agent-core/index.js': 2847,
 };
 

@@ -12,6 +12,10 @@
 
 const { createStreamGuard, streamTimeoutMessage, reportSlowTtfb, ttfbTargetFor } = require('./streamGuard');
 const streamSettings = require('./streamSettings');
+// MD2（2026-11-05）：凭证判据必须与主对话通道**同源**（localModel.credentialUsable）。
+// 这里刻意不自己写 `!/^127\.0\.0\.1|localhost$/` 之类——定时任务与 Worker 走的是同一条
+// resolveSecret，两处各写一遍判据必然漂移，而漂移的表现是「主对话能用、定时任务报 KEY_MISSING」。
+const localModel = require('./localModel');
 
 function createScheduledChannels({ resolveSecret, quota } = {}) {
   if (typeof resolveSecret !== 'function') throw new Error('createScheduledChannels: 缺少 resolveSecret');
@@ -44,8 +48,10 @@ function createScheduledChannels({ resolveSecret, quota } = {}) {
   // 模型由渲染层 scheduled:setModel 推送（跟随用户当前选择）；未推送时拒绝执行并给出明确错误
   async function scheduledChatOnce({ messages }, model) {
     const secret = resolveSecret(model.providerId, !!model.isGlobal);
-    if (!secret || !secret.api_key) {
-      throw new Error('KEY_MISSING: 模型凭证未加载，请在模型设置中重新填写 API Key');
+    // MD2：本机回环端点免 Key（与 main.js 的 chatStreamOnce 同判据）。
+    // 注意 baseUrl 优先于 secret.base_url，与下方 root 同序。
+    if (!localModel.credentialUsable(secret, model.baseUrl)) {
+      throw new Error('KEY_MISSING: 模型凭证未加载，请在模型设置中重新填写 API Key（本机 127.0.0.1 / localhost 端点无需 Key）');
     }
     const root = (model.baseUrl || secret.base_url || '').replace(/\/+$/, '');
     if (!root) throw new Error('BASE_URL_MISSING: 模型服务地址为空');
@@ -54,7 +60,7 @@ function createScheduledChannels({ resolveSecret, quota } = {}) {
       const res = await fetch(`${root}/chat/completions`, {
         method: 'POST',
         // P0-5：禁用 keep-alive 连接复用（同 main.js chatStreamOnce）——避免复用被网关关闭的空闲连接导致假死。
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret.api_key}`, 'Connection': 'close' },
+      headers: { 'Content-Type': 'application/json', ...(secret.api_key ? { Authorization: `Bearer ${secret.api_key}` } : {}), 'Connection': 'close' },
         body: JSON.stringify({ model: model.model, messages, stream: false }),
         signal: controller.signal,
       });
@@ -84,8 +90,9 @@ function createScheduledChannels({ resolveSecret, quota } = {}) {
     // 已取消就不必去排队：fg 槽位可能要等几十秒，取消后排队毫无意义
     if (external?.aborted) return abortedResult();
     const secret = resolveSecret(payload.providerId, !!payload.isGlobal);
-    if (!secret || !secret.api_key) {
-      throw new Error('KEY_MISSING: 模型凭证未加载，请在模型设置中重新填写 API Key');
+    // MD2：同上——Worker / 编排组 / 记忆压缩都经此通道，判据与主对话一致。
+    if (!localModel.credentialUsable(secret, payload.baseUrl)) {
+      throw new Error('KEY_MISSING: 模型凭证未加载，请在模型设置中重新填写 API Key（本机 127.0.0.1 / localhost 端点无需 Key）');
     }
     const root = (payload.baseUrl || secret.base_url || '').replace(/\/+$/, '');
     if (!root) throw new Error('BASE_URL_MISSING: 模型服务地址为空');
@@ -111,7 +118,7 @@ function createScheduledChannels({ resolveSecret, quota } = {}) {
     const post = (b) => fetch(`${root}/chat/completions`, {
       method: 'POST',
       // P0-5：禁用 keep-alive 连接复用（同 main.js）——避免复用半关闭连接导致非流式通道假死。
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret.api_key}`, 'Connection': 'close' },
+      headers: { 'Content-Type': 'application/json', ...(secret.api_key ? { Authorization: `Bearer ${secret.api_key}` } : {}), 'Connection': 'close' },
       body: JSON.stringify(b),
       signal,
     });

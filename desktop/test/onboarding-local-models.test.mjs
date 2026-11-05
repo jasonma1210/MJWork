@@ -85,6 +85,9 @@ const bundle = esbuild.buildSync({
     contents: [
       "import { LanguageProvider } from './i18n';",
       "import Onboarding from './components/Onboarding.jsx';",
+      // MD2：必填项判据一并从同一 bundle 导出——与组件走**同一份**模块实例，
+      // 避免测试另起一条编译路径（那样测到的可能是磁盘上一份、运行时另一份）。
+      "export { missingRequiredFields, REQUIRED_PROVIDER_FIELDS } from './lib/onboardingForm';",
       'export function render(props) { return <LanguageProvider><Onboarding {...props} /></LanguageProvider>; }',
     ].join('\n'),
     resolveDir: SRC, sourcefile: PROBE_FILE, loader: 'jsx',
@@ -95,7 +98,7 @@ const moduleObj = { exports: {} };
 new Function('require', 'module', 'exports', '__filename', '__dirname', bundle.outputFiles[0].text)(
   rendererRequire, moduleObj, moduleObj.exports, path.join(SRC, PROBE_FILE), SRC,
 );
-const { render } = moduleObj.exports;
+const { render, missingRequiredFields, REQUIRED_PROVIDER_FIELDS } = moduleObj.exports;
 const React = rendererRequire('react');
 const { renderToStaticMarkup } = rendererRequire('react-dom/server');
 
@@ -166,6 +169,81 @@ check('共享模型与本机模型并存时：本机 2 条可选，共享入口�
   });
   assert.equal(countOptions(html), 2, `本机可点选模型应为 2，实际 ${countOptions(html)}`);
   assert.ok(html.includes('服务器共享模型'), '共享模型入口不应因新增本机列表而消失');
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MD2（2026-11-05）：去假 Key —— 首启闭环
+// ═════════════════════════════════════════════════════════════════════════════
+// 缺陷形态：`submitCustomProvider` 的必填判据是四联 `!form.name || !form.base_url
+//   || !form.api_key || !form.model_id`。本机回环端点（Ollama / LM Studio / vLLM）
+//   **没有 Key 可填** ⇒ 保存被永久挡住，唯一出路是「跳过，稍后配置」⇒ 向导走完却没有
+//   一个能发消息的模型。主进程侧那套「本机免 Key」改造对新用户因此完全不可达。
+// 修法：必填项收敛为存库三要素（name/base_url/model_id），Key 有无交主进程裁决
+//   （localModel.credentialUsable 复用 streamGuard.isLocalEndpoint，单一事实来源）。
+//   渲染层**不**复制端点正则 —— 复制出来就是第二个事实来源，漂移表现正是
+//   「向导放行、一发消息被拒」这类最难排查的错位。
+const FORM_TS = path.join(SRC, 'lib', 'onboardingForm.ts');
+const ONBOARDING_JSX = path.join(SRC, 'components', 'Onboarding.jsx');
+
+check('MD2：本机回环端点未填 Key 也能存（原先被 !form.api_key 挡死）', () => {
+  const missing = missingRequiredFields({
+    name: 'Ollama', base_url: 'http://127.0.0.1:11434/v1', api_key: '', model_id: 'qwen2.5:7b',
+  });
+  assert.deepEqual(missing, [], `本机无 Key 应可保存，实际缺失 ${JSON.stringify(missing)}`);
+  assert.ok(!REQUIRED_PROVIDER_FIELDS.includes('api_key'),
+    'api_key 不得出现在存库必填项里（要不要 Key 由主进程按端点判）');
+});
+
+check('MD2：远端未填 Key 同样不在表单层拦（裁决权在主进程，不在 UI）', () => {
+  // 刻意断言「表单放行」：若这里改成渲染层自己判端点，就会与主进程判据漂移。
+  // 真正的拒绝发生在 chatStreamOnce，文案已写明「本机端点无需 Key」。
+  const missing = missingRequiredFields({
+    name: 'DeepSeek', base_url: 'https://api.deepseek.com/v1', model_id: 'deepseek-chat',
+  });
+  assert.deepEqual(missing, [], '表单层不应因缺 Key 拦下远端配置');
+});
+
+check('MD2：存库三要素仍逐个必填（放宽 Key 不等于放开校验）', () => {
+  // 逐项缺一，精确断言「缺的是哪个」——只断 length>0 会把三项互相掩盖
+  const full = { name: 'X', base_url: 'http://127.0.0.1:8080/v1', model_id: 'm' };
+  for (const k of REQUIRED_PROVIDER_FIELDS) {
+    const missing = missingRequiredFields({ ...full, [k]: '' });
+    assert.deepEqual(missing, [k], `缺 ${k} 时应当且仅当报 ${k}，实际 ${JSON.stringify(missing)}`);
+  }
+  assert.equal(REQUIRED_PROVIDER_FIELDS.length, 3, '必填项应为三项（新增/删减须同步本断言与文档）');
+});
+
+check('MD2：纯空白等同未填（原判据 !form.x 会把 "   " 当已填）', () => {
+  const missing = missingRequiredFields({
+    name: '   ', base_url: '  http://127.0.0.1:8080/v1  ', model_id: '\t',
+  });
+  assert.deepEqual(missing, ['name', 'model_id'], `空白应判未填，实际 ${JSON.stringify(missing)}`);
+  // 前后空白不该导致误判（地址两侧带空格是复制粘贴的常见形态）
+  assert.deepEqual(missingRequiredFields({ name: ' n ', base_url: ' u ', model_id: ' m ' }), []);
+});
+
+check('MD2：接线——组件真的调用该判据，且不再自行拦 api_key', () => {
+  // 纯函数有断言 ≠ 调用点被覆盖：必须同时确认组件那一层用的是它、且旧的错误条件已删。
+  const { blankComments } = require('../scripts/lib/rawButtonScan.js');
+  const code = blankComments(fs.readFileSync(ONBOARDING_JSX, 'utf8'));
+  assert.ok(fs.existsSync(FORM_TS), 'onboardingForm.ts 必须存在（断言所测模块即上架模块）');
+  assert.ok(/from\s+['"]\.\.\/lib\/onboardingForm['"]/.test(code),
+    'Onboarding.jsx 必须从 ../lib/onboardingForm 引入（换成别处同名函数即为漂移）');
+  assert.ok(/missingRequiredFields\s*\(/.test(code),
+    'Onboarding.jsx 必须调用 missingRequiredFields（否则纯函数再对也不生效）');
+  assert.ok(!/!\s*form\.api_key/.test(code),
+    'Onboarding.jsx 不得再出现 !!form.api_key 判据（会把无 Key 的本机用户永久挡住）');
+});
+
+check('自检：上一条守卫不是恒真（样例含缺陷时必须命中，注释不得满足它）', () => {
+  // 「验证器先被验证」：若正则写错/空白化失效，上一条会永久通过而无人在测。
+  const { blankComments } = require('../scripts/lib/rawButtonScan.js');
+  const SAMPLE_BAD = 'function f(form) {\n  if (!form.name || !form.api_key) { return; }\n}';
+  assert.ok(/!\s*form\.api_key/.test(blankComments(SAMPLE_BAD)),
+    '守卫自检失败：含缺陷的样例未被命中，说明正则或 blankComments 失效');
+  const SAMPLE_COMMENT_ONLY = '// 旧写法是 !form.api_key\nfunction f(form) { return !!form.name; }';
+  assert.ok(!/!\s*form\.api_key/.test(blankComments(SAMPLE_COMMENT_ONLY)),
+    '注释里提到旧写法不得被判为缺陷（否则会逼人删掉解释性注释）');
 });
 
 console.log(`\n${pass}/${total} 通过`);
