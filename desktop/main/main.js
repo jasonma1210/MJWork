@@ -1051,11 +1051,11 @@ agentRunner.initAgentRunner({
   // P0-1：registerChild/killChildrenForRun 收敛到 childRegistry（与 initToolExec 同源）
   registerChild: (child) => childRegistry.register(runScope.getStore()?.runId, child),
   killChildrenForRun: (runId) => childRegistry.kill(runId),
-  // 2026-10-15：会话消息持久化通道（agentRunner 收归主进程落库用）——
-  // conversationId 即 threadKey（thread.id），camelCase 形状与 localStore.addMessage 对齐
-  persistMessage: ({ conversationId, message }) => {
+  // 2026-10-15：会话消息持久化通道（agentRunner 收归主进程落库）；conversationId 即 threadKey，
+  // V8：带 runId 是为了让「边生成边落的草稿行」就地转正而不是再新增一条（见 store/streamDraft.js）
+  persistMessage: ({ conversationId, message, runId }) => {
     if (!localStore) throw new Error('本地数据层未初始化');
-    return localStore.addMessage({ threadId: conversationId, ...message });
+    return require('./store/streamDraft').adopt(runId, conversationId, message, localStore) || localStore.addMessage({ threadId: conversationId, ...message });
   },
   // P0-1（2026-10-22）：运行历史的唯一读取口——agentRunner 用它从会话库装配 messages，
   // 取代渲染层内存快照（后者只含用户消息与最终总结，中间工具往返不在其中 ⇒ 刷新前后两种行为）。
@@ -1110,7 +1110,7 @@ agentRunner.initAgentRunner({
     // M6（2026-10-30）：带外小调用（AC 提取 / Judge / 路由分类）在 payload 上带 `quiet:true`，
     // 这里给它换一个渲染层不认识的 tag —— 否则它的输出会经 model:delta 串进对话窗口
     //（用户会在任务中途看到一段 JSON 或摘要正文）。渲染层对未知 tag 一律丢弃。
-    chat: (chatPayload) => chatStreamOnce(chatPayload, sender, signal, chatPayload?.quiet ? `${runId}-quiet` : runId),
+    chat: (chatPayload) => require('./store/streamDraft').routeChat(chatPayload, { chatStreamOnce, sender, signal, runId, conversationId, model, getStore: () => localStore }),
     orchestrateTask: (args) => toolOrchestrateTask(args, { signal, emitSubagent, conversationId: conversationId || '', projectPath: projectPath || '' }),
     // 对话内网络插件搜索/安装（LobeChat 式）：搜索只读；安装恒走 L3 审批卡
     searchPlugins: (args) => searchPluginsTool(args),

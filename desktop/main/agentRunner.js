@@ -381,10 +381,12 @@ function startAgentRun(payload, sender) {
     // 抛错也会静默跳过 UI 追加与结束信息条（双重丢总结）。
     // 现在主进程直写 localStore：刷新/切走/渲染层异常都丢不了总结。
     // V08：持久 ACK 真实化——persistChatMessage 返回真实结果；失败绝不能宣称已保存。
+    // V8（2026-11-05）：透传 runId——流式草稿按 runId 登记，本轮落库时要能找到并「转正」那条草稿行
+    //（否则同一段正文会先以草稿落一次、收尾再新增一次，用户看到两条重复回答）。
     const persistChatMessage = (m) => {
       if (!deps.persistMessage || !payload.conversationId) return false;
       try {
-        deps.persistMessage({ conversationId: payload.conversationId, message: m });
+        deps.persistMessage({ conversationId: payload.conversationId, message: m, runId });
         return true;
       } catch (e) {
         console.warn(`[agentRun] 消息持久化失败 runId=${runId} role=${m?.role}:`, e.message);

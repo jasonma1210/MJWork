@@ -597,6 +597,56 @@ check('导出：不存在的会话返回 ok:false', sR3.exportThreadMarkdown(999
   dbHot.close();
   fs.rmSync(dirHot, { recursive: true, force: true });
 
+  // ── V8（2026-11-05）：原地更新一条已有消息，且必须**真的进 SQLite** ──
+  // 这段是「强杀后已输出内容不丢」的地基：流式草稿靠同一个 id 反复改写 content。
+  // 只断言「内存里变了」等于没测——读源是 SQLite，镜像没跟上的话重启后读到的仍是旧正文。
+  const dirUpd = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-upd-'));
+  liveDb._reset();
+  const sUpd = new LocalStore(dirUpd);
+  const tUpd = sUpd.createThread({ title: '原地更新', cwd: '/tmp/upd' });
+  const mUpd = sUpd.addMessage({ threadId: tUpd.id, role: 'assistant', content: '前半段' });
+  const dbUpd = await openDbAsync(path.join(dirUpd, 'dbdata'), { driver: 'node-sqlite' });
+  liveDb._reset();
+  liveDb.publish(dbUpd);
+  sUpd.flushSync();                                        // 首版正文进副本
+
+  const updRes = sUpd.updateMessage({ threadId: tUpd.id, id: mUpd.id, content: '前半段+后半段' });
+  const updMirror = sUpd.mirrorNow();
+  const snapUpd = readSnapshot(dbUpd).messages.find((x) => x.id === mUpd.id);
+  check('V8：updateMessage 原地改正文，且镜像对这条 id 走覆盖写（不是「已存在就跳过」）',
+    updRes.ok === true && updMirror.messagesUpdated === 1
+    && !!snapUpd && snapUpd.content === '前半段+后半段',
+    `updated=${updMirror.messagesUpdated} sqlite=${snapUpd && snapUpd.content}`);
+
+  // 负样本（这条才是关键）：**不登记**的原地修改必须同步不到 SQLite。
+  // 否则「覆盖写生效」可能只是因为镜像变成了全量重写，而全量重写会把热路径成本翻倍。
+  const mRaw = sUpd.addMessage({ threadId: tUpd.id, role: 'assistant', content: '原始' });
+  sUpd.mirrorNow();                                        // 新行先落进副本
+  mRaw.content = '绕过 updateMessage 的改写';               // 直接动内存，不经过白名单/登记
+  const rawMirror = sUpd.mirrorNow();
+  const snapRaw = readSnapshot(dbUpd).messages.find((x) => x.id === mRaw.id);
+  check('V8：未登记的原地修改不会同步（证明「覆盖写」只对登记 id 生效，未退化成全量重写）',
+    rawMirror.messagesUpdated === 0 && !!snapRaw && snapRaw.content === '原始',
+    `updated=${rawMirror.messagesUpdated} sqlite=${snapRaw && snapRaw.content}`);
+
+  // 身份字段不可改写：允许改 role/threadId 等于允许把历史搬到别的会话里
+  sUpd.updateMessage({ threadId: tUpd.id, id: mUpd.id, role: 'user', content: 'x' });
+  const keptRole = sUpd.listMessages(tUpd.id).find((x) => x.id === mUpd.id);
+  check('V8：updateMessage 只改内容字段，role / id / threadId 不可被改写',
+    keptRole.role === 'assistant' && Number(keptRole.threadId) === Number(tUpd.id),
+    `role=${keptRole.role}`);
+
+  // 会话对不上必须拒绝：否则一个传错的 threadId 就能改到别的会话的消息
+  const tOther = sUpd.createThread({ title: '另一个会话', cwd: '/tmp/upd2' });
+  const wrong = sUpd.updateMessage({ threadId: tOther.id, id: mUpd.id, content: '越权改写' });
+  check('V8：threadId 不匹配时拒绝更新（不跨会话改消息）',
+    wrong.ok === false && sUpd.listMessages(tUpd.id).find((x) => x.id === mUpd.id).content !== '越权改写',
+    String(wrong.error));
+
+  liveDb._reset();
+  dbUpd.close();
+  fs.rmSync(dirUpd, { recursive: true, force: true });
+
   fs.rmSync(dirMirror, { recursive: true, force: true });
 
   fs.rmSync(dirNoBak, { recursive: true, force: true });

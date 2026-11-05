@@ -11,10 +11,15 @@
 //    实测基线（2026-11-05，真实库 43 线程 / 1873 消息 / 3.5MB）：一次全量 reconcile 10~18ms，
 //    而现有 JSON 落盘本身已要 ~14ms（stringify 5ms + 写盘 9ms）；每条消息都重写一次
 //    等于把 flush 成本翻倍，而 flush 就在流式消息热路径上（150ms 合并窗口）。
-//    消息可以只数 id 是因为它们**按 id 不可变**：addMessage 分配新 id（seq 单调递增），
-//    replaceMessages（/compact）也是 `nextId()` 重新分配、旧 id 整批消失——
-//    不存在「同一 id 内容被改写」的路径（已核 localStore.js:437-497）。
+//    消息可以只数 id 是因为它们**原则上按 id 不可变**：addMessage 分配新 id（seq 单调递增），
+//    replaceMessages（/compact）也是 `nextId()` 重新分配、旧 id 整批消失。
 //    线程/凭证/项目/偏好数量级 10^1~10^2，全量重写比求差更简单、更不容易错。
+//
+//    ⚠ 2026-11-05 修正：「按 id 不可变」不再是全体事实——流式草稿（V8）需要**原地增长**同一条
+//    assistant 消息的 content（`localStore.updateMessage`）。若仍走上面的「已存在就忽略」快路径，
+//    内存里改了而 SQLite 还是旧内容，重启后读到的就是被截断的正文（读源是 SQLite）。
+//    故这类 id 由调用方显式登记进 `opts.forceIds`，只有它们走 INSERT OR REPLACE 覆盖。
+//    默认不登记 = 保持增量语义不变，热路径不多付一次全量比对。
 // ② 用 `INSERT OR REPLACE` 而不是 `ON CONFLICT ... DO UPDATE`。
 //    UPSERT 语法要 SQLite ≥3.24；本库有 sql.js（WASM）兜底路径，不给自己加一门版本门槛。
 //    本表集**没有外键**（见 v19 迁移注释），REPLACE 的「先删后插」副作用在这里无害。
@@ -71,8 +76,9 @@ const orNull = (v) => (v === undefined ? null : v);
 /**
  * 把 LocalStore 的内存态镜像进 SQLite：单事务，任一语句失败整批回滚。
  * 不吞异常——调用方（LocalStore.flush）负责 fail-open 与留痕。
+ * opts.forceIds：需要**覆盖已存在行**的消息 id 集合（流式草稿原地增长，见文件头取舍①）。
  */
-function mirrorSnapshot(db, data) {
+function mirrorSnapshot(db, data, opts) {
   const started = Date.now();
   const src = data || {};
   const threads = asArray(src.threads);
@@ -80,8 +86,9 @@ function mirrorSnapshot(db, data) {
   const providers = asArray(src.providers);
   const projects = asArray(src.projects);
   const preferences = asObject(src.preferences);
+  const forceIds = opts && opts.forceIds instanceof Set ? opts.forceIds : null;
   const stats = {
-    threads: 0, messagesInserted: 0, messagesDeleted: 0,
+    threads: 0, messagesInserted: 0, messagesDeleted: 0, messagesUpdated: 0,
     providers: 0, projects: 0, preferences: 0, ms: 0,
   };
 
@@ -112,11 +119,12 @@ function mirrorSnapshot(db, data) {
     const current = new Set();
     for (const m of messages) {
       current.add(m.id);
-      if (existing.has(m.id)) continue;
+      const known = existing.has(m.id);
+      if (known && !(forceIds && forceIds.has(m.id))) continue;
       const tc = m.toolCalls === undefined || m.toolCalls === null ? null : JSON.stringify(m.toolCalls);
       insMsg.run(m.id, m.threadId, m.role ?? '', m.content ?? '', tc, orNull(m.toolCallId),
         m.tokensInput ?? 0, m.tokensOutput ?? 0, m.modelName ?? '', m.createdAt ?? 0);
-      stats.messagesInserted++;
+      if (known) stats.messagesUpdated++; else stats.messagesInserted++;
     }
     const delMsg = db.prepare('DELETE FROM messages WHERE id = ?');
     for (const id of existing) {

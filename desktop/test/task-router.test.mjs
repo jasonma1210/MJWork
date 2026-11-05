@@ -160,8 +160,13 @@ check('㊲ 五处带外调用都带 quiet（AC / Judge / 路由 / 压缩 / 深�
   && /quiet: true,/.test(routerSrc)
   && /withTimeout\(chatFn\(\{ quiet: true,/.test(read('agent-core', 'index.js'))
   && /reasoningEffort: ref\.model\.reasoning_effort \|\| '', quiet: true,/.test(read('agent-core', 'index.js')));
+// V8（2026-11-05）：quiet 换 tag 的逻辑随「流式草稿落库」一起移进了 main/store/streamDraft.js
+//（routeChat 现在是 chat 通道唯一的派发点：它要按 quiet 决定落不落草稿、并给 sender 套外壳）。
+// 断言随之拆成两半，缺任一半都等于没接线：① main.js 真的经 routeChat 派发；② 该模块确实把 quiet
+// 换成了 `${runId}-quiet`。只断一处会让「模块写好了但 main.js 没接」或「接了但 quiet 分支被删」蒙混过去。
 check('㊳ 宿主按 quiet 换掉 stream tag（否则照旧串进对话窗口）',
-  /chatPayload\?\.quiet \? `\$\{runId\}-quiet` : runId/.test(mainSrc));
+  /routeChat\(chatPayload,/.test(mainSrc)
+  && /chatPayload\.quiet\)[\s\S]{0,240}?\$\{runId\}-quiet/.test(read('main', 'store', 'streamDraft.js')));
 
 // ── F. 跨层：字段过 IPC 后仍在（zod 闭合对象默认 strip，必须读解析后的 data）──
 const { validateAgentRunPayload, validateAgentEvent } = await import('../shared-ipc/contract.mjs');

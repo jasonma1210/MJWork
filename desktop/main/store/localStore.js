@@ -13,6 +13,8 @@ const { mirrorSnapshot, readSnapshot, diffSnapshots } = require('./localMirror')
 //   3) load 损坏先 .bak 恢复，失败才重置并 console.error 明示
 const SCHEMA_VERSION = 1;
 const DAILY_BACKUP_KEEP_DAYS = 7;
+// V8：updateMessage 允许改写的内容字段白名单（身份/时间字段一律不可改，见该方法注释）
+const UPDATABLE_MESSAGE_FIELDS = ['content', 'toolCalls', 'toolCallId', 'tokensInput', 'tokensOutput', 'modelName'];
 // ST1 性能收口（2026-11-05）：JSON 回滚快照的最小间隔。热路径（消息追加/线程状态）上的 flush
 // 在这个窗口内只写 SQLite，不重写 3.5MB 的 JSON；间隔到了补一次，退出时 flushSync 强制补。
 // 可用 `MJ_STORE_JSON_SNAPSHOT_MS` 覆盖（排障时设 0 = 每次都写，回到改造前的行为）。
@@ -50,6 +52,10 @@ class LocalStore {
     this.sourceOfTruth = null; // 'sqlite' | 'json' —— 本次装载用的是哪个读源（诊断面 + 测试断言）
     this._lastJsonAt = 0;      // 上次写 JSON 快照的时刻（0 = 还没写过，首次必写）
     this._jsonDirty = false;   // SQLite 已更新、JSON 快照还没跟上
+    // V8（2026-11-05）：被**原地改写**过的消息 id。流式草稿会一边生成一边增长同一条消息的正文，
+    // 而影子副本默认对「已存在的 id」直接跳过（增量语义，见 localMirror 文件头取舍①）——
+    // 不把这类 id 显式登记出来，改的内容就永远进不了 SQLite，重启后读到被截断的正文。
+    this._dirtyMessageIds = new Set();
     this.data = this.load();
     // ST1（2026-11-05）：影子副本的库句柄。本实例比库先构造（openDbAsync 是异步的），
     // 故向 liveDb 订阅「库已就绪」，而不是让 main.js 传参（那边 code 行数已钉死）。
@@ -334,7 +340,10 @@ class LocalStore {
     const db = this._mirrorDb;
     if (!db) return { ok: false, error: 'db-not-ready' };
     try {
-      const res = mirrorSnapshot(db, this.data);
+      const res = mirrorSnapshot(db, this.data, { forceIds: this._dirtyMessageIds });
+      // 只在**成功之后**清：抛错时整批已回滚，这批 id 必须留着等下次重试，
+      // 否则一次瞬时写失败就会让草稿正文永久停在 SQLite 里（而 JSON 侧是新的，两边静默分叉）。
+      this._dirtyMessageIds.clear();
       this.mirrorError = null;
       return res;
     } catch (e) {
@@ -636,6 +645,30 @@ class LocalStore {
     // P0-1：消息追加是最高频写路径，改为合并刷盘（内存态即时可见，磁盘延迟 ≤150ms）
     this.scheduleFlush();
     return m;
+  }
+
+  // V8（2026-11-05）：**原地更新**一条已有消息（流式草稿专用）。
+  //
+  // 为什么需要它：消息此前一旦落库就不可变（addMessage 分配新 id、replaceMessages 整批换 id），
+  // 所以「已输出的内容强杀后丢失」一直没人能修——修法只能是「同一条消息的正文随生成增长」。
+  // 这会打破镜像层「按 id 不可变」的前提，故这里必须同时登记 `_dirtyMessageIds`（见构造器注释）。
+  //
+  // 边界：只允许改这几个内容字段，id / threadId / role / createdAt 一律不接受改写——
+  // 它们决定「这是谁的消息」「什么时候说的」，允许改就等于允许把历史搬走。
+  // threadId 参与定位（同一 id 必须属于该会话），避免调用方传错会话时改到别人的消息上。
+  updateMessage({ threadId, id, ...patch }) {
+    this.requireWritable(); // V08：corrupt-blocked 态拒绝写入（fail-closed）
+    const m = this.data.messages.find((x) => Number(x.id) === Number(id) && Number(x.threadId) === Number(threadId));
+    if (!m) return { ok: false, error: '消息不存在' };
+    for (const k of UPDATABLE_MESSAGE_FIELDS) {
+      if (patch[k] !== undefined) m[k] = patch[k];
+    }
+    const t = this.data.threads.find((x) => Number(x.id) === Number(m.threadId));
+    if (t) t.updatedAt = Date.now();
+    this._dirtyMessageIds.add(m.id);
+    this._dirty = true;   // 紧随其后的 flushSync 会因「无脏数据」早退，这里必须显式置脏
+    this.scheduleFlush(); // 调用方忘了刷盘时，150ms 后仍会落一次（不靠调用方的自觉）
+    return { ok: true, message: m };
   }
 
   listMessages(threadId) {
