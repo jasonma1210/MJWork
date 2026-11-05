@@ -8,9 +8,12 @@
 //   全新 npm ci，互不影响），所以只有本地连续操作时才暴露。
 //
 // 结论（依据 main/db/index.js 的驱动选择）：
-//   打包版 openDbAsync(isPackaged=true) **一律 sql.js(WASM)，不加载任何原生模块**
-//   （真机事故：原生模块在主进程 NAPI 注册时 SIGSEGV，无法用子进程金丝雀兜底）；
-//   better-sqlite3 只是 optionalDependencies，仅服务 dev 与测试。
+//   打包版 openDbAsync(isPackaged=true) **不加载任何需要 ABI 重建的原生 npm 模块**
+//   （真机事故：better-sqlite3 在主进程 NAPI 注册时 SIGSEGV，无法用子进程金丝雀兜底）。
+//   ST2（2026-11-05）后打包版首选 **node:sqlite**——它是编进 Node/Electron 二进制本身的
+//   内建模块，没有独立 .node 文件、不做 NAPI 注册，因此上述崩溃根因在结构上不存在，
+//   同时拿到 sql.js 没有的真实 WAL；打不开时降级 sql.js（WASM）。
+//   better-sqlite3 只是 optionalDependencies，仅服务 dev 与测试，打包版**不再尝试**。
 //   → 打包期没有任何原生模块需要重编，`npmRebuild: false` 是正解，
 //     既保住本地测试基线，也省掉每次构建的原生编译时间。
 //
@@ -18,6 +21,7 @@
 // 必须显式处理（re-enable rebuild 或改用 WASM 替代），此测试会失败并说明原因。
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 let pass = 0;
 let fail = 0;
@@ -46,15 +50,71 @@ check('better-sqlite3 仍是 optionalDependencies（没装也能跑这一保证�
 check('better-sqlite3 不在运行时 dependencies（否则 packaged 也会尝试加载原生模块）',
   !(pkg.dependencies || {})['better-sqlite3']);
 
-// ── 3. packaged 必须走 sql.js(WASM)：配置层与代码层双向确认 ──
-check('asarUnpack 仍解包 sql.js 的 WASM（打包版唯一 DB 引擎必须可加载）',
+// ── 3. packaged 不得选用需要 ABI 重建的原生驱动；sql.js 保留为兜底 ──
+check('asarUnpack 仍解包 sql.js 的 WASM（兜底引擎必须可加载）',
   Array.isArray(pkg.build.asarUnpack) && pkg.build.asarUnpack.some((p) => /sql-wasm\.wasm/.test(p)),
   JSON.stringify(pkg.build.asarUnpack));
 const dbSrc = fs.readFileSync(path.join(root, 'main', 'db', 'index.js'), 'utf8');
-check('代码层：packaged 一律 sql.js、不加载原生模块（与 npmRebuild:false 一致）',
-  /isPackaged/.test(dbSrc) && /打包版一律 sql\.js/.test(dbSrc));
 check('代码层：MJ_DB_DRIVER 仍可强制指定驱动（排障逃生口未被拆掉）',
   /MJ_DB_DRIVER/.test(dbSrc));
+
+// 「打包版不得加载原生模块」原来是**注释字符串匹配**（要求源码里出现「打包版一律 sql.js」）：
+// 把手段当目的——措辞一变就红，而它真正想守的风险（打包版去 require 需要 electron-rebuild 的
+// better-sqlite3）一个字都测不到。ST2 之后可选驱动变成 node:sqlite（内建、无 ABI）与
+// sql.js（WASM），唯一禁止项仍是 better-sqlite3。所以改成**直接问运行时选了什么**：
+// 起一个子进程按 isPackaged=true 真开一次库，读回 __driver。
+const PACKAGED_DRIVER_PROBE = [
+  "const os=require('os'),fs=require('fs'),path=require('path');",
+  "const {openDbAsync}=require('./main/db');",
+  "const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mj-packaged-driver-'));",
+  'openDbAsync(dir,{isPackaged:true})',
+  '  .then((db)=>{process.stdout.write("DRIVER:"+db.__driver);',
+  '    try{db.close();}catch{}',
+  '    fs.rmSync(dir,{recursive:true,force:true});})',
+  '  .catch((e)=>{process.stdout.write("DRIVER:ERR "+e.message);});',
+].join('\n');
+const packagedDriver = (() => {
+  try {
+    const out = execFileSync(process.execPath, ['-e', PACKAGED_DRIVER_PROBE], {
+      cwd: root, encoding: 'utf8', timeout: 60000,
+      // 清掉排障用的强制驱动：本断言要测的是 auto 的**默认选择**
+      env: { ...process.env, MJ_DB_DRIVER: '' },
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const m = /DRIVER:(\S+)/.exec(out);
+    return m ? m[1] : `(探测无输出: ${out.slice(-120)})`;
+  } catch (e) {
+    return `(探测崩溃: ${e.message})`;
+  }
+})();
+check('打包版 auto 不得选用需要 ABI 重建的 better-sqlite3（内建 node:sqlite / WASM sql.js 均可）',
+  packagedDriver === 'node-sqlite' || packagedDriver === 'sqljs', packagedDriver);
+
+// 上面那条行为断言只覆盖「本机现在的走向」：node:sqlite 几乎总是先成功，打包路径根本
+// 走不到 better-sqlite3 那一支 —— 于是「删掉 !isPackaged 守卫」这种最危险的回归可以一路绿。
+// 实测确认过（把守卫改掉，行为断言照样通过）。所以再断**候选顺序本身**：
+const { driverPlan } = require('../main/db');
+// ST2 的核心目的：拿到真实 WAL。若把 node:sqlite 从候选里摘掉，行为断言照样绿
+// （打包版会落到 sql.js —— 那也是允许项），但 WAL 会**静默消失**。所以必须单独钉「首选」。
+check('auto 在 node:sqlite 可用时必须首选它（ST2 核心目的：真实 WAL，摘掉它是静默退化）',
+  driverPlan({ driver: 'auto', isPackaged: true, nodeSqliteOk: true })[0] === 'node-sqlite'
+  && driverPlan({ driver: 'auto', isPackaged: false, nodeSqliteOk: true })[0] === 'node-sqlite',
+  `packaged=${JSON.stringify(driverPlan({ driver: 'auto', isPackaged: true, nodeSqliteOk: true }))}`
+  + ` dev=${JSON.stringify(driverPlan({ driver: 'auto', isPackaged: false, nodeSqliteOk: true }))}`);
+check('打包版候选顺序不含 better-sqlite3（即使 node:sqlite 不可用也不回落到原生模块）',
+  !driverPlan({ driver: 'auto', isPackaged: true, nodeSqliteOk: false }).includes('better-sqlite3'),
+  JSON.stringify(driverPlan({ driver: 'auto', isPackaged: true, nodeSqliteOk: false })));
+check('dev 候选顺序保留 better-sqlite3 兜底（开发期性能取舍未被误删）',
+  driverPlan({ driver: 'auto', isPackaged: false, nodeSqliteOk: false }).includes('better-sqlite3'),
+  JSON.stringify(driverPlan({ driver: 'auto', isPackaged: false, nodeSqliteOk: false })));
+check('候选顺序恒以 sqljs 收尾（零原生依赖的终极兜底不可被移除）',
+  ['auto'].every((d) => {
+    const p = driverPlan({ driver: d, isPackaged: true, nodeSqliteOk: false });
+    return p[p.length - 1] === 'sqljs';
+  }));
+check('显式指定的驱动不受候选顺序影响（排障逃生口）',
+  driverPlan({ driver: 'sqljs', isPackaged: true, nodeSqliteOk: true }).join(',') === 'sqljs'
+  && driverPlan({ driver: 'better-sqlite3', isPackaged: true, nodeSqliteOk: true }).join(',') === 'better-sqlite3');
 
 // ── 4. 发布目标必须与真实仓库一致（曾因写成 MJCode 导致自动更新 404）──
 // 2026-10-28：仓库实际是 jasonma1210/MJWork（`git remote -v` 可核），此前这里钉的 MJCoder

@@ -1,13 +1,17 @@
-// P1-1/P1-2：SQLite 底座（dev=better-sqlite3 / 打包版=sql.js WASM，双驱动自适应见 openDbAsync）
+// P1-1/P1-2：SQLite 底座。ST2（2026-11-05）起驱动顺序为
+//   node:sqlite（内建，真实 WAL）→ better-sqlite3（原生，dev 兜底）→ sql.js（WASM，终极兜底）
+// 双驱动自适应见 openDbAsync 与下方驱动选择注释。
 // 范围裁定（增量演进，不动现有体系）：
 //   · 本库只承载【任务编排子系统】（task_groups / sub_tasks），线程/消息/凭证仍走
 //     local-data.json（localStore）——两者职责互不重叠，后续按需渐进迁移。
 //   · WAL 模式：多 Worker 并发读 + 单写不阻塞；迁移用 PRAGMA user_version 版本链。
+//     注意：WAL 只有原生驱动才有；sql.js 是内存库 + 全量 export，PRAGMA 只是无害空转。
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const { openSqliteJsDb } = require('./sqljsDb');
+const { openNodeSqliteDb } = require('./nodeSqliteDb');
 const dbStatus = require('../store/dbStatus');
 
 // ── 幂等加列（X4）──
@@ -555,15 +559,18 @@ function openDb(dataDir) {
 // ── 驱动选择（openDbAsync）──
 // better-sqlite3 是原生模块，在部分受限环境（如本沙箱）的 Electron 内 new Database() 会
 // SIGSEGV 且不可捕获。策略：
-//   1. MJ_DB_DRIVER=sqljs / better-sqlite3 → 强制指定
-//   2. auto（默认）+ packaged：**直接 sql.js，不加载任何原生模块**——
-//      真机事故（2026-10-14）：打包版 DMG 主进程启动 7s 即 SIGSEGV，栈在 node_module_register/
-//      napi_register_module_v1，崩溃前 better-sqlite3 prebuild 已加载且金丝雀探测已放行
-//      （探测子进程环境干净，复现不了完整主进程状态下的 NAPI 注册崩溃）。
-//      结论：主进程内的原生模块加载无法用子进程探测兜底 → 打包版一律 sql.js（WASM，零原生依赖）。
-//   3. auto + 非 packaged（dev）：子进程「金丝雀」探测；通过 → better-sqlite3（开发期更快），
-//      失败/超时 → 降级 sql.js。
-//      （探测为一次性子进程成本 ~1s，换取「永不因驱动崩溃而失能任务编排子系统」）
+//   1. MJ_DB_DRIVER=node-sqlite / better-sqlite3 / sqljs → 强制指定
+//   2. auto（默认）按下列顺序，任一步失败都继续降级，且降级原因必须留痕（不静默）：
+//      a) **node:sqlite** —— ST2 新增。它是编进 Node/Electron 二进制本身的内建模块：
+//         没有独立 .node 文件、不做 NAPI 注册，2026-10-14 那类崩溃的**根因在结构上不存在**，
+//         同时拿到真实 WAL（sql.js 没有）。实测矩阵见 db/nodeSqliteDb.js 头部。
+//      b) better-sqlite3 —— 仅 dev。**打包版不再尝试**：真机事故（2026-10-14）是打包版 DMG
+//         主进程启动 7s 即 SIGSEGV，栈在 node_module_register/napi_register_module_v1，
+//         崩溃前 prebuild 已加载且子进程金丝雀探测已放行 —— 结论是「主进程内的原生模块加载
+//         无法用子进程探测兜底」。dev 仍需金丝雀探测，且本机实测 ABI 127≠150 会直接失败。
+//      c) sql.js —— WASM，零原生依赖，终极兜底。
+//   注：由 a 降到 c 时，a 留下的 -wal 对 sql.js 不可见（它只读主文件）。
+//   缓解：nodeSqliteDb 的 close() 会 wal_checkpoint(TRUNCATE) 把 WAL 并回主文件。
 const PROBE_SRC = `
 try {
   if (process.platform === 'darwin') {
@@ -614,9 +621,56 @@ function probeBetterSqlite3(timeoutMs = 10000) {
 }
 
 // 包一层：把「库打开时发生过降级」的事实转交 dbStatus（X5），避免调用方各自处理
-async function openSqliteJsDbTracked(file) {
-  const db = await openSqliteJsDb(file);
+async function openTracked(opener, file) {
+  const db = await opener(file);
   if (db && db.__openWarning) dbStatus.markWarning(db.__openWarning);
+  return db;
+}
+const openSqliteJsDbTracked = (file) => openTracked(openSqliteJsDb, file);
+const openNodeSqliteDbTracked = (file) => openTracked(openNodeSqliteDb, file);
+
+// ── 候选驱动顺序（纯函数）──
+// 为什么抽成纯函数而不是留一串 if：**「打包版永不尝试 better-sqlite3」是一条控制流不变量，
+// 行为测试在本机测不到** —— node:sqlite 几乎总是先成功，打包路径根本走不到 better-sqlite3
+// 那一支，于是「删掉 !isPackaged 守卫」这种最危险的回归可以一路绿到底（已实测确认）。
+// 把顺序决策变成可入参的纯函数，这条不变量才第一次真的可断言。
+// better-sqlite3 是否真能用仍由金丝雀探测在循环里懒判定（避免 dev 启动白付 ~1s 探测成本）。
+function driverPlan({ driver, isPackaged, nodeSqliteOk }) {
+  if (driver === 'sqljs') return ['sqljs'];
+  if (driver === 'better-sqlite3') return ['better-sqlite3'];
+  if (driver === 'node-sqlite') return ['node-sqlite'];
+  const plan = [];
+  if (nodeSqliteOk) plan.push('node-sqlite');
+  // 打包版不尝试：主进程内加载原生模块会在 NAPI 注册期 SIGSEGV，且该崩溃无法用
+  // 子进程金丝雀兜底（2026-10-14，见文件头驱动选择注释）。
+  if (!isPackaged) plan.push('better-sqlite3');
+  plan.push('sqljs');
+  return plan;
+}
+
+let nodeSqliteLoadError = '';
+function canRequireNodeSqlite() {
+  try {
+    require('node:sqlite');
+    return true;
+  } catch (e) {
+    // 内建模块缺失 ⇒ 没有真实 WAL（只剩 sql.js 的内存库 + 全量 export）。
+    // 这是**需要被看见**的降级：记下原因，由 openDbAsync 统一打一条，不在这里各自静默。
+    nodeSqliteLoadError = e.message;
+    return false;
+  }
+}
+
+// 按驱动名打开（含迁移）。better-sqlite3 的 openDb 内部自己迁移。
+async function openWithDriver(name, dataDir, file) {
+  if (name === 'node-sqlite') {
+    const db = await openNodeSqliteDbTracked(file);
+    migrate(db, file);
+    return db;
+  }
+  if (name === 'better-sqlite3') return openDb(dataDir);
+  const db = await openSqliteJsDbTracked(file);
+  migrate(db, file);
   return db;
 }
 
@@ -625,40 +679,35 @@ async function openDbAsync(dataDir, { isPackaged = false, driver: driverOverride
   fs.mkdirSync(dataDir, { recursive: true });
   // driverOverride 显式指定驱动（测试用 'sqljs' 强制零原生，绕过 better-sqlite3 ABI/编译依赖）；
   // 未指定则按环境变量 MJ_DB_DRIVER 走，缺省 auto。
-  const driver = String(driverOverride || process.env.MJ_DB_DRIVER || 'auto').toLowerCase();
+  const raw = String(driverOverride || process.env.MJ_DB_DRIVER || 'auto').toLowerCase();
+  const driver = (raw === 'nodesqlite' || raw === 'node:sqlite') ? 'node-sqlite' : raw;
+  const explicit = driver !== 'auto';
 
-  if (driver === 'sqljs') {
-    const db = await openSqliteJsDbTracked(file);
-    migrate(db, file);
-    return db;
+  const plan = driverPlan({ driver, isPackaged, nodeSqliteOk: canRequireNodeSqlite() });
+  if (driver === 'auto' && !plan.includes('node-sqlite')) {
+    console.warn(`[db] node:sqlite 不可用（${nodeSqliteLoadError || '已被显式排除'}）`
+      + `——本次没有真实 WAL，候选顺序：${plan.join(' → ')}`);
   }
-
-  // 打包版：auto 直接 sql.js（见上方事故注释——原生模块崩溃无法用子进程探测兜底）
-  if (driver === 'auto' && isPackaged) {
-    const db = await openSqliteJsDbTracked(file);
-    migrate(db, file);
-    console.log('[db] SQLite 驱动：sql.js（WASM，打包版固定）');
-    return db;
-  }
-
-  // dev（auto）：金丝雀探测——SIGSEGV 只杀子进程，主进程据此安全降级
-  if (driver === 'better-sqlite3' || (driver === 'auto' && (await probeBetterSqlite3()))) {
+  for (let i = 0; i < plan.length; i += 1) {
+    const name = plan[i];
+    const isLast = i === plan.length - 1;
+    // 金丝雀懒探测：只有真的要用 better-sqlite3 时才付这一次子进程成本
+    if (name === 'better-sqlite3' && !(await probeBetterSqlite3())) {
+      console.log('[db] 金丝雀探测失败：better-sqlite3 在当前 Electron 环境不安全，跳过');
+      continue;
+    }
     try {
-      const db = openDb(dataDir);
-      console.log('[db] SQLite 驱动：better-sqlite3（原生，dev）');
+      const db = await openWithDriver(name, dataDir, file);
+      console.log(`[db] SQLite 驱动：${name}${explicit ? '（显式指定）' : ''}`);
       return db;
     } catch (e) {
-      if (driver === 'better-sqlite3') throw e;
-      console.warn(`[db] better-sqlite3 不可用（${e.message}），降级 sql.js`);
+      // 显式指定 / 最后一项失败 → 抛出，由 main.js 交 dbStatus（不静默失能）
+      if (explicit || isLast) throw e;
+      console.warn(`[db] ${name} 不可用（${e.message}）——降级继续尝试`);
     }
-  } else {
-    console.log('[db] 金丝雀探测失败：better-sqlite3 在当前 Electron 环境不安全，降级 sql.js（WASM）');
   }
-
-  const db = await openSqliteJsDbTracked(file);
-  migrate(db, file);
-  console.log('[db] SQLite 驱动：sql.js（WASM 降级）');
-  return db;
+  // plan 必然以 'sqljs' 结尾且会 return 或 throw，此处仅为穷尽分支
+  throw new Error('无可用 SQLite 驱动');
 }
 
 // 迁移前快照：库文件是任务编排与记忆的唯一副本（X5 的另一半）。
@@ -708,4 +757,4 @@ function migrate(db, filePath) {
   }
 }
 
-module.exports = { openDb, openDbAsync, MIGRATIONS };
+module.exports = { openDb, openDbAsync, driverPlan, MIGRATIONS };
