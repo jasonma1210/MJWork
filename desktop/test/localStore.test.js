@@ -415,6 +415,26 @@ check('导出：不存在的会话返回 ok:false', sR3.exportThreadMarkdown(999
   check('ST1：库未就绪时 mirrorNow 返回 db-not-ready 且不算失败',
     sNoDb.mirrorNow().error === 'db-not-ready' && sNoDb.flushSync().ok === true);
 
+  // 启动即补初始镜像。这一条来自真实数据实测：首版只在 flush 里镜像，而 flushSync 在
+  // 「没有脏数据」时 early-return，于是「打开 app 什么都不做」期间影子副本一直是空的
+  // ——双读对照会报「全部缺失」（假警报），影子副本也起不到兜底作用。
+  const dirInit = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-init-'));
+  const seed = new LocalStore(dirInit);
+  const tSeed = seed.createThread({ title: '种子', cwd: '/tmp/seed' });
+  seed.addMessage({ threadId: tSeed.id, role: 'user', content: '种子消息' });
+  seed.flushSync();                                  // 落到 JSON（此刻还没有库）
+  liveDb._reset();                                   // 摘掉种子的订阅：接下来只允许 sInit 一个订阅者
+  const sInit = new LocalStore(dirInit);             // 重新构造，模拟「启动后什么都没做」
+  const dbInit = await openDbAsync(path.join(dirInit, 'dbdata'), { driver: 'node-sqlite' });
+  liveDb.publish(dbInit);                            // 库就绪
+  await new Promise((r) => setTimeout(r, 30));       // 等 setImmediate 里的初始镜像
+  const initSnap = readSnapshot(dbInit);
+  check('ST1：库就绪即补初始镜像（构造后不做任何写操作也有完整影子副本）',
+    initSnap.threads.length === 1 && initSnap.messages.length === 1,
+    `threads=${initSnap.threads.length} messages=${initSnap.messages.length}`);
+  dbInit.close();
+  fs.rmSync(dirInit, { recursive: true, force: true });
+
   fs.rmSync(dirMirror, { recursive: true, force: true });
 
   fs.rmSync(dirNoBak, { recursive: true, force: true });

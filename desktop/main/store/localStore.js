@@ -42,12 +42,21 @@ class LocalStore {
     // Agent 工具循环高峰每秒多条消息，同步写会卡死主进程事件循环（连带冻结 IPC 流式转发与审批响应）。
     this._flushTimer = null; // 挂起的合并刷盘定时器
     this._dirty = false;     // 有未落盘的内存变更
+    this.data = this.load();
     // ST1（2026-11-05）：影子副本的库句柄。本实例比库先构造（openDbAsync 是异步的），
     // 故向 liveDb 订阅「库已就绪」，而不是让 main.js 传参（那边 code 行数已钉死）。
     this._mirrorDb = null;
     this.mirrorError = null; // 最近一次影子写入失败原因（诊断面；成功即清空）
-    liveDb.subscribe((db) => { this._mirrorDb = db || null; });
-    this.data = this.load();
+    liveDb.subscribe((db) => {
+      this._mirrorDb = db || null;
+      if (!db) return;
+      // 库一就绪就补一次**初始镜像**。不加这一步会漏掉一个真实场景（已用真实数据实测到）：
+      // `flushSync()` 在「没有脏数据」时直接 early-return，所以「启动后什么都不做」的那段
+      // 时间里影子副本恒为空——此时双读对照会报「全部缺失」（假警报），
+      // 影子副本也起不到任何兜底作用。首次全量约 28ms（1873 条消息），
+      // 用 setImmediate 推到当前 tick 之后，不压在库打开/窗口创建的路径上。
+      setImmediate(() => { if (this._mirrorDb === db) this.mirrorNow(); });
+    });
   }
 
   // P0-1：合并刷盘——延迟 delay 毫秒合并窗口内的多次变更为一次落盘。
