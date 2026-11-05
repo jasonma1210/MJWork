@@ -793,6 +793,19 @@ async function openDbAsync(dataDir, { isPackaged = false, driver: driverOverride
       // ST1：广播「库已就绪」，LocalStore 据此接上影子写入（它比库先构造）。
       // 放在这里而不是 main.js：后者 code 行数已钉死（max-lines 棘轮，加一行即红）。
       liveDb.publish(db);
+      // ST4-①：每天至多一次在线备份（VACUUM INTO / sql.js flush 副本）。
+      // 失败不阻断启动——备份是保险，不是前置条件；但必须留痕，不能静默。
+      if (process.env.MJ_DB_BACKUP !== '0') {
+        try {
+          const r = require('./backup').maybeDailyBackup(db, file, path.join(dataDir, 'backups'));
+          if (!r.ok) console.warn('[db] 今日备份未完成（不影响启动）：', r.error);
+          else if (!r.skipped) {
+            console.log(`[db] 今日备份完成：${path.basename(r.path)}（${r.bytes} B，校验=${r.verified ? 'ok' : '未校验'}，目录 fsync=${r.dirFsynced ? 'ok' : '降级'}，清理旧备份 ${r.removed.length} 份）`);
+          }
+        } catch (e) {
+          console.warn('[db] 备份流程异常（不影响启动）：', e && e.message);
+        }
+      }
       return db;
     } catch (e) {
       // 显式指定 / 最后一项失败 → 抛出，由 main.js 交 dbStatus（不静默失能）

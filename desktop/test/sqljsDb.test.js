@@ -298,6 +298,61 @@ function ok(name) { n += 1; console.log(`  ✓ ${name}`); }
     fs.rmSync(vdir, { recursive: true, force: true });
     ok('ST3 迁移真校验：版本号推进但列未就位必须拦截且回滚');
 
+    // ⑯ ST4：在线备份必须「能当独立库打开」，且不冻结源库（不是停写快照）。
+    const { backupDb, pruneBackups, maybeDailyBackup } = require('../main/db/backup');
+    const bdir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-bak-'));
+    const bfile = path.join(bdir, 'src.db');
+    const bdb = await openNodeSqliteDb(bfile);
+    bdb.exec('CREATE TABLE IF NOT EXISTS k(v TEXT)');
+    bdb.prepare('INSERT INTO k VALUES (?)').run('在线备份');
+    const dest = path.join(bdir, 'out.bak');
+    const bres = backupDb(bdb, bfile, dest);
+    assert.strictEqual(bres.ok, true, `备份应成功：${bres.error}`);
+    assert.strictEqual(bres.verified, true, '备份必须通过 integrity_check 且含表');
+    bdb.prepare('INSERT INTO k VALUES (?)').run('备份后新写'); // 源库仍可写
+    assert.strictEqual(bdb.prepare('SELECT COUNT(*) c FROM k').get().c, 2, '源库备份后仍可写');
+    const bakOpen = await openNodeSqliteDb(dest);
+    assert.strictEqual(bakOpen.prepare('SELECT COUNT(*) c FROM k').get().c, 1, '备份只含备份时刻的 1 行');
+    bakOpen.close();
+    bdb.close();
+    ok('ST4 在线备份：可独立打开 + 校验通过 + 不冻结源库');
+
+    // ⑰ 轮转：只留最近 N 份，且不误删非备份文件
+    const prDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-prune-'));
+    for (const n of ['mjcode-tasks-20260101-000000.db', 'mjcode-tasks-20260102-000000.db',
+      'mjcode-tasks-20260103-000000.db', 'keep-me.txt']) {
+      fs.writeFileSync(path.join(prDir, n), 'x');
+    }
+    const removedBak = pruneBackups(prDir, 2);
+    assert.strictEqual(removedBak.length, 1, '3 份只留 2 份 ⇒ 删 1 份');
+    assert.ok(removedBak[0].endsWith('20260101-000000.db'), '删的是最旧那份');
+    assert.ok(fs.existsSync(path.join(prDir, 'keep-me.txt')), '不得误删非备份文件');
+    fs.rmSync(prDir, { recursive: true, force: true });
+    ok('ST4 备份轮转：只留最近 N 份且不误删');
+
+    // ⑱ 每天至多一次：同日第二次必须跳过（否则每次重启都拷一份 40MB 级库）
+    const mdir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-daily-'));
+    const mfile = path.join(mdir, 'src.db');
+    const mdb = await openNodeSqliteDb(mfile);
+    mdb.exec('CREATE TABLE IF NOT EXISTS k(v TEXT)');
+    const first = maybeDailyBackup(mdb, mfile, path.join(mdir, 'backups'), new Date('2026-11-05T09:00:00'));
+    const second = maybeDailyBackup(mdb, mfile, path.join(mdir, 'backups'), new Date('2026-11-05T18:00:00'));
+    assert.strictEqual(first.ok && !first.skipped, true, '当天首次应执行备份');
+    assert.strictEqual(second.ok && second.skipped, true, '同一天第二次必须跳过');
+    mdb.close();
+    fs.rmSync(mdir, { recursive: true, force: true });
+    ok('ST4 每日一次：同一天第二次跳过');
+
+    // ⑲ 备份校验必须真的能拒坏文件——逐字节拷贝出「文件存在但不可恢复」的假备份，
+    //    校验若恒返回 ok，恢复时才会发现备份没用（那时已经太晚）。
+    const { verifySqliteFile } = require('../main/db/backup');
+    const garbled = path.join(os.tmpdir(), `mj-garbled-${process.pid}.db`);
+    fs.writeFileSync(garbled, Buffer.from('这不是 SQLite 文件'.repeat(10)));
+    const badCheck = verifySqliteFile(garbled);
+    assert.strictEqual(badCheck.ok, false, '截断/非 SQLite 文件必须被校验拒绝');
+    fs.unlinkSync(garbled);
+    ok('ST4 备份校验：坏文件必须被拒绝');
+
     // ⑭ ST3 退出兜底：exit 钩子只装一次（不随开库次数泄漏），且能真正关掉所有未关闭的库。
     const edir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-exit-'));
     const n0 = process.listenerCount('exit');
