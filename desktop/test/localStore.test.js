@@ -538,6 +538,65 @@ check('导出：不存在的会话返回 ok:false', sR3.exportThreadMarkdown(999
   fs.rmSync(dirCut, { recursive: true, force: true });
   fs.rmSync(dirEmpty, { recursive: true, force: true });
 
+  // ── ST1 性能收口（2026-11-05）：JSON 退出写热路径，降为定期快照 ──
+  // 判据刻意两头都断：JSON **没**被重写（省下的就是这个），同时 SQLite **有**新内容（没省错东西）。
+  // 只断一头都会漏：只断「JSON 没变」在"根本没写入"时也成立；只断「SQLite 有」看不出省没省。
+  const dirHot = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-hot-'));
+  const jsonPath = path.join(dirHot, 'local-data.json');
+  liveDb._reset();
+  const seedHot = new LocalStore(dirHot);
+  const tHot = seedHot.createThread({ title: '热路径', cwd: '/tmp/hot' });
+  seedHot.flushSync();
+  const dbHot = await openDbAsync(path.join(dirHot, 'dbdata'), { driver: 'node-sqlite' });
+  liveDb._reset();
+  liveDb.publish(dbHot);
+  const sHot = new LocalStore(dirHot);
+  sHot.flush();                                            // 建立快照基准（_lastJsonAt = now）
+  const jsonBefore = fs.readFileSync(jsonPath, 'utf8');
+  sHot.addMessage({ threadId: tHot.id, role: 'user', content: '热路径消息' }); // → scheduleFlush
+  await new Promise((r) => setTimeout(r, 220));
+  const jsonAfterHot = fs.readFileSync(jsonPath, 'utf8');
+  const snapHot = readSnapshot(dbHot);
+  check('ST1 收口：消息热路径只写 SQLite，不重写 JSON 快照',
+    jsonAfterHot === jsonBefore && snapHot.messages.some((m) => m.content === '热路径消息'),
+    `jsonChanged=${jsonAfterHot !== jsonBefore} sqliteMsgs=${snapHot.messages.length}`);
+
+  // 退出必须补：SQLite 有新内容而快照没跟上时，flushSync 不能因为"没有待落盘变更"就早退。
+  const exitRes = sHot.flushSync();
+  const jsonAfterExit = fs.readFileSync(jsonPath, 'utf8');
+  check('ST1 收口：退出时 flushSync 补上错过的快照（不早退）',
+    exitRes.nothingPending !== true && jsonAfterExit.includes('热路径消息'),
+    `nothingPending=${exitRes.nothingPending}`);
+
+  // 关键数据（凭证/供应商走同步 flush）必须保持快照新鲜——它们不经过 scheduleFlush。
+  sHot.addProvider({ name: 'P-hot', base_url: 'https://hot', keyEncrypted: 'ENC(hot)', modelId: 'm' });
+  check('ST1 收口：关键数据（供应商）同步 flush 仍立即写 JSON 快照',
+    fs.readFileSync(jsonPath, 'utf8').includes('P-hot'));
+
+  // 间隔到期要补一次：否则长会话里快照会停在几小时前。
+  // ⚠ 这里**不能**用「刚 createThread 的标题」当标记——createThread 走的是同步 flush，
+  // 它自己就会写一次 JSON，标记早就在文件里了，断言会变成假绿（第一版就是这么漏的）。
+  // 改用「只改内存、不经过任何 flush」的标记：能把它写进文件的只可能是这次热路径 flush。
+  sHot.data.preferences['hot.due.marker'] = 'only-by-interval';
+  sHot._lastJsonAt = 0;                                    // 模拟"距上次快照已超过窗口"
+  const dueRes = sHot.flush({ hot: true });
+  check('ST1 收口：快照间隔到期后热路径也会补写（长会话不会让快照僵死）',
+    dueRes.sqliteOnly !== true && fs.readFileSync(jsonPath, 'utf8').includes('only-by-interval'),
+    `sqliteOnly=${dueRes.sqliteOnly}`);
+
+  // fail-open 换个方向：事实源没写成时，快照就必须写，否则两头都没有。
+  // 注意不能靠 `liveDb.publish(假库)` 来模拟：`_reset()` 会清掉订阅表，store 不再收到
+  // publish，`_mirrorDb` 仍指向真库 —— 那样镜像照样成功，这个断言就成了假绿。
+  sHot._mirrorDb = { transaction() { return () => { throw new Error('mirror-down'); }; } };
+  sHot.addMessage({ threadId: tHot.id, role: 'user', content: '镜像坏掉后的消息' });
+  await new Promise((r) => setTimeout(r, 220));
+  check('ST1 收口：SQLite 写失败时退回写 JSON（不能两头都没写）',
+    fs.readFileSync(jsonPath, 'utf8').includes('镜像坏掉后的消息'), `mirrorError=${sHot.mirrorError}`);
+  sHot._mirrorDb = dbHot;
+  liveDb._reset();
+  dbHot.close();
+  fs.rmSync(dirHot, { recursive: true, force: true });
+
   fs.rmSync(dirMirror, { recursive: true, force: true });
 
   fs.rmSync(dirNoBak, { recursive: true, force: true });

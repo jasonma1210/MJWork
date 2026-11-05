@@ -13,6 +13,11 @@ const { mirrorSnapshot, readSnapshot, diffSnapshots } = require('./localMirror')
 //   3) load 损坏先 .bak 恢复，失败才重置并 console.error 明示
 const SCHEMA_VERSION = 1;
 const DAILY_BACKUP_KEEP_DAYS = 7;
+// ST1 性能收口（2026-11-05）：JSON 回滚快照的最小间隔。热路径（消息追加/线程状态）上的 flush
+// 在这个窗口内只写 SQLite，不重写 3.5MB 的 JSON；间隔到了补一次，退出时 flushSync 强制补。
+// 可用 `MJ_STORE_JSON_SNAPSHOT_MS` 覆盖（排障时设 0 = 每次都写，回到改造前的行为）。
+const JSON_SNAPSHOT_MS = Number.isFinite(Number(process.env.MJ_STORE_JSON_SNAPSHOT_MS))
+  ? Number(process.env.MJ_STORE_JSON_SNAPSHOT_MS) : 5 * 60 * 1000;
 
 const EMPTY = {
   threads: [],      // { id, title, cwd, providerId, providerName, modelName, createdAt, updatedAt }
@@ -43,6 +48,8 @@ class LocalStore {
     this._flushTimer = null; // 挂起的合并刷盘定时器
     this._dirty = false;     // 有未落盘的内存变更
     this.sourceOfTruth = null; // 'sqlite' | 'json' —— 本次装载用的是哪个读源（诊断面 + 测试断言）
+    this._lastJsonAt = 0;      // 上次写 JSON 快照的时刻（0 = 还没写过，首次必写）
+    this._jsonDirty = false;   // SQLite 已更新、JSON 快照还没跟上
     this.data = this.load();
     // ST1（2026-11-05）：影子副本的库句柄。本实例比库先构造（openDbAsync 是异步的），
     // 故向 liveDb 订阅「库已就绪」，而不是让 main.js 传参（那边 code 行数已钉死）。
@@ -79,7 +86,7 @@ class LocalStore {
         this._dirty = false;
         // V08：flush 失败必须恢复脏标记——此前清 dirty 后失败仅记日志，
         // 数据停留在内存且不再有重试机会，用户却可能已看到「已保存」。
-        const res = this.flush();
+        const res = this.flush({ hot: true });
         if (!res || !res.ok) this._dirty = true; // 保留脏状态，下次 scheduleFlush/flushSync 重试
       }
     }, delay);
@@ -90,7 +97,9 @@ class LocalStore {
   // P0-1：强制落盘挂起的合并变更（退出前 / 测试断言前调用）
   // V08：返回真实持久化结果（{ok,error}），调用方据此决定是否宣称「已保存」
   flushSync() {
-    if (!this._dirty && !this._flushTimer) return { ok: true, nothingPending: true };
+    // `_jsonDirty`：SQLite 有新内容、而 JSON 快照还停在旧版本。此时即使"没有待落盘的变更"，
+    // 也必须补一次快照——否则退出后回滚快照会是几小时前的（SQLite 是新的，但快照偏旧）。
+    if (!this._dirty && !this._flushTimer && !this._jsonDirty) return { ok: true, nothingPending: true };
     if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
     this._dirty = false;
     const res = this.flush();
@@ -251,9 +260,26 @@ class LocalStore {
   //   数据可能停留在 page cache，连正常退出都不抗掉电。改走 writeFileDurable
   //   （fsync 文件 + fsync 目录）。tmp 由原语自行管理，本文件不再手工拼 tmp 路径。
   // V08：返回 {ok,error} 真实结果；corrupt-blocked 态拒绝写盘（不覆盖损坏原件）。
-  flush() {
+  flush({ hot = false } = {}) {
     if (this.corruptBlocked) {
       return { ok: false, error: 'corrupt-blocked：本地数据文件损坏且无可用备份，写入已阻断（原件已保留，等待恢复或确认重置）' };
+    }
+    // ST1 性能收口（2026-11-05）：**先写事实源（SQLite），再决定要不要更新回滚快照（JSON）**。
+    //
+    // 之前每次 flush 都要 `JSON.stringify` 3.5MB + 写盘（实测 ~5ms + ~9ms），而 flush 就挂在
+    // 150ms 合并窗口的消息热路径上——那是随历史线性增长的固定开销。切读之后 SQLite 才是事实源，
+    // JSON 只是回滚快照，没有必要每 150ms 重写一次全量。
+    //
+    // 只有「热路径 + SQLite 已成功 + 未到快照间隔」这一种情况跳过 JSON：
+    //   · 写 SQLite 失败 → 退回 JSON（fail-open 换个方向：事实源没写成，快照就必须写）
+    //   · 关键数据（凭证/供应商/偏好走同步 flush，`hot` 为 false）→ 保持快照新鲜
+    //   · 间隔到期 → 补一次，长会话也不会让快照停在几小时前
+    const mirrorRes = this.mirrorNow();
+    const sqliteOk = !!(mirrorRes && mirrorRes.ok);
+    const intervalDue = Date.now() - this._lastJsonAt >= JSON_SNAPSHOT_MS;
+    if (hot && sqliteOk && !intervalDue) {
+      this._jsonDirty = true; // 快照没跟上内存态——退出时 flushSync 据此补一次
+      return { ok: true, sqliteOnly: true };
     }
     try {
       // R2-2（2026-11-03）：用 rename 轮转代替「整库 copyFileSync + 整库写」。
@@ -276,17 +302,21 @@ class LocalStore {
         if (rotated) {
           try { fs.copyFileSync(this.bak, this.file); } catch (e) { console.warn('[localStore] 落盘失败后回补主文件失败（.bak 仍在）:', e.message); }
         }
+        // 事实源（SQLite）已经写成功时，JSON 快照失败**不能**报成「没保存」——
+        // 那会让用户去重试一件已经成功的事。但 `_jsonDirty` 保持为 true，下一次一定重试。
+        if (sqliteOk) {
+          console.warn('[localStore] 回滚快照写失败（数据已在 SQLite，下次快照重试）:', res.error);
+          return { ok: true, jsonError: res.error };
+        }
         // 失败必须让调用方知道：凭证/消息写不进去若被静默，用户下次重启才发现
         console.error('[localStore] 持久化失败:', res.error);
         return { ok: false, error: res.error };
       }
       this.pendingBakRepair = false;
       this.dailyBackup();
-      // ST1 第一阶段：JSON 落盘成功后再写 SQLite 影子副本。
-      // fail-open 是刻意的：此刻 JSON 已是唯一事实源且已 fsync 完成，影子副本失败
-      // 不能把「已保存」改写成「保存失败」——那会让用户去重试一件已经成功的事。
-      // 但必须留痕（见 mirrorNow 的 catch）：否则 SQLite 悄悄是空的，等 cut-over 才发现。
-      this.mirrorNow();
+      // 快照追上内存态：清掉脏标记，更新间隔基准。
+      this._lastJsonAt = Date.now();
+      this._jsonDirty = false;
       return { ok: true };
     } catch (e) {
       console.error('[localStore] 持久化异常:', e.message);
