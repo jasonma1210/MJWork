@@ -17,7 +17,7 @@
 import { spawnSync } from 'node:child_process';
 import { readdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { summarize } from './helpers/summary.mjs';
+import { summarize, readSandboxRealStatus } from './helpers/summary.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const TEST_DIR = path.join(ROOT, 'test');
@@ -132,6 +132,17 @@ for (const [i, suite] of suites.entries()) {
   // 汇总里单列这些行，避免「全绿」被误读为「所有平台行为都已覆盖」。
   for (const line of body.split('\n')) {
     if (/⚠.*(跳过|未执行)/.test(line)) skipped.push({ suite, detail: line.trim().slice(0, 160) });
+  }
+
+  // 2026-11-05（AC-1.4 修假绿）：上一条靠**中文措辞**匹配，而 `test/sandbox.test.js` 打的是
+  // 「⚠…BLOCKED」「SANDBOX_REAL_STATUS=BLOCKED」——两个字面量都不含「跳过/未执行」⇒ 正则 MISS
+  // ⇒ darwin 上 Seatbelt 真机隔离**未验证**，该套件却被算进「通过」（实测 329/327/0/2 里的 327）。
+  // 改为读结构化状态行（`ci.yml:176` 读的就是它，是既有的机器契约）。
+  // 方向是 fail-safe：**非 RUN 一律算未验证**，含未知值；「没说」也不当「通过」。
+  // 注意用的是同一个 `body`，故「既失败又未验证」时 summarize 只计失败、不双扣。
+  const sandboxReal = readSandboxRealStatus(body);
+  if (sandboxReal.status !== null && !sandboxReal.verified) {
+    skipped.push({ suite, detail: `SANDBOX_REAL_STATUS=${sandboxReal.status}（结构化状态：真机未验证）` });
   }
 
   if (r.status === 0) {

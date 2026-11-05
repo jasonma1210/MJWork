@@ -75,7 +75,10 @@ const requireRealSandbox = process.env.MJCODE_REQUIRE_REAL_SANDBOX === '1';
 // 下方会打印 SANDBOX_REAL_STATUS 与「真机隔离未验证」，CI 再打 warning annotation。
 // 本地直接跑（不设该变量）仍严格判红；只有 RUN 才代表真机隔离被验证过。
 const allowSandboxBlocked = process.env.MJCODE_ALLOW_SANDBOX_BLOCKED === '1';
-let realSandboxStatus = 'NOT RUN';
+// 2026-11-05：状态值统一为 `NOT_RUN`（原为带空格的 `'NOT RUN'`），让 `SANDBOX_REAL_STATUS=`
+// 成为可被机器稳定解析的单个 token。`test/helpers/summary.mjs` 的解析器仍兼容空格写法，
+// 故历史日志/外部脚本不会因为这次归一化而失配。
+let realSandboxStatus = 'NOT_RUN';
 if (process.platform === 'darwin' && fs.existsSync(sandbox.SANDBOX_EXEC)) {
   const probeBin = fs.existsSync('/usr/bin/true') ? '/usr/bin/true' : '/bin/echo';
   let hostAllowsSandbox = false;
@@ -125,7 +128,7 @@ if (process.platform === 'darwin' && fs.existsSync(sandbox.SANDBOX_EXEC)) {
     }
   }
 } else {
-  console.log('⚠ Seatbelt 真机探测 NOT RUN（非 darwin 或 sandbox-exec 缺失）');
+  console.log('⚠ Seatbelt 真机探测 NOT_RUN（非 darwin 或 sandbox-exec 缺失）');
 }
 
 // 统一判定：真机 RUN 时三条边界断言已由 check() 计入 pass/fail（隔离失效仍会红）；

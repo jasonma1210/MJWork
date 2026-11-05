@@ -206,6 +206,19 @@ cp.spawn = function fakeSpawn(file, args, opts) {
 
 // 让 findBwrap() 在 darwin 上也能探到 bwrap（只伪造 bwrap 路径，其他 existsSync 原样）
 fs.existsSync = (p) => (String(p) === FAKE_BWRAP ? true : realExistsSync(p));
+// 2026-11-05（AC-1.5 连带）：exec.js 的 Linux 分支新增了 gate ——执行前先读
+// `osSandboxUsable().use`，判「bwrap 装不出隔离命名空间」就**不 spawn**、落 fail-closed 兜底。
+// 而本套件上面只伪造了 `fs.existsSync('/usr/bin/bwrap')`（让 findBwrap 找得到路径），
+// 探测本身仍会用 spawnSync 真跑 `--version` → darwin 上没有真 bwrap → 判 bwrap-broken
+// → gate 拦住 → 下面 10 条「接线层」断言全红。
+//
+// 这不是缺陷回归，是**测试装置的前提没跟上**：本套件测的是「argv 怎么接线」，它成立的前提
+// 就是「这台机器上 bwrap 可用」。故显式把探测结论钉成 available（而不是放宽 gate —— 放宽
+// gate 等于把刚修好的 P0 又放回去）。收尾处原样恢复，避免同进程后续读到这个假结论。
+const realStatusCached = linux.linuxSandboxStatusCached;
+linux.linuxSandboxStatusCached = () => ({
+  available: true, reason: 'ok', detail: '接线层测试装置：前提固定为 bwrap 可用', hint: '',
+});
 // exec.js 的 Linux 分支以 process.platform 为门（可在测试进程内覆盖）
 Object.defineProperty(process, 'platform', { value: 'linux', configurable: true, enumerable: true });
 
@@ -282,6 +295,7 @@ const run = async () => {
   // ── 收尾：恢复全局桩 ──
   cp.spawn = realSpawn;
   fs.existsSync = realExistsSync;
+  linux.linuxSandboxStatusCached = realStatusCached;
   Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true, enumerable: true });
   fs.rmSync(userDataDir, { recursive: true, force: true });
   fs.rmSync(repoDir, { recursive: true, force: true });
@@ -293,6 +307,7 @@ const run = async () => {
 run().catch((e) => {
   cp.spawn = realSpawn;
   fs.existsSync = realExistsSync;
+  linux.linuxSandboxStatusCached = realStatusCached;
   Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true, enumerable: true });
   console.error('测试异常:', e);
   process.exit(1);

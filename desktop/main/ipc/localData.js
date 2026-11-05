@@ -11,6 +11,9 @@ const { ipcMain, shell, dialog, BrowserWindow } = require('electron');
 const fsp = require('fs/promises');
 const path = require('path');
 const modelsFile = require('../modelsFile');
+// MD2（2026-11-05）：credentialUsable 是三处发消息入口与测试连接共用的唯一凭证判据。
+// 测试连接必须与实跑同源，否则又回到「测试绿、发消息红」那条老路（AC-2.8）。
+const localModel = require('../localModel');
 const guard = require('./payloadGuard');
 // 三层记忆 M3：作用域常量（分层召回的唯一事实来源，避免宿主重写层级清单）
 const { SCOPES } = require('../memory');
@@ -508,6 +511,27 @@ function register() {
     const vault = deps.localVault.get(Number(id));
     const url = (base_url || vault?.base_url || '').replace(/\/+$/, '');
     if (!url) return { ok: false, error: '缺少接口地址' };
+    // ── 2026-11-05（AC-2.8 修假绿 + MD2 去假 Key）────────────────────────────────
+    // 原先只有在有 Key 时才发 `Authorization`，没 Key 就**裸调** `${url}/models`。
+    // 而 /models 端点普遍不校验凭证（Ollama 更是完全不校验）⇒ 探测返回 `ok:true`，
+    // 用户以为配好了；一发送消息立刻 `KEY_MISSING`。这就是「测试连接绿、发消息红」的假绿：
+    // 用户会反复怀疑网络与接口地址，因为唯一被指出的「重新填写 API Key」在本机根本没 Key 可填。
+    //
+    // 现在两侧用**同一个判据** `localModel.credentialUsable`（三处发消息入口也已切到它）：
+    //   · 有 Key            ⇒ 照常探测（远端/本机都放行）；
+    //   · 无 Key + 本机回环 ⇒ 放行（MD2：这才是「离线级」的默认形态），探测不带 Authorization；
+    //   · 无 Key + 远端     ⇒ `KEY_MISSING`，且**不发任何网络请求**（不靠端点是否放行碰运气）。
+    // 判据同源是关键：只要两边共用它，就不可能再出现「一边绿一边红」。
+    //
+    // `id` 缺省时保留旧语义（只测地址连通性、不判 Key），这是调试用途，不属于假绿。
+    const hasProvider = Number.isFinite(Number(id));
+    if (hasProvider && !localModel.credentialUsable(vault, url)) {
+      return {
+        ok: false, errorCode: 'KEY_MISSING', keyRequired: true,
+        error: 'KEY_MISSING: 未配置 API Key，发送消息时会被同样拒绝（测试连接与实跑同一判据）。'
+          + '本机 127.0.0.1 / localhost 端点无需 Key。',
+      };
+    }
     // Key 含非 ASCII（典型：模板占位「sk-请替换成你的Key」未替换）时 fetch 头部会抛
     // ByteString 错误（真机复现），提前拦截给出可行动提示，而不是让用户看到天书报错
     if (vault?.api_key && /[^\x20-\x7E]/.test(vault.api_key)) {

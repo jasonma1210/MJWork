@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { summarize } from './helpers/summary.mjs';
+import { summarize, readSandboxRealStatus } from './helpers/summary.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 let pass = 0;
@@ -83,6 +83,61 @@ const line = (suite) => ({ suite, detail: '⚠ 本节未执行' });
   check('⑥ 旧公式「通过 = 套件+门禁−失败」已删除（防回退）',
     !/通过 \$\{suites\.length \+ GATES\.length - failed\.length\}/.test(src));
   check('⑥ 等式不自洽时会显式报错并置非零退出码', /summary\.ok/.test(src) && /汇总等式自洽校验失败/.test(src));
+}
+
+// ── ⑦ 结构化沙箱状态解析（2026-11-05 AC-1.4：中文措辞匹配的假绿）──
+//
+// 缺陷形态：`run-all.mjs` 原靠 `/⚠.*(跳过|未执行)/` 记账「未验证」。
+// `test/sandbox.test.js` 打的是 `SANDBOX_REAL_STATUS=BLOCKED` 与「⚠…BLOCKED」，
+// **不含「跳过/未执行」**⇒ 正则全部 MISS ⇒ darwin 上 Seatbelt 真机未验证却被算作「通过」。
+// 本组用真实输出片段锁住新判据，并刻意包含「未知状态」这条 fail-safe 方向。
+{
+  // 真实的 macOS 输出形态（宿主拒绝 sandbox_apply）
+  const blockedBody = [
+    '⚠ Seatbelt 真机探测 BLOCKED（宿主拒绝含 deny 的 profile：最小 deny-default profile 亦无法 apply）',
+    '⚠ 真机隔离未验证（BLOCKED）：宿主拒绝 sandbox_apply，本轮只证明静态 profile 断言通过',
+    'SANDBOX_REAL_STATUS=BLOCKED',
+    'PASS：17/17 项通过',
+  ].join('\n');
+  const r1 = readSandboxRealStatus(blockedBody);
+  check('⑦ BLOCKED ⇒ verified=false（这就是被算进「通过」的那个）', r1.verified === false && r1.status === 'BLOCKED');
+  check('⑦ 旧中文正则对该输出确实全 MISS（证明缺陷真实存在，非臆测）',
+    !/⚠.*(跳过|未执行)/.test(blockedBody), '该 body 不含「跳过」二字');
+
+  const r2 = readSandboxRealStatus('SANDBOX_REAL_STATUS=RUN');
+  check('⑦ 只有 RUN 才算真机已验证', r2.verified === true && r2.status === 'RUN');
+
+  // 历史值带空格，必须归一化（否则 status 会是 'NOT RUN' 两个 token）
+  const r3 = readSandboxRealStatus('SANDBOX_REAL_STATUS=NOT RUN');
+  check('⑦ 历史空格写法归一化为 NOT_RUN 且未验证', r3.status === 'NOT_RUN' && r3.verified === false);
+
+  const r4 = readSandboxRealStatus('SANDBOX_REAL_STATUS=ERROR');
+  check('⑦ ERROR 不算已验证（隔离可能真有问题，更不能绿）', r4.verified === false);
+
+  // fail-safe 方向：未知/拼错/未来新增的状态绝不能默认成已验证
+  const r5 = readSandboxRealStatus('SANDBOX_REAL_STATUS=SOME_FUTURE_STATE');
+  check('⑦ 未知状态 ⇒ verified=false（宁可多扣一个「通过」，不可少扣）', r5.verified === false);
+
+  // 「没说」不等于「验过」：无状态行时 status=null，由调用方决定，函数不擅自判通过
+  const r6 = readSandboxRealStatus('PASS：10/10 项通过');
+  check('⑦ 无状态行 ⇒ status=null 且 verified=false，不冒充已验证',
+    r6.status === null && r6.verified === false && r6.reason === 'no-status-line');
+
+  // 多行取末尾（与 ci.yml:177 `tail -1` 同口径）；崩溃/中途打中间态时不能以中间态为准
+  const r7 = readSandboxRealStatus('SANDBOX_REAL_STATUS=NOT_RUN\nSANDBOX_REAL_STATUS=RUN');
+  check('⑦ 多行取最后一条（与 CI tail -1 同口径）', r7.status === 'RUN' && r7.verified === true);
+  const r8 = readSandboxRealStatus('SANDBOX_REAL_STATUS=RUN\nSANDBOX_REAL_STATUS=ERROR');
+  check('⑦ 末条为 ERROR ⇒ 不因前面出现过 RUN 而绿', r8.verified === false && r8.status === 'ERROR');
+
+  // 接线：run-all 必须真的用它，否则上面全是对空函数的自娱自乐
+  const runAll = fs.readFileSync(path.join(ROOT, 'test/run-all.mjs'), 'utf8');
+  check('⑦ run-all 已接入结构化解析器', /readSandboxRealStatus/.test(runAll));
+  check('⑦ run-all 对「非 RUN」显式记入跳过（不只打印）',
+    /sandboxReal\.status !== null && !sandboxReal\.verified/.test(runAll));
+  // 反向：套件里必须始终打印状态行，否则解析器永远拿不到（回到「没说当验过」）
+  const sbTest = fs.readFileSync(path.join(ROOT, 'test/sandbox.test.js'), 'utf8');
+  check('⑦ 状态行始终打印（无论 RUN/BLOCKED/NOT_RUN）', /SANDBOX_REAL_STATUS=\$\{realSandboxStatus\}/.test(sbTest));
+  check('⑦ 状态初值为 NOT_RUN（归一化后单 token，可稳定解析）', /realSandboxStatus = 'NOT_RUN'/.test(sbTest));
 }
 
 void assert;

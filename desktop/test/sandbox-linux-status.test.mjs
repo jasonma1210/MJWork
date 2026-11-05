@@ -539,6 +539,99 @@ setImmediate(() => { process.stdout.write(String(${PROBE_LINES})); });`;
   resetProbeLog();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑫ exec 执行分支的 Linux gate（2026-11-05，AC-1.5）
+//
+// 被治理的 P0（已端到端复现，不是理论风险）：`tools/exec.js` 的 Linux 分支原只判
+// `built.argv.length` 就 spawn bwrap，**从不读 `osSandboxUsable().use`**。于是
+//   · 诊断已判 `bwrap-broken`（建不出命名空间），命令仍被包一层 bwrap 执行；
+//   · 结果还回 `sandboxed: true` —— **谎报已隔离**；
+//   · 同时 `sandbox.js` 见「有 OS 沙箱」就让位 30 条黑名单 ⇒ **隔离与黑名单两层同时失效**。
+// macOS（seatbeltUsable）与 Windows（windowsSandboxReady）本来都有 gate，唯独 Linux 缺。
+//
+// 断言策略（为什么这么写）：
+//   ① **数 bwrap spawn 次数**，不只读返回字段——字段可以被赋值骗过，子进程不会。
+//      gate 生效时探测之后 bwrap spawn 必须为 **0**（一次都不该启动）。
+//   ② 返回形态必须是既有 fail-closed 契约 `blocked:true / errorCode:'sandbox-unavailable'`，
+//      **不是**新造一套拒绝逻辑（`execFallback.js:62-81` 本来就是这个语义）。
+//   ③ 带**正样本**：好 bwrap ⇒ 必须仍走沙箱分支（spawn > 0），证明加严没把主路径改坏。
+//   ④ 变异可验证：删掉 `linuxOs.use` 条件 ⇒ `sandboxed` 变回 true、spawn > 0，本条必红。
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  const EXEC_MAIN = path.resolve(import.meta.dirname, '..', 'main', 'tools', 'exec.js');
+  // exec.js 顶层 require('electron')（ipcMain/shell/app），非 Electron 宿主必须打桩
+  const { installElectronStub } = await import('./helpers/electronStub.mjs');
+  installElectronStub({
+    ipcMain: { handle: () => {}, on: () => {} },
+    shell: { showItemInFolder: () => {}, openPath: async () => '', openExternal: async () => {} },
+    app: { getPath: () => os.tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false },
+  });
+  const exec = require(EXEC_MAIN);
+  check('⑫ exec.js 可在非 Electron 宿主加载（否则本节的 gate 断言无从谈起）',
+    typeof exec.toolShell === 'function' && typeof exec.initToolExec === 'function');
+
+  let approvalAsks = 0;
+  exec.initToolExec({
+    // 兜底路径会请求一次 unconfined_exec（L1）；这里答 deny ⇒ 应得 blocked
+    requestApproval: async () => { approvalAsks++; return 'deny'; },
+    applyApprovalDecision: () => {},
+    getAlwaysRules: () => [],
+    conversationRules: [],
+    registerChild: () => {},
+  });
+
+  const WORKDIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ac15-gate-'));
+  const realPlatform = process.platform;
+  const spoof = (v) => Object.defineProperty(process, 'platform',
+    { value: v, configurable: true, enumerable: true, writable: false });
+  try {
+    spoof('linux');
+
+    // ── 反样本：坏 bwrap（--version 成功、隔离失败）⇒ 必须 gate 住，一次都不 spawn ──
+    process.env.MJCODE_BWRAP_BIN = LOG_BWRAP_BROKEN;
+    delete process.env.MJCODE_SANDBOX_PROBE_TTL_MS;
+    linux.resetLinuxSandboxStatusCache();
+    const usable = sandbox.osSandboxUsable('workspace-write', WORKDIR); // 先让探测跑完并缓存
+    check('⑫ 前置：坏 bwrap 下 osSandboxUsable().use === false（诊断层已如实判定）',
+      usable.use === false, JSON.stringify(usable).slice(0, 80));
+    resetProbeLog();
+    approvalAsks = 0;
+    const bad = await exec.toolShell({ command: 'echo ac15-probe', cwd: WORKDIR, requireApproval: false });
+    const badSpawns = spawnCount();               // 探测已缓存 ⇒ 这里的 spawn 只可能来自执行分支
+    check('⑫ gate 生效：坏 bwrap 下 bwrap 子进程 spawn = 0（绝不启动已知建不出隔离的 bwrap）',
+      badSpawns === 0, `spawn=${badSpawns}`);
+    check('⑫ 不谎报：sandboxed 必须为 false（改前此处回 true，是最危险的那种假绿）',
+      bad.sandboxed === false, `sandboxed=${bad.sandboxed}`);
+    check("⑫ 形态沿用既有 fail-closed 契约：blocked:true + errorCode:'sandbox-unavailable'",
+      bad.blocked === true && bad.errorCode === 'sandbox-unavailable',
+      `blocked=${bad.blocked} errorCode=${bad.errorCode}`);
+    check('⑫ 调用方未被挂死（Promise 正常结算，exitCode 为 -1 而非 undefined）',
+      bad.exitCode === -1, `exitCode=${bad.exitCode}`);
+    check('⑫ 兜底确实走了 L1 单次审批这一关（说明不是硬编码拒绝，而是既有逃生口）',
+      approvalAsks === 1, `approvalAsks=${approvalAsks}`);
+
+    // ── 正样本：好 bwrap ⇒ 必须仍走沙箱分支（加严不能把主路径改坏）──
+    process.env.MJCODE_BWRAP_BIN = LOG_BWRAP_OK;
+    linux.resetLinuxSandboxStatusCache();
+    const usableOk = sandbox.osSandboxUsable('workspace-write', WORKDIR);
+    check('⑫ 正样本前置：好 bwrap ⇒ osSandboxUsable().use === true',
+      usableOk.use === true, JSON.stringify(usableOk).slice(0, 80));
+    resetProbeLog();
+    const good = await exec.toolShell({ command: 'echo ac15-probe', cwd: WORKDIR, requireApproval: false });
+    const goodSpawns = spawnCount();
+    check('⑫ 正样本：好 bwrap ⇒ 确实启动了 bwrap（spawn > 0），gate 没把沙箱路径整个关死',
+      goodSpawns > 0, `spawn=${goodSpawns}`);
+    check('⑫ 正样本：走了沙箱分支后 sandboxed === true（此时是真隔离，不是谎报）',
+      good.sandboxed === true, `sandboxed=${good.sandboxed}`);
+  } finally {
+    spoof(realPlatform);
+    try { fs.rmSync(WORKDIR, { recursive: true, force: true }); } catch { /* 清理失败不影响结论 */ }
+    clearBwrapEnv();
+    linux.resetLinuxSandboxStatusCache();
+    resetProbeLog();
+  }
+}
+
 // ── 平台诚实性声明（D-09-B 风险表第一条）──────────────────────────────────────
 // 本套件在非 Linux 上的所有 Linux 断言都由「注入 platform / 伪装 process.platform + 假 bwrap」
 // 驱动：验证的是**判定逻辑**（包括 fail-closed 语义），**不等于** bwrap 真机隔离能力已验证。

@@ -44,8 +44,9 @@ const AUDITED = [
   },
   {
     file: 'sandbox-linux.test.mjs',
-    line: 290,
-    reason: 'run() 异步函数末尾 exit(fail === 0 ? 0 : 1)，其后是 "};" 与 `run().catch(…)`；run() 只被调用一次，不会重跑',
+    line: 304,
+    reason: 'run() 异步函数末尾 exit(fail === 0 ? 0 : 1)，其后是 "};" 与 `run().catch(…)`；run() 只被调用一次，不会重跑。'
+      + '（2026-11-05 行号 290→304：接线层测试装置加了探测桩与恢复各一处，理由不变）',
   },
 ];
 

@@ -165,8 +165,15 @@ async function runShellTool(args) {
   // 三平台各自的「为何没能 OS 级沙箱」原因，用于日志自解释。
   // Linux 走统一分发读取 bwrap 真实原因；Windows 的就绪态是异步的，此处只能给静态提示。
   // N3：macOS 的 Seatbelt 探测失败时会被下面的分支改写为可行动的真实原因。
+  //
+  // 2026-11-05（AC-1.5 修 Linux 假沙箱）：此处**必须保留 `use`**（真隔离是否可用）。
+  // 原写法只取 `.reason`，把可用性结论丢了 ⇒ 下方 Linux 分支只判 `built.argv.length` 就 spawn，
+  // 于是诊断判「bwrap 建不出命名空间」的命令仍被包一层 bwrap 跑、还回 `sandboxed:true`；
+  // 同时 `sandbox.js` 因「有 OS 级沙箱」让位 30 条黑名单 ⇒ 隔离与黑名单**两层同时失效**。
+  // macOS（`seatbeltUsable`）与 Windows（`windowsSandboxReady()`）本来都有 gate，唯独 Linux 缺。
+  const linuxOs = process.platform === 'linux' ? sandbox.osSandboxUsable(policy, cwd) : null;
   let fallbackReason = process.platform === 'linux'
-    ? (sandbox.osSandboxUsable(policy, cwd).reason || 'bubblewrap 不可用')
+    ? (linuxOs.reason || 'bubblewrap 不可用')
     : (sb.reason || (process.platform === 'win32' ? 'Windows 受限用户沙箱未就绪' : 'seatbelt 不可用'));
 
   // 非沙箱兜底（策略闸 → 命令守卫 → 直跑）已抽到 ./execFallback.js（P1-2 前置腾行，行为不变）
@@ -202,8 +209,15 @@ async function runShellTool(args) {
     }
   }
 
-  // ── Linux：bubblewrap（ro-bind 全盘 + unshare-all 断网 + seccomp + 项目目录唯一可写）──
-  if (process.platform === 'linux' && policy !== 'full-access') {
+  // ── Linux：bubblewrap（ro-bind 全盘 + unshare-all 断网 + 项目目录唯一可写）──
+  // AC-1.5 gate：诊断说「建不出隔离命名空间」时**绝不 spawn bwrap**。否则两层同时失效——
+  // ① 结果回 sandboxed:true 是谎报（用户以为已隔离）；② sandbox.js 见「有 OS 沙箱」就让位黑名单。
+  // 落到 runFallback：execFallback.js 本就是 fail-closed（无审批通道 ⇒ blocked:true + errorCode
+  // 'sandbox-unavailable'；有通道 ⇒ L1 单次 unconfined 审批；打包版不认环境变量豁免）。
+  if (process.platform === 'linux' && policy !== 'full-access' && !(linuxOs && linuxOs.use)) {
+    console.warn(`[sandbox] Linux 无 OS 级隔离（${fallbackReason}），不启动 bubblewrap，落到命令守卫`);
+  }
+  if (process.platform === 'linux' && policy !== 'full-access' && linuxOs && linuxOs.use) {
     // N2：bwrap 后端接收字符串命令；argv 用 POSIX 单引号转义降级（文档已注明，非精确等价）
     const shellCommand = argvList ? shellProfile.argvToShellCommand(argvList) : command;
     const built = sandbox.linuxBackend.buildBwrapExec(policy, cwd, shellCommand, '/bin/sh', null, writeGuard.protectedPathsFor(cwd));

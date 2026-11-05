@@ -118,6 +118,33 @@ function chatHints(baseUrl) {
   return isOllamaLike(baseUrl) ? { keep_alive: KEEP_ALIVE_FOREVER } : {};
 }
 
+/**
+ * 凭证可用性（MD2，2026-11-05）：**本机回环端点可以没有 API Key**。
+ *
+ * 修的是什么：`main.js:660`、`scheduledChannels.js:47`、`:88` 三处发消息入口原先都无条件校验
+ * `secret.api_key`；`main.js:718`、`scheduledChannels.js:57`、`:114` 又无条件把 Key 拼成
+ * `Authorization: Bearer`。合起来的后果是——纯本机 Ollama / llama.cpp 用户**必须填一个假 Key**
+ * 才能发出第一条消息，而那个假 Key 会被真的当成 Bearer 发出去。
+ * 对「离线级 agent」这是硬伤：开箱第一件事就被要求提供一个不存在的凭证。
+ *
+ * 判据**复用 `isLocalEndpoint`**（与超时档位同一事实来源，不另立一套）：它只在 URL 能解析
+ * 且 host 是回环地址时返回 true；**解析失败、空值、内网段（10.x / 192.168.x）一律按远端处理**。
+ *
+ * 安全边界（重要）：放宽的只有**回环地址**。局域网/内网服务器不算——那可能是别人的机器，
+ * 无凭证放行等于把无认证的推理端点当成可信来源。这条限制与 `streamGuard` 的分档理由完全一致，
+ * 改动时不要顺手把 `LOCAL_HOST_RE` 放宽。
+ *
+ * @param {{api_key?: string, base_url?: string}|null|undefined} secret 解析出的凭证
+ * @param {string} [baseUrl] 本次显式指定的地址（优先于 secret.base_url，与调用点的 root 计算同序）
+ * @returns {boolean} true = 可以发请求（有 Key，或本机回环端点免 Key）
+ */
+function credentialUsable(secret, baseUrl) {
+  if (!secret) return false;                       // 无 provider 记录：地址与模型都无从得知，仍拒绝
+  if (secret.api_key) return true;                 // 有 Key：不论端点在哪儿都放行
+  // 无 Key：只有回环地址放行。空 base_url 也会被 isLocalEndpoint 判 false（URL 解析失败）⇒ fail-closed
+  return isLocalEndpoint(baseUrl || secret.base_url || '');
+}
+
 // ── 纯逻辑：模型名匹配 / 就绪判定 / 加载时长估计 ─────────────────────────
 // Ollama 的 /api/tags 与 /api/ps 里名字带 `:latest` 后缀，而用户配置里可能写 `flint`。
 // 只做字面相等会让「明明装了却说没装」——这类误判比不判更糟（它会把用户引去 ollama pull）。
@@ -656,6 +683,8 @@ module.exports = {
   initLocalModel, tierMs, TIERS, TIER_BOUNDS, KEEP_ALIVE_FOREVER,
   // 端点 / 请求体
   ollamaRoot, isOllamaLike, chatHints,
+  // 凭证策略（MD2）：本机回环端点免 Key，其余必须有；三处发消息入口共用此判据
+  credentialUsable,
   // 纯逻辑
   normalizeModelName, matchesModel, readinessOf, estimateLoadMs,
   // 文案
