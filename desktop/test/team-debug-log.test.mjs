@@ -153,5 +153,39 @@ check('appendFromRenderer 记录渲染层操作且 scope=renderer', () => {
   assert.equal(teamDebug.appendFromRenderer({}), null, '空 action 必须拒绝');
 });
 
+// ST4-③ 实测复核发现的缺陷：`pruneOldFiles` 的过滤条件是 `endsWith('.jsonl')`，
+// 而 20MB 轮转产物叫 `xxx.jsonl.1` —— 匹配不到，于是它永远不在被清理的集合里。
+// 这里造 7 份按日文件 + 1 份**最老**的轮转产物：修好之后保留最近 7 个 ⇒ 被删的必须是那份 .1。
+// （断言不能只看「删了 1 个」——那样即使删错对象也会过。）
+check('轮转产物 .jsonl.1 也纳入「保留最近 7 个」', () => {
+  const freshDir = path.join(tmp, 'rotate');
+  fs.mkdirSync(freshDir, { recursive: true });
+  const base = Date.now() - 30 * 86400000;
+  for (let i = 0; i < 7; i += 1) {
+    const f = path.join(freshDir, `team-debug-2020-01-0${i + 1}.jsonl`);
+    fs.writeFileSync(f, '{}\n');
+    const t = new Date(base + (i + 1) * 1000);
+    fs.utimesSync(f, t, t);
+  }
+  const rotated = path.join(freshDir, 'team-debug-2020-01-08.jsonl.1');
+  fs.writeFileSync(rotated, '{}\n');
+  fs.utimesSync(rotated, new Date(base), new Date(base)); // 比全部按日文件都老
+
+  const modPath = path.join(DESKTOP, 'main/teamDebugLog.js');
+  delete require.cache[require.resolve(modPath)];
+  const fresh = require(modPath);
+  fresh.initTeamDebugLog({ dir: freshDir, meta: { version: 'rotate' } });
+
+  assert.equal(fs.existsSync(rotated), false, '轮转产物 .jsonl.1 必须一起参与保留数量裁剪');
+  // 只统计「预置的 2020 系列」：initTeamDebugLog 紧接着会写出**今天**的日志文件，
+  // 把它算进来会让「剩 7 个」的期望恒差 1（第一次写这条断言时就踩了）。
+  const kept = fs.readdirSync(freshDir).filter((n) => /^team-debug-2020-.*\.jsonl$/.test(n)).sort();
+  assert.deepEqual(kept, [
+    'team-debug-2020-01-01.jsonl', 'team-debug-2020-01-02.jsonl', 'team-debug-2020-01-03.jsonl',
+    'team-debug-2020-01-04.jsonl', 'team-debug-2020-01-05.jsonl', 'team-debug-2020-01-06.jsonl',
+    'team-debug-2020-01-07.jsonl',
+  ], `保留的必须是较新那批，实际：${kept.join(',')}`);
+});
+
 console.log(`\n${pass}/${total} 通过`);
 fs.rmSync(tmp, { recursive: true, force: true });

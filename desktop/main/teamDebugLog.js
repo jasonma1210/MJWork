@@ -106,7 +106,10 @@ function rotateIfNeeded(file) {
 function pruneOldFiles() {
   try {
     const names = fs.readdirSync(cfg.dir)
-      .filter((n) => n.startsWith(FILE_PREFIX) && n.endsWith('.jsonl'))
+      // 必须连轮转产物 `.jsonl.1` 一起纳入：原判据 `endsWith('.jsonl')` 匹配不到它，
+      // 于是「按日切 + 保留 7 个」实际只对未轮转的文件生效，一旦某天超过 20MB，
+      // 那份 `.jsonl.1` 就永久留在磁盘上（ST4-③ 实测复核时发现）。
+      .filter((n) => n.startsWith(FILE_PREFIX) && /\.jsonl(?:\.1)?$/.test(n))
       .map((n) => ({ n, mtime: fs.statSync(path.join(cfg.dir, n)).mtimeMs }))
       .sort((a, b) => b.mtime - a.mtime);
     for (const { n } of names.slice(KEEP_FILES)) {
@@ -170,12 +173,37 @@ function initTeamDebugLog({ dir, meta } = {}) {
   if (dir) cfg.dir = dir;
   if (meta && typeof meta === 'object') cfg.meta = meta;
   ensureDir();
+  // ST4-③：磁盘保留策略在启动时跑一次（主进程日志 / 崩溃记录 / 迁移快照的过期清理）。
+  // 落点选在这里而不是 main.js：后者 code 行数已钉死（max-lines 棘轮，加一行即红）；
+  // 也不放 db 模块：那里只该管数据库自身。本函数是「日志设施初始化」，清理旧日志属同类职责，
+  // 且 cfg.dir 就是 <userData>/logs，path.dirname 即 userData —— 不需要额外传参。
+  const retention = runDiskRetentionOnce();
   log('session', 'debug_started', {
     meta: cfg.meta,
     enabled: cfg.enabled,
     verbose: cfg.verbose,
     pid: process.pid,
+    retention: retention || null,
   });
+}
+
+/** 跑一次过期清理，返回给日志用的摘要（禁用 / 无目录 / 无东西可清时返回空串）。 */
+function runDiskRetentionOnce() {
+  if (process.env.MJ_DISK_RETENTION === '0' || !cfg.dir) return '';
+  try {
+    const { runRetention, summarize } = require('./diskRetention');
+    const r = runRetention(path.dirname(cfg.dir));
+    for (const f of r.failed) console.warn(`[retention] 清理失败（下次启动重试）：${f.name} — ${f.error}`);
+    for (const e of r.errors) console.warn(`[retention] 扫描异常：${e.dir || e.file || ''} — ${e.error}`);
+    const s = summarize(r);
+    if (s) console.log(`[retention] ${s}`);
+    return s;
+  } catch (e) {
+    // C-001：保留策略自身崩了绝不能连带「日志设施初始化」一起失败，但必须留痕——
+    // 否则「磁盘只增不减」会重新变成一次没人知道的静默降级。
+    console.warn('[retention] 保留策略异常（不影响启动）：', e && e.message);
+    return '';
+  }
 }
 
 function setEnabled(v) {
