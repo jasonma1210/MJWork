@@ -157,6 +157,7 @@ module.exports = {
   maybeDailyBackup,
   backupFileName,
   verifySqliteFile,
+  fsyncFile,
   DEFAULT_KEEP,
   FILE_PREFIX,
 };

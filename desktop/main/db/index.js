@@ -768,6 +768,17 @@ async function openWithDriver(name, dataDir, file) {
 async function openDbAsync(dataDir, { isPackaged = false, driver: driverOverride } = {}) {
   const file = path.join(dataDir, 'mjcode-tasks.db');
   fs.mkdirSync(dataDir, { recursive: true });
+  // ST4-②：待导入快照必须在**打开库之前**换入——连接一旦建立就持有旧 inode 的 fd，
+  // 之后 rename 换文件会被旧连接写覆盖。这里没有任何连接，是唯一安全的时机。
+  if (process.env.MJ_DB_IMPORT !== '0') {
+    try {
+      const imp = require('./snapshotImport').applyPendingImport(dataDir);
+      if (imp.applied) console.log(`[db] 已应用待导入快照（回滚点：${path.basename(imp.rollback || '无')}）`);
+      else if (!imp.ok) console.warn('[db] 待导入快照未应用（按现库继续）：', imp.error);
+    } catch (e) {
+      console.warn('[db] 导入应用异常（按现库继续）：', e && e.message);
+    }
+  }
   // driverOverride 显式指定驱动（测试用 'sqljs' 强制零原生，绕过 better-sqlite3 ABI/编译依赖）；
   // 未指定则按环境变量 MJ_DB_DRIVER 走，缺省 auto。
   const raw = String(driverOverride || process.env.MJ_DB_DRIVER || 'auto').toLowerCase();

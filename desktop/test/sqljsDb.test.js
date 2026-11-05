@@ -353,6 +353,59 @@ function ok(name) { n += 1; console.log(`  ✓ ${name}`); }
     fs.unlinkSync(garbled);
     ok('ST4 备份校验：坏文件必须被拒绝');
 
+    // ⑳ ST4 导入体检：只认本应用的库 + 版本不得高于当前应用 + 低版本可升级
+    const { inspectSnapshot, stageImport, applyPendingImport } = require('../main/db/snapshotImport');
+    const idir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-inspect-'));
+    async function makeSnap(name, ver, table) {
+      const f = path.join(idir, name);
+      const d = await openNodeSqliteDb(f);
+      d.exec(`CREATE TABLE ${table}(v TEXT)`);
+      d.prepare(`INSERT INTO ${table} VALUES (?)`).run(name);
+      d.pragma(`user_version = ${ver}`);
+      d.close();
+      return f;
+    }
+    const vHigh = await makeSnap('high.db', 999, 'task_groups');
+    const vLow = await makeSnap('low.db', 10, 'task_groups');
+    const foreign = await makeSnap('foreign.db', 19, 'something_else');
+    assert.strictEqual(inspectSnapshot(vHigh, 19).ok, false, '高于当前版本的快照必须拒绝');
+    assert.match(inspectSnapshot(vHigh, 19).error, /高于/, '拒绝原因要说清是版本高');
+    assert.strictEqual(inspectSnapshot(foreign, 19).ok, false, '非本应用的库必须拒绝');
+    assert.match(inspectSnapshot(foreign, 19).error, /task_groups/, '拒绝原因要指出缺哪张表');
+    const lowInfo = inspectSnapshot(vLow, 19);
+    assert.strictEqual(lowInfo.ok, true, '低版本快照应接受');
+    assert.strictEqual(lowInfo.needsUpgrade, true, '低版本应标记需要升级');
+    ok('ST4 导入体检：拒高版本 / 拒非本库 / 低版本可升级');
+
+    // ㉑ ST4 两段式导入：暂存不动现库 → 启动期换入 → 原库落回滚点 → 标记清理
+    const adir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-import-'));
+    const curFile = path.join(adir, 'mjcode-tasks.db');
+    const cur = await openNodeSqliteDb(curFile);
+    cur.exec('CREATE TABLE task_groups(v TEXT)');
+    cur.prepare('INSERT INTO task_groups VALUES (?)').run('现库');
+    cur.pragma('user_version = 19');
+    cur.close();
+    const staged = stageImport(vLow, adir, 19);
+    assert.strictEqual(staged.ok, true, `暂存应成功：${staged.error}`);
+    assert.ok(fs.existsSync(path.join(adir, 'import-pending.db')), '暂存快照已落盘');
+    assert.ok(fs.readFileSync(path.join(adir, 'import-pending.json'), 'utf8').includes('userVersion'), '导入标记已写');
+    const still = await openNodeSqliteDb(curFile);
+    assert.strictEqual(still.prepare('SELECT v FROM task_groups').get().v, '现库', '暂存阶段不得改动现库');
+    still.close();
+    const applied = applyPendingImport(adir);
+    assert.strictEqual(applied.applied, true, `应用应成功：${applied.error}`);
+    const afterImport = await openNodeSqliteDb(curFile);
+    assert.strictEqual(afterImport.prepare('SELECT v FROM task_groups').get().v, 'low.db', '换入后读到的是快照数据');
+    afterImport.close();
+    assert.ok(applied.rollback && fs.existsSync(applied.rollback), '导入前必须为现库留一份回滚点');
+    const rb = await openNodeSqliteDb(applied.rollback);
+    assert.strictEqual(rb.prepare('SELECT v FROM task_groups').get().v, '现库', '回滚点里是原库数据');
+    rb.close();
+    assert.strictEqual(fs.existsSync(path.join(adir, 'import-pending.json')), false, '导入标记已清理');
+    fs.rmSync(adir, { recursive: true, force: true });
+    fs.rmSync(idir, { recursive: true, force: true });
+    ok('ST4 两段式导入：暂存不动现库 → 启动期换入 → 回滚点 + 标记清理');
+
     // ⑭ ST3 退出兜底：exit 钩子只装一次（不随开库次数泄漏），且能真正关掉所有未关闭的库。
     const edir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-exit-'));
     const n0 = process.listenerCount('exit');
