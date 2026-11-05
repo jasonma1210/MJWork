@@ -421,20 +421,20 @@ if (!hasMainLock) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   });
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     setupFileLogging();
     // 2026-10-18 ⑦：启动横幅——给启动日志一个**时间戳 + 版本锚点**。
     // 此前整段启动日志无时间戳、无版本行，用户上报日志时无法对齐到具体构建与时刻。
     // app.getVersion 在部分测试宿主的 mock app 上不存在 → 防御式取值，缺失降级为 unknown。
     const appVer = typeof app.getVersion === 'function' ? app.getVersion() : 'unknown';
     console.log(`[startup] ${new Date().toISOString()} MJCode v${appVer} · electron ${process.versions.electron} · node ${process.versions.node} · ${process.platform}-${process.arch}`);
+    previewScheme.initPreviewScheme(); // T3-1：流式预览协议处理器（必须 ready 后注册）
+    updater.scheduleAutoUpdateCheck(); // P1-N：更新检查延迟 10s 自动触发（initUpdater 仍保留供手动检查即时初始化）
+    // ST1 切读（2026-11-05）：先开库再建 store——store 构造时库已就绪，load() 才能以 SQLite 为读源；上限 1.5s，超时按老路径走（store 订阅 liveDb，库晚到一样接得上）；窗口刻意排在 store 之后，免得先渲染一屏空会话再刷。详见 localStore.load 的注释。
+    await Promise.race([initTaskOrchestration(), new Promise((r) => { setTimeout(r, 1500).unref(); })]).catch((e) => console.error('[startup] 开库阶段异常，按老路径继续（窗口照常创建）:', e && e.message));
+    initLocalStore();
     createWindow();
     crashGuard.attachWindow(mainWindow); // C2：unresponsive / responsive 只存在于 BrowserWindow
-    previewScheme.initPreviewScheme(); // T3-1：流式预览协议处理器（必须 ready 后注册）
-    // P1-N：更新检查延迟 10s 自动触发（initUpdater 仍保留供手动检查即时初始化）
-    updater.scheduleAutoUpdateCheck();
-    initLocalStore();
-    initTaskOrchestration(); // P1：任务编排子系统（SQLite 队列 + Worker 池 + 断点恢复）
     reconnectMcpServers(); // 启动自动重连已持久化的 MCP 服务
     // 定时任务：IPC + 调度循环
     // P0-D：执行通道升级为 Agent（工具循环+审批+沙箱）；chatOnce 保留为无 Agent 通道时的回落
@@ -1398,8 +1398,8 @@ function resolveTaskModel() {
 }
 
 function initTaskOrchestration() {
-  // 异步初始化：驱动选择可能包含子进程金丝雀探测（最长 ~10s），不阻断启动
-  openDbAsync(app.getPath('userData'), { isPackaged: app.isPackaged })
+  // 异步初始化：驱动选择可能包含子进程金丝雀探测（最长 ~10s），不阻断启动。返回 Promise（ST1 切读要先等库就绪再建 store）；失败不 reject，状态由 dbStatus 承载。
+  return openDbAsync(app.getPath('userData'), { isPackaged: app.isPackaged })
     .then((db) => { if (setupTaskOrchestration(db) === true) dbStatus.markReady(); })
     .catch((err) => {
       // 初始化失败不阻断启动，但必须让用户看得见（X4）

@@ -452,6 +452,92 @@ check('导出：不存在的会话返回 ok:false', sR3.exportThreadMarkdown(999
   dbInit.close();
   fs.rmSync(dirInit, { recursive: true, force: true });
 
+  // ── ST1 切读（2026-11-05）：库先就绪，store 构造时以 SQLite 为读源 ──
+  // 上一段证明的是「镜像写进去了」；这一段证明「读源换过来了」——两件事完全不同。
+  const dirCut = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-cutover-'));
+  liveDb._reset();
+  const seedCut = new LocalStore(dirCut);                 // 此时还没有库 → 读 JSON
+  const tCut = seedCut.createThread({ title: '切读', cwd: '/tmp/cut' });
+  seedCut.addMessage({ threadId: tCut.id, role: 'user', content: '切读前的消息' });
+  seedCut.flushSync();
+  const dbCut = await openDbAsync(path.join(dirCut, 'dbdata'), { driver: 'node-sqlite' });
+  liveDb.publish(dbCut);                                  // seedCut 把数据镜像进去
+  await new Promise((r) => setTimeout(r, 20));
+  liveDb._reset();                                        // 摘掉 seedCut，别让它参与后续镜像
+  liveDb.publish(dbCut);                                  // _reset 连「当前库」一起清了，这里要重新挂上
+  const sCut = new LocalStore(dirCut);
+  check('ST1 切读：库已就绪时 store 以 SQLite 为读源（不是 JSON）',
+    sCut.sourceOfTruth === 'sqlite', String(sCut.sourceOfTruth));
+  check('ST1 切读：装载出的集合与条数与来源一致',
+    sCut.data.threads.length === 1 && sCut.data.messages.length === 1,
+    `threads=${sCut.data.threads.length} messages=${sCut.data.messages.length}`);
+
+  // seq 必须按「已用过的最大 id + 1」重建。副本里没有 seq 这一列，直接吃 EMPTY.seq(=1)
+  // 会让新消息拿到历史 id —— 那不是显示问题，是数据损坏（两条消息同 id）。
+  const maxIdBefore = Math.max(...sCut.data.messages.map((m) => Number(m.id) || 0));
+  const mCut = sCut.addMessage({ threadId: tCut.id, role: 'user', content: '切读后的新消息' });
+  const idsCut = sCut.data.messages.map((m) => String(m.id));
+  check('ST1 切读：seq 从最大 id 续接，新消息 id 不与历史撞号',
+    mCut.id > maxIdBefore && new Set(idsCut).size === idsCut.length,
+    `new=${mCut.id} maxBefore=${maxIdBefore} ids=${idsCut.join(',')}`);
+
+  // 升级后的首启：v19 刚建表，副本是空的。这时必须回落 JSON，否则一次升级等于清空用户数据。
+  const dirEmpty = fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-emptydb-'));
+  liveDb._reset();
+  const seedE = new LocalStore(dirEmpty);
+  seedE.createThread({ title: '只有 JSON', cwd: '/tmp/e' });
+  seedE.flushSync();
+  const dbEmpty = await openDbAsync(path.join(dirEmpty, 'dbdata'), { driver: 'node-sqlite' });
+  liveDb._reset();
+  liveDb.publish(dbEmpty);                                // 库就绪但一条数据都没有
+  const sE = new LocalStore(dirEmpty);
+  check('ST1 切读：副本为空时回落 JSON（升级首启不能把数据弄丢）',
+    sE.sourceOfTruth === 'json' && sE.data.threads.length === 1,
+    `source=${sE.sourceOfTruth} threads=${sE.data.threads.length}`);
+
+  // 降级场景：JSON 比 SQLite 新（用户装回过旧版本，旧版本只写 JSON）。
+  // 设计选择是**只告警、不改判据**——切读的意义就是读源唯一，这里再改判据等于把切读写回去。
+  // 两半都要断：既要是 sqlite 读源，也要真的告警过；只断一半会让「没告警」或「改判据」蒙混过去。
+  const jsonStale = JSON.parse(fs.readFileSync(path.join(dirCut, 'local-data.json'), 'utf8'));
+  jsonStale.threads.push({ id: 9999, title: '只在 JSON 里的线程', cwd: '/tmp/old', createdAt: 1, updatedAt: 2 });
+  fs.writeFileSync(path.join(dirCut, 'local-data.json'), JSON.stringify(jsonStale));
+  const warns = [];
+  const origWarn = console.warn;
+  liveDb._reset();
+  liveDb.publish(dbCut);                                  // 上一段把当前库换成了空库，这里换回来
+  console.warn = (...a) => { warns.push(a.map(String).join(' ')); };
+  let sStale = null;
+  try { sStale = new LocalStore(dirCut); } finally { console.warn = origWarn; }
+  check('ST1 切读：JSON 看起来更新时只告警、不改读源（9999 不得复活）',
+    sStale.sourceOfTruth === 'sqlite'
+    && !sStale.data.threads.some((t) => Number(t.id) === 9999)
+    && warns.some((w) => /交叉核对/.test(w)),
+    `source=${sStale.sourceOfTruth} threads=${sStale.data.threads.length} warns=${warns.length}`);
+
+  // 逃生口：一个环境变量退回老路径，不必回滚版本。
+  process.env.MJ_STORE_SOURCE = 'json';
+  let sEsc = null;
+  try { sEsc = new LocalStore(dirCut); } finally { delete process.env.MJ_STORE_SOURCE; }
+  check('ST1 切读：MJ_STORE_SOURCE=json 时退回 JSON 读源（逃生口可用）',
+    sEsc.sourceOfTruth === 'json', String(sEsc.sourceOfTruth));
+
+  // 读不出副本 ≠ 没有副本。失败当空库的后果是用户以为会话全丢了。
+  liveDb._reset();
+  liveDb.publish({ prepare() { throw new Error('snapshot-unreadable'); } });
+  const warns2 = [];
+  console.warn = (...a) => { warns2.push(a.map(String).join(' ')); };
+  let sBroken = null;
+  try { sBroken = new LocalStore(dirCut); } finally { console.warn = origWarn; }
+  check('ST1 切读：副本读失败时退回 JSON 并留痕（不是当成空库）',
+    sBroken.sourceOfTruth === 'json' && sBroken.data.threads.length >= 1
+    && warns2.some((w) => /从 SQLite 装载失败/.test(w)),
+    `source=${sBroken.sourceOfTruth} threads=${sBroken.data.threads.length}`);
+  liveDb._reset();
+  dbCut.close();
+  dbEmpty.close();
+  fs.rmSync(dirCut, { recursive: true, force: true });
+  fs.rmSync(dirEmpty, { recursive: true, force: true });
+
   fs.rmSync(dirMirror, { recursive: true, force: true });
 
   fs.rmSync(dirNoBak, { recursive: true, force: true });

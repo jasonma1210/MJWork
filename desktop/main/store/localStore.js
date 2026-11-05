@@ -42,6 +42,7 @@ class LocalStore {
     // Agent 工具循环高峰每秒多条消息，同步写会卡死主进程事件循环（连带冻结 IPC 流式转发与审批响应）。
     this._flushTimer = null; // 挂起的合并刷盘定时器
     this._dirty = false;     // 有未落盘的内存变更
+    this.sourceOfTruth = null; // 'sqlite' | 'json' —— 本次装载用的是哪个读源（诊断面 + 测试断言）
     this.data = this.load();
     // ST1（2026-11-05）：影子副本的库句柄。本实例比库先构造（openDbAsync 是异步的），
     // 故向 liveDb 订阅「库已就绪」，而不是让 main.js 传参（那边 code 行数已钉死）。
@@ -97,7 +98,74 @@ class LocalStore {
     return res;
   }
 
+  // ST1 切读（2026-11-05）：先问 SQLite 影子副本，再回落 JSON。
+  //
+  // 判据是「副本里有没有东西」，不是「库开没开」：老用户升级上来的第一次启动，v19 才刚建表，
+  // SQLite 是空的、JSON 才是全量——所以空副本必须回落，否则一次升级就等于清空用户数据。
+  //
+  // 逃生口：`MJ_STORE_SOURCE=json` 一个环境变量退回老路径，不必回滚版本。
   load() {
+    const fromDb = this.loadFromSqlite();
+    if (fromDb) {
+      this.sourceOfTruth = 'sqlite';
+      this.crossCheckAgainstJson(fromDb);
+      return fromDb;
+    }
+    this.sourceOfTruth = 'json';
+    return this.loadFromJson();
+  }
+
+  // 从 SQLite 装载。返回 null = 这次该走 JSON（逃生口 / 库没就绪 / 副本为空 / 读失败）。
+  loadFromSqlite() {
+    if (String(process.env.MJ_STORE_SOURCE || '').toLowerCase() === 'json') return null;
+    const db = liveDb.currentDbOrNull();
+    if (!db) return null;
+    let snap = null;
+    try {
+      snap = readSnapshot(db);
+    } catch (e) {
+      // 读不出来 ≠ 没有数据。「失败当空库」的后果是用户以为会话全丢了，
+      // 所以这里退 JSON（那边还有全量），并把原因留痕。
+      console.warn('[localStore] 从 SQLite 装载失败，退回 JSON（本地数据仍可用）:', (e && e.message) || String(e));
+      return null;
+    }
+    const hasData = snap && (
+      (snap.threads && snap.threads.length) || (snap.messages && snap.messages.length)
+      || (snap.providers && snap.providers.length) || (snap.projects && snap.projects.length)
+      || Object.keys(snap.preferences || {}).length
+    );
+    if (!hasData) return null; // 升级后的首启：v19 刚建表，副本还是空的
+    // seq 必须按「已用过的最大 id + 1」重建。副本里没有 seq 这一列，
+    // 直接拿 EMPTY.seq(=1) 会让新消息的 id 与历史 id 撞号——那是数据损坏，不是显示问题。
+    let maxId = 0;
+    for (const k of ['threads', 'messages', 'providers']) {
+      for (const e of (snap[k] || [])) { const n = Number(e.id) || 0; if (n > maxId) maxId = n; }
+    }
+    return { ...structuredClone(EMPTY), ...snap, seq: maxId + 1, schemaVersion: SCHEMA_VERSION };
+  }
+
+  // 只看不用的交叉核对：切读后 JSON 是**回滚快照**，不是第二真值。
+  // 但如果它看起来比 SQLite 更新（典型场景：装过旧版本、旧版本只写 JSON），
+  // 那就是一个必须让人看见的信号——否则用户会静默丢一段历史。
+  // 刻意只告警不用它：切读的意义就是"读源唯一"，这里再改判据等于把切读写回去。
+  crossCheckAgainstJson(fromDb) {
+    let json = null;
+    try {
+      json = this.migrate(JSON.parse(fs.readFileSync(this.file, 'utf8')));
+    } catch (e) {
+      // 文件不存在/损坏：切读后这是可接受的（JSON 只是快照），但要能区分「没有」和「坏掉」。
+      if (e && e.code !== 'ENOENT') console.warn('[localStore] 交叉核对跳过：JSON 快照不可读（', (e && e.message) || String(e), '）');
+      return;
+    }
+    const problems = diffSnapshots(json, fromDb);
+    if (!problems) return;
+    const brief = problems.problems
+      .map((p) => `${p.collection}:JSON缺${p.missingCount || 0}/多${p.extraCount || 0}/变${p.changedCount || 0}`)
+      .join(' ');
+    console.warn('[localStore] 交叉核对：JSON 快照与 SQLite 不一致（读源已是 SQLite）:', brief);
+  }
+
+  loadFromJson() {
     let raw = null;
     let readFailed = false;
     try {
