@@ -412,8 +412,10 @@ check('导出：不存在的会话返回 ok:false', sR3.exportThreadMarkdown(999
   // 库未就绪是启动早期的正常状态：不告警、不影响 flush
   liveDb._reset();
   const sNoDb = new LocalStore(fs.mkdtempSync(path.join(os.tmpdir(), 'mjcode-local-nodb-')));
-  check('ST1：库未就绪时 mirrorNow 返回 db-not-ready 且不算失败',
-    sNoDb.mirrorNow().error === 'db-not-ready' && sNoDb.flushSync().ok === true);
+  check('ST1：库未就绪时 mirrorNow / verifyMirror 都返回 db-not-ready 且不算失败',
+    sNoDb.mirrorNow().error === 'db-not-ready'
+    && sNoDb.verifyMirror().error === 'db-not-ready'
+    && sNoDb.flushSync().ok === true);
 
   // 启动即补初始镜像。这一条来自真实数据实测：首版只在 flush 里镜像，而 flushSync 在
   // 「没有脏数据」时 early-return，于是「打开 app 什么都不做」期间影子副本一直是空的
@@ -432,6 +434,21 @@ check('导出：不存在的会话返回 ok:false', sR3.exportThreadMarkdown(999
   check('ST1：库就绪即补初始镜像（构造后不做任何写操作也有完整影子副本）',
     initSnap.threads.length === 1 && initSnap.messages.length === 1,
     `threads=${initSnap.threads.length} messages=${initSnap.messages.length}`);
+
+  // 「对照器存在」≠「运行时在对账」。此前 diffSnapshots 只在测试里被调用，生产代码一次没调过
+  // ——即「矩阵恒绿 ≠ 已接线」。这里断言它真的在库就绪后自动跑过，且结论是一致。
+  check('ST1：初始镜像之后自动对账一次（双读对照已接线，不是只在测试里跑）',
+    sInit.mirrorCheck !== null && sInit.mirrorCheck.ok === true,
+    JSON.stringify(sInit.mirrorCheck));
+
+  // 负样本：副本被改动时必须精确报出「哪个集合、缺几条」。
+  // 只断言 ok:false 是不够的——任何异常都能让它 false，包括「路径根本没走到」。
+  dbInit.prepare('DELETE FROM messages WHERE thread_id = ?').run(tSeed.id);
+  const drift = sInit.verifyMirror();
+  const msgProblem = (drift.problems || []).find((p) => p.collection === 'messages');
+  check('ST1：副本被改动时 verifyMirror 精确报出集合与缺失条数',
+    drift.ok === false && !!msgProblem && msgProblem.missingCount === 1,
+    JSON.stringify(drift));
   dbInit.close();
   fs.rmSync(dirInit, { recursive: true, force: true });
 

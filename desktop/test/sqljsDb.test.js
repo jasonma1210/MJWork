@@ -202,6 +202,21 @@ function ok(name) { n += 1; console.log(`  ✓ ${name}`); }
     nd.close();
     fs.rmSync(ndir, { recursive: true, force: true });
     ok('node:sqlite 事务可嵌套（SAVEPOINT）——sql.js 裸 BEGIN 不支持');
+
+    // ⑪ 持久化契约必须被钉住，不能靠默认值。
+    //    `journal_mode=WAL` 是显式设置的；`synchronous` 此前**完全依赖 SQLite 默认（FULL）**，
+    //    而默认值不是契约：WAL 下把 synchronous 调成 NORMAL 是常见吞吐优化，改完
+    //    「已提交」就不再等于「掉电后还在」，且**所有测试照样绿**（丢数据发生在进程外）。
+    //    这两条断言的作用是：将来谁动了它，测试立刻红，而不是等用户掉电才发现。
+    const pdir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-durability-'));
+    const pd = await openNodeSqliteDb(path.join(pdir, 'd.db'));
+    assert.strictEqual(String(pd.pragma('journal_mode', { simple: true })).toLowerCase(), 'wal',
+      'journal_mode 必须是 wal（拿不到 WAL 就等于没换驱动）');
+    assert.strictEqual(pd.pragma('synchronous', { simple: true }), 2,
+      'synchronous 必须是 FULL(2)：已提交 = 掉电后仍在');
+    pd.close();
+    fs.rmSync(pdir, { recursive: true, force: true });
+    ok('node:sqlite 持久化契约：journal_mode=wal + synchronous=FULL(2) 被显式钉住');
   } else {
     console.warn('  ⚠ 当前运行时无 node:sqlite，parity 仅覆盖 sql.js（这一段不算已验证）');
   }

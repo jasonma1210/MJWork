@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeFileDurable } = require('../data/durableWrite');
 const liveDb = require('../db/liveDb');
-const { mirrorSnapshot } = require('./localMirror');
+const { mirrorSnapshot, readSnapshot, diffSnapshots } = require('./localMirror');
 
 // P1-M：本地数据韧性——此前 local-data.json 一损坏就静默重置为空库，
 // 用户的全部线程/消息/凭证无声消失（且无任何提示）。三级防线：
@@ -47,6 +47,7 @@ class LocalStore {
     // 故向 liveDb 订阅「库已就绪」，而不是让 main.js 传参（那边 code 行数已钉死）。
     this._mirrorDb = null;
     this.mirrorError = null; // 最近一次影子写入失败原因（诊断面；成功即清空）
+    this.mirrorCheck = null; // 最近一次双读对照结果（诊断面；见 verifyMirror）
     liveDb.subscribe((db) => {
       this._mirrorDb = db || null;
       if (!db) return;
@@ -55,7 +56,13 @@ class LocalStore {
       // 时间里影子副本恒为空——此时双读对照会报「全部缺失」（假警报），
       // 影子副本也起不到任何兜底作用。首次全量约 28ms（1873 条消息），
       // 用 setImmediate 推到当前 tick 之后，不压在库打开/窗口创建的路径上。
-      setImmediate(() => { if (this._mirrorDb === db) this.mirrorNow(); });
+      setImmediate(() => {
+        if (this._mirrorDb !== db) return;
+        const res = this.mirrorNow();
+        // 只在镜像写成功之后对账：写都没成功时报「不一致」是误导——
+        // 那句话会被读成「两边写岔了」，真相却是「一边根本没写」。
+        if (res && res.ok) this.verifyMirror();
+      });
     });
   }
 
@@ -236,6 +243,38 @@ class LocalStore {
       this.mirrorError = (e && e.message) || String(e);
       console.warn('[localStore] 影子写入 SQLite 失败（JSON 已保存，本地数据仍可用）:', this.mirrorError);
       return { ok: false, error: this.mirrorError };
+    }
+  }
+
+  // ST1 第三阶段接线（2026-11-05）：双读对照不再是「只在测试里跑的工具」。
+  //
+  // 为什么必须接：`diffSnapshots` 写完之后，生产代码里一次都没调过——于是「双读对照已落地」
+  // 这句话在运行时是**空的**。这正是本项目反复吃过的那个坑：*矩阵恒绿 ≠ 已接线*。
+  // 对照器的价值不在它存在，而在 cut-over 之前**持续产出「两边一致」的证据**。
+  //
+  // 只在「库就绪 + 补完初始镜像」后跑一次，不挂在每次 flush 上：一次全量对照要回读
+  // 全部消息（1873 条约数十毫秒），挂在 150ms 合并刷盘的热路径上不划算。
+  // 需要时可由诊断面/测试再调一次（幂等，纯读）。
+  verifyMirror() {
+    const db = this._mirrorDb;
+    if (!db) return { ok: false, error: 'db-not-ready' };
+    try {
+      const problems = diffSnapshots(this.data, readSnapshot(db));
+      this.mirrorCheck = { at: Date.now(), ok: problems === null, problems: problems ? problems.problems : [] };
+      if (problems) {
+        // 差异必须报**总数**，不能只报样本：只看到 5 条会让人以为只错了 5 条。
+        const brief = problems.problems
+          .map((p) => `${p.collection}:缺${p.missingCount || 0}/多${p.extraCount || 0}/变${p.changedCount || 0}`)
+          .join(' ');
+        console.warn('[localStore] 双读对照发现影子副本与内存态不一致，cut-over 前必须清零:', brief);
+      }
+      return this.mirrorCheck;
+    } catch (e) {
+      // C-001：对照失败 ≠ 对照通过。这里必须落成「无法判定」而不是静默放过——
+      // 否则 cut-over 的准入门槛会在一句 throw 之后被当成绿灯。
+      this.mirrorCheck = { at: Date.now(), ok: false, error: (e && e.message) || String(e) };
+      console.warn('[localStore] 双读对照执行失败（副本一致性无法判定）:', this.mirrorCheck.error);
+      return this.mirrorCheck;
     }
   }
 

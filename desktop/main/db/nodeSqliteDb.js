@@ -141,6 +141,13 @@ async function openNodeSqliteDb(filePath) {
   sqlite.exec('PRAGMA journal_mode = WAL');
   sqlite.exec('PRAGMA foreign_keys = ON');
   sqlite.exec('PRAGMA busy_timeout = 5000');
+  // synchronous=FULL：WAL 下这次提交要 fsync 日志，慢一点，但「已提交」= 「掉电后还在」。
+  //
+  // 为什么不写也行、还是写了：SQLite 的默认值本来就是 FULL（2），所以这一行**不改变
+  // 任何现有行为**。但「默认值」不是契约——将来有人为了吞吐把它改成 NORMAL（WAL 下很常见），
+  // 掉电就会丢掉最后若干已提交事务，而**所有测试照样绿**（丢数据只在进程外发生）。
+  // 写死它 + 在 test/sqljsDb.test.js 断言 synchronous=2，是把隐式默认变成可回归的契约。
+  sqlite.exec('PRAGMA synchronous = FULL');
 
   // 事务嵌套用 SAVEPOINT：sqljsDb 的 transaction 用裸 BEGIN，嵌套时会抛
   // 「cannot start a transaction within a transaction」。原生驱动没理由保留那个缺陷。
