@@ -30,7 +30,12 @@ function hasColumn(db, table, column) {
   }
 }
 
+// 迁移期间记录 addColumn 的尝试目标，供迁移后用 PRAGMA 真校验「列确实就位」。
+// 只在 migrate() 执行期间非 null；运行期恒为 null，无全局副作用。
+let addColumnLog = null;
+
 function addColumn(db, table, column, type) {
+  if (addColumnLog) addColumnLog.push({ table, column });
   if (hasColumn(db, table, column)) {
     console.log(`[db] 列已存在，跳过：${table}.${column}`);
     return false;
@@ -802,19 +807,79 @@ async function openDbAsync(dataDir, { isPackaged = false, driver: driverOverride
 // 迁移前快照：库文件是任务编排与记忆的唯一副本（X5 的另一半）。
 // 只在「确实要升级」时做，且按版本号命名（同一版本重试只覆盖同一文件，不会累积）。
 // WAL 模式下必须连带 -wal/-shm 一起拷，否则快照会丢掉最近事务。
+// ST3：copyFileSync 只写进 page cache，掉电/断电时「回滚点」可能根本不存在。
+// 逐个 fsync 副本文件，再 fsync 目录（目录项落盘），并如实上报是否做到 ——
+// 不把「没做到」说成「做到了」（Windows 无法 fsync 目录，返回 false）。
+function fsyncFile(file) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, 'r');
+    fs.fsyncSync(fd);
+    return true;
+  } catch (e) {
+    console.warn(`[db] 快照文件 fsync 失败（${path.basename(file)}），掉电保护降级：`, e.message);
+    return false;
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch { /* 关闭失败无副作用 */ } }
+  }
+}
+
 function snapshotBeforeMigrate(filePath, fromVersion) {
   if (!filePath || fromVersion <= 0) return null; // 新库没有数据可备
   if (!fs.existsSync(filePath)) return null;
+  const { fsyncDir } = require('../data/durableWrite');
   const backup = `${filePath}.pre-v${fromVersion}.bak`;
   try {
+    let copied = 0;
+    let filesFsynced = true;
     for (const suffix of ['', '-wal', '-shm']) {
-      if (fs.existsSync(filePath + suffix)) fs.copyFileSync(filePath + suffix, backup + suffix);
+      if (!fs.existsSync(filePath + suffix)) continue;
+      fs.copyFileSync(filePath + suffix, backup + suffix);
+      if (!fsyncFile(backup + suffix)) filesFsynced = false;
+      copied += 1;
     }
-    console.log(`[db] 迁移前已快照：${backup}`);
+    const dirFsynced = fsyncDir(path.dirname(filePath));
+    console.log(`[db] 迁移前已快照：${backup}（${copied} 个文件，文件 fsync=${filesFsynced ? 'ok' : '降级'}，目录 fsync=${dirFsynced ? 'ok' : '降级'}）`);
     return backup;
   } catch (e) {
     console.warn('[db] 迁移前快照失败（继续迁移，但失去回滚点）：', e.message);
     return null;
+  }
+}
+
+// 单条迁移。ST3：撞到 duplicate column 时**不能**只推进 user_version ——
+// 那次事务已整体回滚，本迁移里先加成功的其他列也一起被回滚了，
+// 直接续版本会让它们永久缺失（下次启动因 m.version <= current 被跳过）。
+// 改为「重放一次」：PRAGMA table_info 此时会跳过已存在列、补齐其余列；
+// 重放成功 = 版本号与本迁移全部 DDL 真正就位。重放再失败则向上抛（不吞真实故障）。
+// 最后用 PRAGMA 对本迁移每个 addColumn 目标做真校验，杜绝「版本号到了、列没到」。
+function applyOneMigration(db, m) {
+  const attempts = [];
+  const prevLog = addColumnLog;
+  addColumnLog = attempts;
+  // 事务内：up() → 逐列真校验 → 推进 user_version。
+  // 校验必须放在**提交前**：列没就位就整体回滚，连版本号也不推进；
+  // 否则下次启动会因 `m.version <= current` 直接跳过，缺的列永久补不回来。
+  const runOnce = () => db.transaction(() => {
+    attempts.length = 0;
+    m.up(db);
+    for (const { table, column } of attempts) {
+      if (!hasColumn(db, table, column)) {
+        throw new Error(`迁移 v${m.version} 校验失败：列 ${table}.${column} 未就位（${m.name}）`);
+      }
+    }
+    db.pragma(`user_version = ${m.version}`);
+  })();
+  try {
+    runOnce();
+    console.log(`[db] 迁移 v${m.version} 完成：${m.name}`);
+  } catch (e) {
+    if (!/duplicate column name/i.test(String((e && e.message) || ''))) throw e;
+    console.warn(`[db] 迁移 v${m.version} 撞到已存在列，重放校验：`, e.message);
+    runOnce();
+    console.log(`[db] 迁移 v${m.version} 重放后通过：${m.name}`);
+  } finally {
+    addColumnLog = prevLog;
   }
 }
 
@@ -825,25 +890,14 @@ function migrate(db, filePath) {
   if (current < target) snapshotBeforeMigrate(filePath, current);
   for (const m of MIGRATIONS) {
     if (m.version <= current) continue;
-    const tx = db.transaction(() => {
-      m.up(db);
-      db.pragma(`user_version = ${m.version}`);
-    });
-    try {
-      tx();
-      console.log(`[db] 迁移 v${m.version} 完成：${m.name}`);
-    } catch (e) {
-      // 兜底：幂等加列之外仍可能撞上「列被别的模块提前加过」。
-      // 这属于「目标效果已达成」，推进版本号继续，而不是让整条链失败。
-      // 只对 duplicate column 精确容错，其余错误照旧抛出（不吞真实故障）。
-      if (/duplicate column name/i.test(String((e && e.message) || ''))) {
-        db.pragma(`user_version = ${m.version}`);
-        console.warn(`[db] 迁移 v${m.version} 目标列已存在，按已应用处理：`, e.message);
-        continue;
-      }
-      throw e;
-    }
+    applyOneMigration(db, m);
   }
 }
 
-module.exports = { openDb, openDbAsync, driverPlan, MIGRATIONS };
+// __applyOneMigration / __addColumn 仅供测试直接驱动（验证 duplicate column 重放、列已就位真校验），
+// 生产代码一律走 openDb/openDbAsync。
+module.exports = {
+  openDb, openDbAsync, driverPlan, MIGRATIONS,
+  __applyOneMigration: applyOneMigration,
+  __addColumnForTest: addColumn,
+};

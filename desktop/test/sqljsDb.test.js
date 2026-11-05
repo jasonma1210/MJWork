@@ -217,6 +217,100 @@ function ok(name) { n += 1; console.log(`  ✓ ${name}`); }
     pd.close();
     fs.rmSync(pdir, { recursive: true, force: true });
     ok('node:sqlite 持久化契约：journal_mode=wal + synchronous=FULL(2) 被显式钉住');
+
+    // ⑫ ST3：迁移前快照必须「真能回滚」。copyFileSync 只进 page cache，掉电时备份可能根本不存在；
+    //    这里验三件事：快照生成 / 可作为独立库打开（不是截断文件）/ 版本停在迁移前。
+    const { openDbAsync, __applyOneMigration, __addColumnForTest } = require('../main/db');
+    const sdir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-snapshot-'));
+    const sfile = path.join(sdir, 'mjcode-tasks.db');
+    {
+      const d = await openNodeSqliteDb(sfile);
+      for (const m of MIGRATIONS.filter((x) => x.version <= 18)) {
+        d.transaction(() => { m.up(d); d.pragma(`user_version = ${m.version}`); })();
+      }
+      d.close();
+    }
+    // fsync 是副作用，默认测不到 —— 用 fd→路径映射精确断言「快照副本自身被 fsync 过」。
+    // 只数目录 fsync 不够：那样删掉 fsyncFile 仍会绿（fsyncDir 同走 fs.fsyncSync）。
+    const realOpen = fs.openSync, realFsync = fs.fsyncSync, realClose = fs.closeSync;
+    const pathByFd = new Map();
+    let bakFsynced = false;
+    fs.openSync = function patchedOpen(p, ...a) { const fd = realOpen.call(fs, p, ...a); pathByFd.set(fd, String(p)); return fd; };
+    fs.fsyncSync = function patchedFsync(fd) {
+      const p = pathByFd.get(fd) || '';
+      if (p.endsWith('.pre-v18.bak')) bakFsynced = true;
+      return realFsync.call(fs, fd);
+    };
+    fs.closeSync = function patchedClose(fd) { pathByFd.delete(fd); return realClose.call(fs, fd); };
+    let migrated;
+    try {
+      migrated = await openDbAsync(sdir, { driver: 'node-sqlite' });
+    } finally {
+      fs.openSync = realOpen; fs.fsyncSync = realFsync; fs.closeSync = realClose;
+    }
+    assert.ok(bakFsynced, '迁移前快照副本必须 fsync（掉电后回滚点才真实存在）');
+    const bak = `${sfile}.pre-v18.bak`;
+    assert.ok(fs.existsSync(bak), '迁移前快照文件已生成');
+    const bakDb = await openNodeSqliteDb(bak);
+    assert.strictEqual(bakDb.pragma('user_version', { simple: true }), 18, '快照版本停在迁移前 v18');
+    assert.ok(bakDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='task_groups'").get(),
+      '快照可作为独立库打开且含任务表（fsync 后回滚点真实可用）');
+    bakDb.close();
+    assert.strictEqual(migrated.pragma('user_version', { simple: true }), 19, '迁移后版本推进到 v19');
+    migrated.close();
+    fs.rmSync(sdir, { recursive: true, force: true });
+    ok('ST3 迁移前快照：生成 + 可独立打开 + 版本停在迁移前');
+
+    // ⑬ ST3：duplicate column 不再「只推进版本号」。两条独立断言：
+    //    ① 首次抛 duplicate、重放成功 ⇒ 重放真的执行（计数=2）且版本号落到目标；
+    //    ② 非 duplicate 错误必须原样抛出（把「真故障」吞掉比崩溃更危险）。
+    const rdir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-retry-'));
+    const rd = await openNodeSqliteDb(path.join(rdir, 'r.db'));
+    let retryCalls = 0;
+    const fake = { version: 900, name: 'fake-duplicate', up: () => { retryCalls += 1; if (retryCalls === 1) throw new Error('duplicate column name: x'); } };
+    __applyOneMigration(rd, fake);
+    assert.strictEqual(retryCalls, 2, '撞 duplicate column 后必须重放一次（不是直接推进版本号）');
+    assert.strictEqual(rd.pragma('user_version', { simple: true }), 900, '重放成功后版本号才推进');
+    const bad = { version: 901, name: 'fake-real-error', up: () => { throw new Error('no such table: nope'); } };
+    assert.throws(() => __applyOneMigration(rd, bad), /no such table/, '非 duplicate 错误必须抛出，不被吞');
+    assert.strictEqual(rd.pragma('user_version', { simple: true }), 900, '失败后版本号不得前进');
+    rd.close();
+    fs.rmSync(rdir, { recursive: true, force: true });
+    ok('ST3 duplicate-column 真校验：重放一次 + 非该错误必须抛');
+
+    // ⑮ ST3：迁移的「列已就位」真校验必须真的拦人，且**回滚版本号**。
+    //    造一条「记录了加列、但列最终不存在」的迁移（加完列就把表删掉）：
+    //    旧实现只推进 user_version 会静默通过；真校验必须抛错且版本号不得前进。
+    const vdir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-verify-'));
+    const vd = await openNodeSqliteDb(path.join(vdir, 'v.db'));
+    const sneaky = {
+      version: 902,
+      name: 'sneaky-missing-column',
+      up: (db2) => {
+        db2.exec('CREATE TABLE IF NOT EXISTS s(v TEXT)');
+        __addColumnForTest(db2, 's', 'w', 'TEXT');
+        db2.exec('DROP TABLE s');
+      },
+    };
+    assert.throws(() => __applyOneMigration(vd, sneaky), /校验失败/, '版本号推进了但列不存在必须抛错');
+    assert.strictEqual(vd.pragma('user_version', { simple: true }), 0, '校验失败必须整体回滚，版本号不得前进');
+    vd.close();
+    fs.rmSync(vdir, { recursive: true, force: true });
+    ok('ST3 迁移真校验：版本号推进但列未就位必须拦截且回滚');
+
+    // ⑭ ST3 退出兜底：exit 钩子只装一次（不随开库次数泄漏），且能真正关掉所有未关闭的库。
+    const edir = fs.mkdtempSync(path.join(os.tmpdir(), 'mj-exit-'));
+    const n0 = process.listenerCount('exit');
+    const eds = [];
+    for (let i = 0; i < 3; i += 1) {
+      eds.push(await openNodeSqliteDb(path.join(edir, `e${i}.db`)));
+    }
+    assert.strictEqual(process.listenerCount('exit'), n0, 'exit 监听器不得随开库次数累积');
+    const closed = require('../main/db/nodeSqliteDb').__runExitCloseForTest();
+    assert.strictEqual(closed, 3, '退出钩子应关闭全部 3 个未关闭的库');
+    assert.throws(() => eds[0].prepare('SELECT 1').get(), /./, '关闭后的库句柄不可再用');
+    fs.rmSync(edir, { recursive: true, force: true });
+    ok('ST3 退出兜底：exit 钩子单次安装（无泄漏）+ 退出时关闭全部未关闭库');
   } else {
     console.warn('  ⚠ 当前运行时无 node:sqlite，parity 仅覆盖 sql.js（这一段不算已验证）');
   }

@@ -110,12 +110,30 @@ function recoverCorruptFile(DatabaseSync, filePath) {
   };
 }
 
+// ── ST3 退出兜底 ──
+// main.js 的 will-quit 对本驱动只调 `db.flush()`，而 node:sqlite 的 flush 是空操作；
+// 真正把 WAL 并回主文件的是 close()。检索全仓：生产路径此前**没有一处**调 db.close()
+// （只有 main/db/index.js 的自检脚本调）——即「干净退出」实际依赖 SQLite 在进程结束时
+// 自己 checkpoint，这是隐含行为、不是契约。这里挂一次性 exit 钩子（同步、尽力而为）。
+// 诚实边界：SIGKILL / 掉电捕获不到；但那种情况下 WAL 会在下次打开时重放，已提交数据不丢。
+const openDbs = new Set();
+let exitHookInstalled = false;
+function runExitClose() {
+  let closed = 0;
+  for (const db of openDbs) {
+    try { db.close(); closed += 1; } catch (e) {
+      console.warn('[db] 退出 checkpoint 失败（数据仍在 -wal，下次打开会重放）：', e && e.message);
+    }
+  }
+  openDbs.clear();
+  return closed;
+}
+
 /**
  * 打开 node:sqlite 库，返回与 sqljsDb 同形状的句柄。
  * 加载失败（旧运行时没有该内建模块）直接抛错，由 db/index.js 决定降级——不在本层吞掉。
  */
-async function openNodeSqliteDb(filePath) {
-  const { DatabaseSync } = require('node:sqlite');
+async function openNodeSqliteDb(filePath) {  const { DatabaseSync } = require('node:sqlite');
 
   let sqlite;
   let openWarning = '';
@@ -220,6 +238,7 @@ async function openNodeSqliteDb(filePath) {
     flush() {},
 
     close() {
+      openDbs.delete(db);
       try {
         // 把 WAL 并回主文件，保证之后即使降级到 sql.js（它只读主文件、不认 -wal）也能看到全部已提交数据。
         // 诚实标注：单连接**干净关闭**时 SQLite 本来就会自己 checkpoint 并删除 -wal，
@@ -234,7 +253,14 @@ async function openNodeSqliteDb(filePath) {
     },
   };
 
+  // 注册到退出兜底集合；exit 钩子只装一次，不随开库次数累积监听器。
+  openDbs.add(db);
+  if (!exitHookInstalled) {
+    exitHookInstalled = true;
+    process.once('exit', runExitClose);
+  }
+
   return db;
 }
 
-module.exports = { openNodeSqliteDb };
+module.exports = { openNodeSqliteDb, __runExitCloseForTest: runExitClose };
