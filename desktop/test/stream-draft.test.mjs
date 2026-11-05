@@ -214,6 +214,24 @@ try {
   const toolAdopt = streamDraft.adopt('run-tool', thread.id, { role: 'tool', content: '工具结果', toolCallId: 'c9' }, store3);
   check('V8：tool 消息不转正草稿（工具结果必须独立成行）', toolAdopt === null, String(toolAdopt));
 
+  // ⑭ 草稿刷盘**只能写库**，不能连带重写 3.5MB 的 JSON 回滚快照。
+  //    这条是 GUI 验证里抓出来的：`flushSync()` 默认 `hot=false`，流式期间每 800ms 一次全量
+  //    快照（实测 local-data.json 的 mtime 每轮都在变）——等于把 ST1「JSON 退出写热路径」的
+  //    收口原地还回去。断言落在「SQLite 有正文、JSON 快照里没有」这一对事实上：
+  //    只要有人把 `flushSync({ hot: true })` 改回 `flushSync()`，JSON 立刻会被重写，本条变红。
+  streamDraft._reset();
+  const jsonFile = store3.file;
+  const jsonBefore = fs.existsSync(jsonFile) ? fs.readFileSync(jsonFile, 'utf8') : '';
+  const atBefore = store3._lastJsonAt;
+  await streamDraft.routeChat({}, { ...ctx(), runId: 'run-hot', getStore: () => store3, chatStreamOnce: fakeChat(['热路径甲', '热路径乙']) });
+  const jsonAfter = fs.existsSync(jsonFile) ? fs.readFileSync(jsonFile, 'utf8') : '';
+  const inDb = JSON.stringify(readSnapshot(db) || {}).includes('热路径甲');
+  check('V8：草稿刷盘不重写 JSON 快照（正文进 SQLite，回滚快照不动）',
+    inDb && !/热路径甲/.test(jsonBefore) && !/热路径甲/.test(jsonAfter)
+    && store3._lastJsonAt === atBefore,
+    `inDb=${inDb} jsonBefore=${/热路径甲/.test(jsonBefore)} jsonAfter=${/热路径甲/.test(jsonAfter)} lastJsonAt ${atBefore}->${store3._lastJsonAt}`);
+  streamDraft.adopt('run-hot', thread.id, { role: 'assistant', content: '热路径甲热路径乙' }, store3);
+
   fs.rmSync(dir, { recursive: true, force: true });
 } catch (e) {
   console.error('[FAIL] 套件异常：', e && e.stack ? e.stack : e);

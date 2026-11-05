@@ -102,13 +102,15 @@ class LocalStore {
 
   // P0-1：强制落盘挂起的合并变更（退出前 / 测试断言前调用）
   // V08：返回真实持久化结果（{ok,error}），调用方据此决定是否宣称「已保存」
-  flushSync() {
+  flushSync({ hot = false } = {}) {
     // `_jsonDirty`：SQLite 有新内容、而 JSON 快照还停在旧版本。此时即使"没有待落盘的变更"，
     // 也必须补一次快照——否则退出后回滚快照会是几小时前的（SQLite 是新的，但快照偏旧）。
     if (!this._dirty && !this._flushTimer && !this._jsonDirty) return { ok: true, nothingPending: true };
     if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
     this._dirty = false;
-    const res = this.flush();
+    // `hot` 必须能透传：流式草稿每 800ms 调一次本方法（V8），若固定按 `hot=false` 走，
+    // 等于把 ST1「热路径不重写 3.5MB JSON」的收口原地还回去——实测 mtime 每轮都变。
+    const res = this.flush({ hot });
     if (!res || !res.ok) this._dirty = true;
     return res;
   }

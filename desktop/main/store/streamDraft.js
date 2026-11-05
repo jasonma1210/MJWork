@@ -15,9 +15,11 @@
 //     收尾轮可能被 V 层（验证层）改写，权威内容永远优先于流式拼出来的那份。
 //
 // ── 三条刻意取舍 ──────────────────────────────────────────────────────
-// ① 不每来一个 delta 就落盘：一次 flushSync 实测约 1.5ms（真实库 1889 条消息），
+// ① 不每来一个 delta 就落盘：一次刷盘实测约 1.5ms（真实库 1889 条消息），
 //    按 token 调会把 150ms 合并窗口好不容易省下的主进程时间又还回去，还会拖慢流式转发本身。
 //    默认 800ms 一次（可用 `MJ_STREAM_DRAFT_MS` 覆盖，测试用 0）；最坏丢失窗口 = 一个间隔。
+//    **必须调 `flushSync({ hot: true })`**：它默认 `hot=false`，会连带重写 3.5MB 的 JSON
+//    回滚快照——那样每 800ms 一次全量快照，等于把 ST1 的性能收口原地还回去（实测 mtime）。
 // ② 不另建草稿表：草稿表要多一张表 + 多一套「草稿何时转正/失效」规则 + 渲染层新 UI；
 //    而「一条 content 会增长的消息」本来就是「已输出的内容」该有的样子，重开后直接就在会话里。
 // ③ 复用 addMessage / updateMessage，不直接写库：影子副本、会话索引、seq 分配、标题补全
@@ -89,7 +91,7 @@ function flushDraft(d) {
         return;
       }
     }
-    const res = store.flushSync();
+    const res = store.flushSync({ hot: true });
     d.lastFlushAt = Date.now();
     if (res && res.ok === false) {
       console.warn('[streamDraft] 草稿刷盘失败（下个间隔重试）:', res.error || 'unknown');
@@ -168,7 +170,7 @@ function adopt(runId, conversationId, message, store) {
       console.warn('[streamDraft] 草稿转正失败（行已不存在，改走新增）:', r && r.error);
       return null;
     }
-    store.flushSync();
+    store.flushSync({ hot: true });
     return { ok: true, adopted: true, id: d.rowId };
   } catch (e) {
     console.warn('[streamDraft] 草稿转正异常（改走新增，正文不丢）:', e.message);
