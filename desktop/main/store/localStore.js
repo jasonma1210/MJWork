@@ -117,10 +117,12 @@ class LocalStore {
     const fromDb = this.loadFromSqlite();
     if (fromDb) {
       this.sourceOfTruth = 'sqlite';
+      console.log(`[localStore] 本次读源：SQLite（threads=${fromDb.threads.length} messages=${fromDb.messages.length} providers=${fromDb.providers.length}）`);
       this.crossCheckAgainstJson(fromDb);
       return fromDb;
     }
     this.sourceOfTruth = 'json';
+    console.log('[localStore] 本次读源：JSON（SQLite 副本不可用 / 为空 / 已用 MJ_STORE_SOURCE=json 强制回退）');
     return this.loadFromJson();
   }
 
