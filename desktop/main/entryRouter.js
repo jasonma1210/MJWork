@@ -11,6 +11,10 @@
 //   ② 用户点「改成单 Agent」⇒ 本轮不升级且**不重复追问**（同一会话同一目标只问一次）。
 //   ③ 无人值守通道没有确认点 ⇒ 定时任务必须预先声明 team_id 与预算，
 //      **不得无人值守时静默升级**（否则等于偷偷花用户 N 倍 token）。
+//   ④ **高置信不得绕过确认**（2026-11-05 产品裁决 A）：开多团队必然带来 ≥N 倍 token、
+//      模型能力衰减（每个 agent 只见自己那份上下文）与并发实效不确定（串行依赖/合并冲突
+//      会让总时长反而更长）——这三笔账只有用户能拍。故 C0 只保留「用户已前置授权」的两条
+//      路径（手选编制 / 显式开启自动升级），**规则层高置信一律走 C1 出卡问一次**。
 //
 // 判据是**任务结构**不是长度/难度（arXiv:2512.08296：可分解 +80.8% / 顺序规划 -70.0%）。
 // 所有阈值与模式串都在 entryPolicy.json 里，本文件不写死任何内容关键词。
@@ -94,7 +98,10 @@ function confirmPolicy(policy) {
     autoUpgradeEnabled: c.autoUpgradeEnabled === true,
     preSplitBeforeConfirm: c.preSplitBeforeConfirm !== false,
     maxPreSplitTasks: num(c.maxPreSplitTasks, 8),
-    tokenMultiplePerMember: num(c.tokenMultiplePerMember, 1),
+    // 每成员 token 放大系数：取 1 会把「3 人」直接报成「3 倍」，忽略每个 agent 各自的
+    // system prompt + 工具 schema + 上下文副本 + 汇总开销——实际必然更高。故默认 1.5，
+    // 且 UI 文案统一写「至少 N 倍」。json 与本默认值必须一致（test/entry-router 有断言）。
+    tokenMultiplePerMember: num(c.tokenMultiplePerMember, 1.5),
     wallClockPerMemberMs: num(c.wallClockPerMemberMs, 60000),
   };
 }
@@ -385,7 +392,9 @@ async function judgeRoute(input = {}, deps = {}) {
  * @param {boolean} [ctx.userPickedTeam] 用户已显式选编制
  * @param {boolean} [ctx.unattended] 无人值守通道（定时任务）
  * @param {string|null} [ctx.scheduledTeamId] 定时任务预先声明的军团
- * @param {boolean} [ctx.autoUpgrade] 用户开了「自动升级（不再询问）」
+ * @param {boolean} [ctx.autoUpgrade] **已废弃（2026-11-05 裁决 A）**：不再影响档位。
+ *   判定器不建组 ⇒「自动升级」实际不会发生；若据此跳过确认，用户就看不到成本与风险提示。
+ *   参数保留只为兼容既有 payload，读取与否不影响返回值。
  * @param {object} [ctx.policy] entryPolicy.json
  * @returns {{tier:string, ask:boolean, blocked:boolean, reason:string, reasonSource:string, card:object|null, notice:object|null}}
  */
@@ -462,30 +471,43 @@ function decideConfirmPoint(verdict, ctx = {}) {
     && toolKinds <= c.toolKindsC0Max
     && teamSize <= c.teamSizeC0Max
     && signals.sequential !== true;
-  const autoUpgradeOn = ctx.autoUpgrade === true || c.autoUpgradeEnabled === true;
-
+  // ── C0 唯一保留路径：用户**已前置授权**（手选编制）──
+  // 这条不是「系统替用户决定」，而是「用户已经决定过」：前端会把选定的编制走
+  // teams:dispatch 真正派活，故 notice 说「按你选定的编制执行」是事实，不是宣称。
+  // 注意 token 倍数仍要下发——手选编制不等于用户已知道这次要多花几倍。
   if (ctx.userPickedTeam === true) {
     return {
       tier: 'C0', ask: false, blocked: false,
-      reason: '你已明确选定编制，直接按团队执行（不再追问）。',
+      reason: '你已明确选定编制，按你选定的编制执行（不再追问）。',
       reasonSource: 'user-picked', card: null,
       notice: { type: 'upgrade', route, teamSize, tokenMultiple: teamSize * c.tokenMultiplePerMember },
     };
   }
-  if (highConfidence && autoUpgradeOn) {
-    return {
-      tier: 'C0', ask: false, blocked: false,
-      reason: '已开启「自动升级」且规则层判断置信度高，直接按团队执行。',
-      reasonSource: 'auto-upgrade', card: null,
-      notice: { type: 'upgrade', route, teamSize, tokenMultiple: teamSize * c.tokenMultiplePerMember },
-    };
-  }
+  // 「自动升级」开关（autoDag.autoUpgrade / confirm.autoUpgradeEnabled）**不再产生 C0**：
+  // 2026-11-05 产品裁决 A —— 判定器不建组，故「自动升级」实际不会发生；若仍据此跳过确认，
+  // 用户就永远看不到「N 倍 token / 能力衰减 / 并发实效」这三笔账。开关仅保留在设置页作说明。
   if (highConfidence) {
     return {
-      tier: 'C0', ask: false, blocked: false,
-      reason: str(verdict && verdict.reason) || '规则层判断置信度高，直接按团队执行。',
-      reasonSource: 'rule-high-confidence', card: null,
-      notice: { type: 'upgrade', route, teamSize, tokenMultiple: teamSize * c.tokenMultiplePerMember },
+      tier: 'C1', ask: true, blocked: false,
+      reason: str(verdict && verdict.reason) || '规则层判断置信度高：这几块互不依赖，适合并行。',
+      reasonSource: 'rule-high-confidence',
+      card: {
+        ...cardSkeleton,
+        reason: str(verdict && verdict.reason) || '',
+        reasonSource: 'rule-high-confidence',
+        signals: {
+          parallelizable: signals.parallelizable === true,
+          sequential: signals.sequential === true,
+          toolKinds,
+          needsCentralizedVerify: signals.needsCentralizedVerify === true,
+        },
+        // highConfidence 要求 toolKinds <= toolKindsC0Max(8) < toolKindsC1Max(16)，
+        // 故此处必不保守；仍显式写出，避免日后调阈值时语义漂移。
+        conservative: false,
+        conservativeHint: '',
+        subtasks: [],
+      },
+      notice: null,
     };
   }
 

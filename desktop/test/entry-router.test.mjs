@@ -169,12 +169,30 @@ await (async () => {
     assert.equal(c.ask, false);
   });
 
-  await check('确认点 C0：规则层高置信（可并行 + 工具少 + 规模小）⇒ 不问', () => {
+  await check('确认点 C1：规则层高置信 ⇒ 仍必须问用户一次（裁决 A：开多团队须确认）', () => {
     const v = { route: 'parallel_team', confidence: 0.85, signals: { estimatedSize: 2, toolKinds: 1 } };
     const c = router.decideConfirmPoint(v, {});
-    assert.equal(c.tier, 'C0');
-    assert.equal(c.ask, false);
-    assert.equal(c.notice && c.notice.type, 'upgrade');
+    // 四条分开断：只看 tier 会让「出卡了但 notice 仍是 upgrade」这种半改状态蒙过去。
+    assert.equal(c.tier, 'C1');
+    assert.equal(c.ask, true);
+    assert.ok(c.card, '高置信必须出确认卡，不得静默升级');
+    assert.equal(c.notice, null, '不得同时广播 upgrade 提示（否则又变回「已升级」谎报）');
+    assert.equal(c.card.reasonSource, 'rule-high-confidence', '判据来源要保留，别退化成 medium');
+    assert.ok(c.card.cost && c.card.cost.tokenMultiple >= 3, '代价必须下发，2 人团队至少 3 倍');
+  });
+
+  await check('确认点：开启「自动升级」也不得跳过确认（开关已失效，裁决 A）', () => {
+    const v = { route: 'parallel_team', confidence: 0.9, signals: { estimatedSize: 2, toolKinds: 1 } };
+    const ctxs = [
+      { autoUpgrade: true },
+      { policy: { new: { confirm: { autoUpgradeEnabled: true } } } },
+    ];
+    for (const ctx of ctxs) {
+      const c = router.decideConfirmPoint(v, ctx);
+      assert.equal(c.tier, 'C1', '自动升级开关不得产生 C0');
+      assert.equal(c.ask, true, '自动升级开关不得跳过确认');
+      assert.ok(c.card, '必须出确认卡让用户看到成本与风险');
+    }
   });
 
   await check('确认点 C1：parallel_team + 中置信 ⇒ 先出卡不建组', () => {
@@ -267,6 +285,10 @@ await (async () => {
     assert.equal(p.new.autoDag.modelLayer.failOpenTo, 'simple_chat');
     assert.equal(p.new.confirm.c0MinConfidence, 0.75);
     assert.equal(p.new.confirm.toolKindsC0Max, 8);
+    // 裁决 A 之后新增的两条钉值：倍数系数与「自动升级」默认关闭
+    assert.equal(p.new.confirm.tokenMultiplePerMember, 1.5, '每成员倍数必须 >1（1 会把人头当倍数）');
+    assert.equal(p.new.confirm.autoUpgradeEnabled, false, '自动升级必须默认关闭');
+    assert.equal(p.new.autoDag.autoUpgrade, false, 'autoDag.autoUpgrade 必须默认关闭');
     assert.equal(p.assistant.aiTeamDraft.defaultSize, 3);
     assert.equal(p.assistant.aiTeamDraft.maxSize, 8);
   });
@@ -339,6 +361,48 @@ await (async () => {
     const dispatched = normalizePresetTasks(subs.map((s) => ({ id: s.id, title: s.title, prompt: s.prompt, dependsOn: s.dependsOn })));
     assert.ok(dispatched && dispatched.length === subs.length,
       `卡上 ${subs.length} 条，归一到派活后只剩 ${dispatched ? dispatched.length : 0} 条`);
+  });
+
+  // ── 九、四类风险提示（2026-11-05 产品裁决 A：开多团队须确认 + 成本/风险透明）──
+
+  const readEntryLocale = (loc) => {
+    const fs = require('node:fs');
+    const p = path.join(ROOT, `renderer/src/i18n/locales/${loc}/entry.json`);
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  };
+
+  await check('风险提示：四类风险键在中英双语均齐备且非空', () => {
+    const keys = ['riskTitle', 'riskToken', 'riskCapability', 'riskWallClock', 'riskDecision'];
+    for (const loc of ['zh-CN', 'en-US']) {
+      const d = readEntryLocale(loc);
+      for (const k of keys) {
+        assert.equal(typeof d[k], 'string', `${loc} 缺 ${k}（或类型不是 string）`);
+        // 标题本来就是短句（「开启前请知悉」6 字 / Before you proceed），四条正文才要求成句。
+        const minLen = k === 'riskTitle' ? 2 : 10;
+        assert.ok(d[k].trim().length > minLen,
+          `${loc} 的 ${k} 过短（${d[k].trim().length} ≤ ${minLen}），等于没提示`);
+      }
+    }
+  });
+
+  await check('风险提示：不得用「已升级」等完成态措辞，且必须写「至少 N 倍」', () => {
+    for (const loc of ['zh-CN', 'en-US']) {
+      const d = readEntryLocale(loc);
+      assert.ok(!/已升级/.test(d.upgradeTitle || ''), `${loc} 的 upgradeTitle 仍含「已升级」`);
+      assert.ok(/至少|at least/.test(d.upgradeTitle || ''), `${loc} 的 upgradeTitle 必须写「至少 N 倍」`);
+      assert.ok(/至少|at least/.test(d.costLine || ''), `${loc} 的 costLine 必须写「至少 N 倍」`);
+    }
+  });
+
+  await check('风险提示：token 倍数不得按人头 1:1（会低估上下文复制与汇总开销）', () => {
+    const p = router.loadPolicy();
+    const per = p.new.confirm.tokenMultiplePerMember;
+    assert.ok(per > 1, `每成员倍数 ${per} 不得 ≤1：3 人只报 3 倍是乐观承诺`);
+    // 端到端：3 人团队下发的倍数至少 4 倍（3 × 1.5 = 4.5）
+    const c = router.decideConfirmPoint(
+      { route: 'parallel_team', confidence: 0.6, signals: { estimatedSize: 3, toolKinds: 10 } }, {});
+    assert.ok(c.card && c.card.cost, '中置信 C1 必须带代价');
+    assert.ok(c.card.cost.tokenMultiple >= 4, `3 人团队倍数 ${c.card.cost.tokenMultiple} 应 ≥4`);
   });
 
   console.log(`\nentry-router: ${pass}/${total} 通过`);

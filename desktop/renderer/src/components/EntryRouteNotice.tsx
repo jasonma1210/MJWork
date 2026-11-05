@@ -254,6 +254,21 @@ export default function EntryRouteNotice({
             })}</span>
           </div>
 
+          {/* ④ 四类风险（2026-11-05 产品裁决 A）
+              开多团队必须用户确认一次，且必须让他看到这三笔账 + 一个归属：
+              token 多倍消耗 / 模型能力可能下降 / 耗时不一定缩短 / 决定权在用户。
+              **不做折叠**——成本必须一眼看见，藏进「看细节」等于没提示。 */}
+          <div className="space-y-1 leading-relaxed text-text2" role="note" aria-label={t('entry.riskTitle')}>
+            <div className="flex items-center gap-2 font-medium text-text">
+              <IconAlert size={12} />
+              <span>{t('entry.riskTitle')}</span>
+            </div>
+            <div>{t('entry.riskToken', { n: card.teamSize, multiple: card.tokenMultiple })}</div>
+            <div>{t('entry.riskCapability')}</div>
+            <div>{t('entry.riskWallClock')}</div>
+            <div>{t('entry.riskDecision')}</div>
+          </div>
+
           {autoUpgrade === true && (
             <div className="text-text2 leading-relaxed">{t('entry.autoUpgradeOn')}</div>
           )}

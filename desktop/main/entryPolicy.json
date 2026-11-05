@@ -51,10 +51,11 @@
       "maxTeamSize": 5,
       "costNotice": true,
       "showUpgradeNotice": true,
-      "autoUpgrade": false
+      "autoUpgrade": false,
+      "$comment_autoUpgrade": "2026-11-05 产品裁决 A 后本开关**不再跳过确认**：判定器不建组，故「自动升级」实际不会发生；若据此不问，用户就看不到 token 倍数 / 能力衰减 / 并发实效三笔账。保留字段仅为兼容既有 payload 与设置页说明。"
     },
     "confirm": {
-      "$comment": "确认点三档（设计文档 §7.3）。C0 静默执行 / C1 确认卡（默认档）/ C2 阻断+引导。",
+      "$comment": "确认点三档（设计文档 §7.3）。C0 **仅限用户已前置授权**（手选编制 / teams:dispatch 真派活）/ C1 确认卡（默认档，**规则层高置信也走这里**）/ C2 阻断+引导。裁决 A：开多团队必须用户确认一次。",
       "c0MinConfidence": 0.75,
       "c1MinConfidence": 0.5,
       "toolKindsC0Max": 8,
@@ -64,7 +65,8 @@
       "autoUpgradeEnabled": false,
       "preSplitBeforeConfirm": true,
       "maxPreSplitTasks": 8,
-      "tokenMultiplePerMember": 1,
+      "tokenMultiplePerMember": 1.5,
+      "$comment_tokenMultiple": "每个成员的 token 放大系数。取 1 时 3 人=3 倍，但每个子 agent 都要带完整 system prompt + 工具 schema + 上下文副本 + 汇总开销，实际必然高于人头数（3 人常见 4~6 倍）。取 1.5 使 3 人≈4.5 倍，且文案一律写「至少 N 倍」而非「约 N 倍」，不给乐观承诺。",
       "wallClockPerMemberMs": 60000
     },
     "candidateTeamMode": "advisory",
